@@ -1,0 +1,16 @@
+## vim:ft=sh
+
+# fun: args_eval <arg>+
+# txt: parse and evaluate program arguments
+args_eval ()
+{
+  OPTERR=1
+  while getopts "C:" opt; do
+    case $opt in
+      C)
+        export CONFIG_FILE="$OPTARG"
+      ;;
+    esac
+  done
+  return $((OPTIND-1))
+}

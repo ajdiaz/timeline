@@ -1,0 +1,32 @@
+## vim:ft=sh
+
+# fun: [E=code] fatal <message>
+# txt: print fatal message to stderr, if environment variable `$E` is
+#      present, then exists with specified error code in `$E` (only if
+#      non-interactive)
+fatal ()
+{
+  E="${E:-1}" error "$@"
+}
+
+# fun: error <message>
+# txt: print error message to stderr
+error ()
+{
+  if [ "$E" ]; then
+    local err_kind="fatal"
+  else
+    local err_kind="error"
+  fi
+
+  format_compose "timeline.$err_kind" name \
+    "$(config_get timeline.${err_kind}.name)"
+  format_compose "timeline.$err_kind" date "$(timestamp)"
+  # shellcheck disable=SC2059
+  format_compose "timeline.$err_kind" mesg "$(printf -- "$@")"
+  format_dumps "timeline.$err_kind" >&2
+
+  if [ "${INTERACTIVE:-false}" = "false" ] && [ "$E" ]; then
+    exit "$E"
+  fi
+}

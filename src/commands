@@ -1,0 +1,574 @@
+## vim:ft=sh
+
+NOSUBCMD=$"No valid subcomand '%s' for command '%s'"
+INVALIDURL=$"Invalid URL '%s'"
+
+# help:fun: account {create|delete|clone|list|refresh|active} {args...}
+# help:txt: Manage timeline local and remote accounts.
+command_account ()
+{
+  local cmd="$1"; shift
+  if fun "command_account_$cmd"; then
+    "command_account_$cmd" "$@" | info_multi
+  else
+    E=1 error "$NOSUBCMD" "$cmd" "account"
+  fi
+}
+
+# help:account:fun: account create [--keyid <keyi>] <name> <push_url> <pull_url> [path]
+# help:account:txt: Create a new account (aka git repository) which will
+# help:account:txt: push data to specified push_url and publish public url
+# help:account:txt: as specified pull_url. Optionally, you can set the path
+# help:account:txt: where repository lives, if omit, uses default path for
+# help:account:txt: accounts. The '--keyid' flag sets a GPG keyid for
+# help:account:txt: signing commits.
+command_account_create ()
+{
+  local keyid=
+
+  case "$1" in
+    --keyid)
+        keyid="$2"
+        if ! [[ "$keyid" ]]; then
+          E=2 error "Account create with --keyid flag requires keyid argument"
+        fi
+        shift 2
+        ;;
+  esac
+
+  local name="$1" push_url="$2" pull_url="$3" path="$4"
+
+  if [[ -z "$1" ]]; then
+    E=1 error $"Account command create requires 'name'."
+  else
+    if ! valid_url "$push_url"; then
+      E=1 error "$INVALIDURL" "$push_url"
+    elif ! valid_url "$pull_url"; then
+      E=1 error "$INVALIDURL" "$pull_url"
+    else
+      account_create "$name" "$push_url" "$pull_url" "$keyid" "$path"
+    fi
+  fi
+}
+
+# help:account:fun: account delete [--force] <name>
+# help:account:txt: Delete the account with name passed as argument.
+# help:account:txt: If '--force' parameter is present, then ignore if
+# help:account:txt: account path exists or not, otherwise account delete
+# help:account:txt: will not delete anything if path does not exists.
+# help:account:txt: CAUTION: this action cannot be undone.
+command_account_delete ()
+{
+  if [[ "$1" == "--force" ]]; then
+    local force=true
+    local name="$2"
+  else
+    local force=false
+    local name="$1"
+  fi
+
+  if [[ -z "$name" ]]; then
+    E=1 error $"Account command delete requires 'name',"
+  elif ! account_exists "$name" && ! ${force}; then
+    E=1 error $"Account '%s' does not exists." "$name"
+  else
+    account_delete "$name"
+  fi
+}
+
+# help:account:fun: account clone [--keyid <keyid>] <name> <push_url> <pull_url> [path]
+# help:account:txt: Clone an account (aka git repository) from specified
+# help:account:txt: push_url passed as argument, and also configure the
+# help:account:txt: provided pull_url, like 'account create' does.
+command_account_clone ()
+{
+  local keyid=
+
+  case "$1" in
+    --keyid)
+        keyid="$2"
+        if ! [[ "$keyid" ]]; then
+          E=2 error "Account clone with --keyid flag requires keyid argument"
+        fi
+        shift 2
+        ;;
+  esac
+
+  local name="$1" push_url="$2" pull_url="$3" path="$4"
+
+  if [[ -z "$1" ]]; then
+    E=1 error $"Account command clone requires 'name'."
+  else
+    if ! valid_url "$push_url"; then
+      E=1 error "$INVALIDURL" "$push_url"
+    elif ! valid_url "$pull_url"; then
+      E=1 error "$INVALIDURL" "$pull_url"
+    else
+      account_clone "$name" "$push_url" "$pull_url" "$keyid" "$path"
+    fi
+  fi
+}
+
+# help:account:fun: account list
+# help:account:txt: List all accounts registered in the configuration.
+command_account_list ()
+{
+  account_list
+}
+
+# help:fun: help [command]
+# help:txt: show help about the command passed as argument, or, if none,
+# help:txt: show all available commands.
+command_help ()
+{
+  local data
+
+  if [[ $# -eq 0 ]]; then
+    info_multi < <(help_commands)
+  else
+    data="$(help_subcommand "$1")"
+
+    if [[ "$data" ]]; then
+      info_multi <<<"$data"
+    else
+      E=1 error $"Not found help about '%s'" "$1"
+    fi
+  fi
+}
+
+# help:account:fun: account active [name]
+# help:account:txt: Switch to account passed as argument, or, if none, load
+# help:account:txt: the default account. Default account when more than one
+# help:account:txt: is created will be specified by configuration parameter
+# help:account:txt: called 'account.default'.
+command_account_active ()
+{
+  if ! account_load "$1"; then
+    error $"There are no defined accounts."
+    error $"Please create account:    %s account create <name> <push> <pull>"
+    error $"Or clone an existent one:  %s account clone <name> <push> <pull>"
+    E=1 error $"Account dones not exist yet"
+  fi
+}
+
+# help:account:fun: account keyid <keyid>
+# help:account:txt: Set keydi for signing commits in the current enabled
+# help:account:txt: account.
+command_account_keyid ()
+{
+  if [[ $# -ne 1 ]]; then
+    E=2 error "Account keyid requires one argument: keyid"
+  else
+    command_account_active "$(account_active_name)"
+    account_set_keyid "$(account_active_name)" "$1"
+    config_save "${CONFIG_FILE}"
+  fi
+}
+
+# help:account:fun: account refresh
+# help:account:txt: Pull changes from the remote repository. This action
+# help:account:txt: should be automatically and you should not use it
+# help:account:txt: manually. But, if you need it, here it is.
+command_account_refresh ()
+{
+  command_account_active "$(account_active_name)"
+  { account_refresh 2>&1 | info_multi; } ||
+      E=1 error $"Unable to refresh local account"
+}
+
+# help:fun: git <command>...
+# help:txt: Execute raw git commands in the active account.
+command_git ()
+{
+  command_account_refresh
+  workon "$(account_active_path)" command git "$@"
+}
+
+
+# help:fun: timeline {list|refresh|info} {args...}
+# help:txt: Show the current timeline
+command_timeline ()
+{
+  local cmd="$1"; shift
+  if fun "command_timeline_$cmd"; then
+    "command_timeline_$cmd" "$@"
+  else
+    E=1 error "$NOSUBCMD" "$cmd" "timeline"
+  fi
+}
+
+# help:timeline:fun: timeline list [filter]
+# help:timeline:txt: Show current available timeline, but not refresh it from
+# help:timeline:txt: the internet. Usually you want ot use this if you are
+# help:timeline:txt: offline, else use 'timeline refresh' instead.
+# help:timeline:txt: When filter is passed then only show events which match
+# help:timeline:txt: with filter.
+# help:timeline:txt: Valid syntax for filter is:
+# help:timeline:txt:   [not] [tag|mesg|user]:[glob expr] [and|or] [filter]
+command_timeline_list ()
+{
+  command_account_active "$(account_active_name)"
+  timeline_load
+  timeline_list "$@"
+}
+
+# help:timeline:fun: timeline refresh [filter]
+# help:timeline:txt: Pull changes in the current enabled timeline and show
+# help:timeline:txt: the results.
+command_timeline_refresh ()
+{
+  command_account_active "$(account_active_name)"
+  command_account_refresh
+  timeline_load
+  timeline_list "$@"
+}
+
+# help:timeline:fun: timeline info [--eid] <num/eid>
+# help:timeline:txt: Given the index number of an event in the timeline,
+# help:timeline:txt: display internal information about the event.
+# help:timeline:txt: If '--eid' is present, then use the argument as valid
+# help:timeline:txt: EID instead of index number.
+command_timeline_info ()
+{
+  local eid
+
+  if [[ $# -eq 0 ]]; then
+    E=2 error $"Timeline info requires one parameter: num"
+    return 1
+  elif [[ "$1" = "--eid" ]]; then
+    if [[ "$2" ]]; then
+      eid="$2"
+    else
+      E=2 error $"Timeline info with --eid required argument: eid"
+      return 1
+    fi
+  fi
+
+  command_account_active "$(account_active_name)"
+
+  if [[ -z "$eid" ]]; then
+    if ! is_decimal "$1"; then
+      E=2 error $"Invalid index number '%s'" "$1"
+      return 1
+    else
+      eid="$(timeline_index_get "$1")" || return 1
+    fi
+  fi
+
+  timeline_load
+  timeline_info "$eid" | info_multi
+}
+
+# help:fun: config {list|get|set|save} {args...}
+# help:txt: Change configuration settings
+command_config ()
+{
+  local cmd="$1"; shift
+  if fun "command_config_$cmd"; then
+    "command_config_$cmd" "$@"
+  else
+    E=1 error "$NOSUBCMD" "$cmd" "config"
+  fi
+}
+
+# help:config:fun: config list
+# help:config:txt: List all configuration values.
+command_config_list ()
+{
+  config_list | info_multi
+}
+
+# help:config:fun: config get <key>
+# help:config:txt: Show the value of specific configuration key
+command_config_get ()
+{
+  if [[ $# -ne 1 ]]; then
+    E=1 error $"Config get requires an arguments: key"
+  else
+    local var
+    var="$(config_get_empty "$*")"
+    if [[ "$var" ]]; then
+      info "%s=%s" "$*" "$var"
+    else
+      error $"Configuration key %s is not defined" "$*"
+    fi
+  fi
+}
+
+# help:config:fun: config set <key> <value>
+# help:config:txt: Set a new configuration value
+command_config_set ()
+{
+  if [[ $# -ne 2 ]]; then
+    E=1 error $"Config set requires two arguments: key and value"
+  else
+    local key="$1"; shift
+    config_set "$key" "$*"
+    info "%s=%s" "$key" "$*"
+    config_save "${CONFIG_FILE}"
+  fi
+}
+
+# help:config:fun: config save
+# help:config:txt: Save configuration into configuration file
+command_config_save ()
+{
+  config_save "${CONFIG_FILE}"
+}
+
+# help:fun: alias [name value]
+# help:txt: Show aliases (if no argument provided) or created a new one
+# help:txt  named as argument, and replaced by value.
+command_alias ()
+{
+  case $# in
+    0)
+      for key in $(config_iter alias.); do
+        info "%s=%s" "${key}" "$(config_get "${key}")"
+      done
+      ;;
+    2)
+      local name="$1"; shift
+      command_config_set "alias.$name" "$*"
+      ;;
+    *)
+      E=2 error $"Alias command requires zero or two arguments"
+      ;;
+  esac
+}
+
+
+# help:fun: user [uid nickname]
+# help:txt: Show user aliases registered in configuration if not arguments
+# help:txt: provided. If two arguments passed create a new user aliases,
+# help:txt: replacing UID by nickname in timeline.
+command_user ()
+{
+  case $# in
+    0)
+      for key in $(config_iter user.alias-); do
+        info "%s=%s" "${key#user.alias-}" "$(config_get "${key}")"
+      done
+      ;;
+    2)
+      local uid="$1"; shift
+      command_config_set "user.alias-$uid" "$1"
+      ;;
+    *)
+      E=2 error $"User command requires zero or two arguments"
+      ;;
+  esac
+}
+
+# help:fun: event {post|reply|tag} {args...}
+# help:txt: Create new event or show information about existent one
+command_event ()
+{
+  local cmd="$1"; shift
+  if fun "command_event_$cmd"; then
+    "command_event_$cmd" "$@"
+  else
+    E=1 error "$NOSUBCMD" "$cmd" "event"
+  fi
+}
+
+# help:event:fun: event post <message>
+# help:event:txt: Post a new message in our timeline
+command_event_post ()
+{
+  if [[ $# -eq 0 ]]; then
+    E=2 error $"Event post required an argument: message"
+  else
+    command_account_active "$(account_active_name)"
+    command_account_refresh 
+    event_create "$(timestamp)" P "$*" 2>&1 | info_multi
+  fi
+}
+
+# help:event:fun: event reply [--eid] <num/eid> <message>
+# help:event:txt: Post a reply to post indexed with num passed as argument,
+# help:event:txt: or, if '--eid' flag is present, the EID passed as
+# help:event:txt: argument.
+command_event_reply ()
+{
+  local eid
+
+  if [[ $# -eq 0 ]]; then
+    E=2 error $"Event reply requires almost two parameters: num/eid, message"
+    return 1
+  elif [[ "$1" = "--eid" ]]; then
+    if [[ "$2" ]]; then
+      eid="$2"; shift 2;
+    else
+      E=2 error \
+        $"Event reply with --eid required almost two arguments: eid, message"
+      return 1
+    fi
+  fi
+
+  command_account_active "$(account_active_name)"
+
+  if [[ -z "$eid" ]]; then
+    if ! is_decimal "$1"; then
+      E=2 error $"Invalid index number '%s'" "$1"
+      return 1
+    else
+      eid="$(timeline_index_get "$1")" || return 1
+      shift
+    fi
+  fi
+
+  if [[ $# -eq 0 ]]; then
+    E=2 error $"Event reply required an argument: message"
+  else
+
+    command_account_refresh
+    event_create "$(timestamp)" R "$eid" "$*" 2>&1 | info_multi
+  fi
+}
+
+# help:event:fun: event tag [--eid] <num/eid> <tags>
+# help:event:txt: Tag a post passed as argument by index num or eid if
+# help:event:txt: '--eid' flag is present.
+command_event_tag ()
+{
+  local eid
+
+  if [[ $# -eq 0 ]]; then
+    E=2 error $"Event tag requires almost two parameters: num/eid, tags"
+    return 1
+  elif [[ "$1" = "--eid" ]]; then
+    if [[ "$2" ]]; then
+      eid="$2"; shift 2;
+    else
+      E=2 error \
+        $"Event tag with --eid required almost two arguments: eid, tags"
+      return 1
+    fi
+  fi
+
+  command_account_active "$(account_active_name)"
+
+  if [[ -z "$eid" ]]; then
+    if ! is_decimal "$1"; then
+      E=2 error $"Invalid index number '%s'" "$1"
+      return 1
+    else
+      eid="$(timeline_index_get "$1")" || return 1
+      shift
+    fi
+  fi
+
+  if [[ $# -eq 0 ]]; then
+    E=2 error $"Event tag required an argument: tags"
+  else
+
+    command_account_refresh
+    event_create "$(timestamp)" T "$eid" "$*" 2>&1 | info_multi
+  fi
+}
+
+# help:fun: follow {list|add|del} {args...}
+# help:txt: Manage your followings.
+command_follow ()
+{
+  local cmd="$1"; shift
+  if fun "command_follow_$cmd"; then
+    "command_follow_$cmd" "$@"
+  else
+    E=1 error "$NOSUBCMD" "$cmd" "follow"
+  fi
+}
+
+# help:follow:fun: follow list
+# help:follow:txt: Lists your followings.
+command_follow_list ()
+{
+  command_account_active "$(account_active_name)"
+  follow_list "$(account_active_path)" | info_multi
+}
+
+# help:follow:fun: follow add <pull_url> [name]
+# help:follow:txt: Add new following whose repository is available in
+# help:follow:txt: 'pull_url' passed as argument.
+# help:follow:txt: Optionally if name is provided, create a user alias for
+# help:follow:txt: that account.
+command_follow_add ()
+{
+  local pull_url="$1" name="$2"
+
+  if [[ -z "$pull_url" ]]; then
+    E=2 error $"Follow add require almost one argument: pull_url"
+    return 2
+  else
+    command_account_active "$(account_active_name)"
+    follow_add "$pull_url" "$name" 2>&1 | info_multi
+  fi
+}
+
+# help:follow:fun: follow del [--url] <uid/pull_url> 
+# help:follow:txt: Delete a following which specific uid, or specific
+# help:follow:txt: pull_url if '--url' flag is set.
+command_follow_del ()
+{
+  local uid
+
+  case "$1" in
+    --url)
+      if [[ -z "$2" ]]; then
+        E=2 error $"Follow del with --urll flag requires argument: pull_url"
+        return 2
+      else
+        uid="$(oid "$2")"
+      fi;;
+    *) uid="$1";;
+  esac
+
+  command_account_active "$(account_active_name)"
+  follow_del "$uid" 2>&1 | info_multi
+}
+
+# help:fun: network {list|refresh} {args...}
+# help:txt: Manage the network graph and discover new users.
+command_network ()
+{
+  local cmd="$1"; shift
+  if fun "command_network_$cmd"; then
+    "command_network_$cmd" "$@"
+  else
+    E=1 error "$NOSUBCMD" "$cmd" "network"
+  fi
+}
+
+# help:network:fun: network list
+# help:network:txt: Display current discovered network, but not search for
+# help:network:txt: new users or update current ones.
+command_network_list ()
+{
+  command_account_active "$(account_active_name)"
+  network_load "$(account_active_path)"
+  network_list
+}
+
+# help:network:fun: network refresh
+# help:network:txt: Looking for new users creating network graph and print
+# help:network:txt: the results into screen.
+# help:network:txt: The refreshing action could take a while. This command
+# help:network:txt: will traverse the timeline network from your repository,
+# help:network:txt: trying to discover new users that you don't follow but
+# help:network:txt: are related with people you actually follow.
+command_network_refresh ()
+{
+  command_account_active "$(account_active_name)"
+  info $"Discovering the network. This action could take a while..."
+  network_refresh "$(account_active_path)" | info_multi
+  info $"Network updated"
+  network_list
+}
+
+# help:fun: quit
+# help:txt: Just quits timeline :.-(
+command_quit ()
+{
+  exit 0
+}

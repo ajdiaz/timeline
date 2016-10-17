@@ -1,0 +1,115 @@
+#! /usr/bin/env bash
+# 
+# Copyright (C) 2016  Andrés J. Díaz <ajdiaz@ajdiaz.me>
+# 
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+# 
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+# 
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# env: INTERACTIVE: if true, then interactive mode is enabled
+export INTERACTIVE=
+
+# env: CONFIG_FILE: should contain the path to the config file
+export CONFIG_FILE=
+
+# env: CACHE_DIR: should contain the path to the cache directory
+export CACHE_DIR=
+
+# fun: prompt
+# txt: print prompt in interactive mode
+prompt ()
+{
+  local name
+  name="$(account_active_name)"
+
+  format_compose prompt account "${name:-<none>}"
+  format_dumps prompt
+}
+
+# fun: main_interactive
+# txt: evaluate commands in interactive mode
+main_interactive ()
+{
+  local cmd
+  local -a args
+
+  history_load
+  complete_load
+  command_account_active "$(account_active_name)"
+
+  while true; do
+    read -a args -e -r -p "$(T=true prompt)"
+    [ $? -eq 1 ] && break
+    cmd="${args[0]}"
+    local -a args=( ${args[@]:1} )
+
+    [ "$cmd" ] || continue
+    history_append "$cmd ${args[*]}"
+    main_standalone "$cmd" "${args[@]}"
+  done
+  history_save
+}
+
+# fun: main_standalone <cmd> [args]...
+# txt: evaluate command passed as argument
+main_standalone ()
+{
+  local cmd="$1"; shift
+
+  if fun "command_$cmd"; then
+    "command_$cmd" "$@"
+  else
+    local -a alias=( $(config_get_empty "alias.$cmd") )
+
+    if [[ "${alias[@]}" ]]; then
+      main_standalone "${alias[@]}" "$@"
+    else
+      E=2 fatal $"Invalid command '%s'." "$cmd"
+    fi
+  fi
+}
+
+# fun: main [args]...
+# txt: entry point :D
+main ()
+{
+  local config_path="$HOME/.config/tl/config:$HOME/.tl/config:$HOME/.tlrc"
+  
+  CONFIG_FILE="$(try_path "$config_path")"
+  INTERACTIVE=false
+
+  reqs_eval
+  args_eval "$@" || shift $?
+
+  [ -r "${CONFIG_FILE}" ] && config_load "${CONFIG_FILE}"
+
+  CACHE_DIR="$(try_path "$(config_get cache.path)")"
+  mkdir -p "${CACHE_DIR}"
+
+  # load the timeline index to operate with previous listed timeline
+  timeline_index_load
+
+  if [ $# -eq 0 ]; then
+    if [[ "$(config_get_empty interactive.show-banner)" = "true" ]]; then
+      info "timeline  Copyright (C) %(%Y)T Andrés J. Díaz" "$(timestamp)"
+      info "This program comes with ABSOLUTELY NO WARRANTY; for details"
+      info "type 'license'. This is free software, and you are welcome to"
+      info "redistribute it under certain conditions; type 'license' for"
+      info "details."
+    fi
+
+    INTERACTIVE=true
+    main_interactive "$@"
+  else
+    main_standalone "$@"
+  fi
+}

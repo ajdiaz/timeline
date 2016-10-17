@@ -1,0 +1,145 @@
+## vim: ft=sh
+
+# fun: fun <function_name>
+# txt: return true if function is defined
+fun ()
+{
+  declare -f "$1" >/dev/null 2>&1
+}
+
+# fun: mute <command> [args]
+# txt: run command quietly
+mute ()
+{
+  "$@" >/dev/null 2>&1
+}
+
+# fun: timestamp
+# txt: print current timestamp in UTC
+timestamp ()
+{
+  printf "%(%s)T"
+}
+
+# fun: split <str>
+# txt: split a comma separated list
+split ()
+{
+  echo "${1//,/ }"
+}
+
+# fun: join <delim> <array_items>
+# txt: return a delim separated list of array_items
+join ()
+{
+  local delim="$1"; shift
+  for x in "$@"; do
+    printf "%s%s" "$x" "$delim"
+  done
+}
+
+# fun: oid <string>
+# txt: create a unique object id for the string passed as argument
+oid ()
+{
+  command git hash-object --stdin <<<"$1"
+}
+
+# fun: try_path <path_list>
+# txt: given a path list, return the first existant item in the list, or, if
+#      none exists, the first one. NOTE: this function does not allow colons
+#      in path items.
+try_path ()
+{
+  local IFS=':'
+  for path in $1; do
+    if [ -d "$path" ]; then
+      echo "$path"
+      return
+    fi
+  done
+  echo "${1%%:*}"
+}
+
+# fun: workon <path> <command>...
+# txt: run command inside path passed as argument
+workon ()
+{
+  local dir="$1"; shift
+  ( cd "$dir" && "$@"; )
+}
+
+# fun: valid_url <url>
+# txt: return true if url is valid, otherwise return false
+valid_url ()
+{
+  case "$1" in
+    ssh://*|http://*|https://*) return 0
+  esac
+  return 1
+}
+
+# fun: username <eid|account_id>
+# txt: return username from a event_id or account_id using alias defined in
+#      configuration and short form if 'timeline.use-short-ids' is true.
+username ()
+{
+  local uname="$1"
+  
+  uname="${uname%:*}" # remove timestamp if present
+  uname="${uname#@}"  # remove trail @ if present
+
+  alias_name="$(config_get_empty "user.alias-$uname")"
+  short_ids="$(config_get_empty timeline.use-short-ids)"
+
+  if [[ "$alias_name" ]]; then
+    uname="$alias_name"
+  elif [[ "$short_ids" = "true" ]]; then
+    uname="${uname:0:8}"
+  fi
+
+  echo "@${uname}"
+}
+
+# fun: is_decimal <num>
+# txt: return true if num is a decimal based number.
+is_decimal () {
+  [[ "$1" = "0" ]] && return 0
+  mute let i="10#$1" 2>/dev/null
+}
+
+# fun: keyid <name>
+# txt: get the keyid configured for account name passed as argument
+keyid ()
+{
+  local keyid
+
+  keyid="$(config_get_empty "account.$1.keyid")"
+  
+  [[ "$keyid" ]] ||
+    keyid="$(config_get_empty "account.keyid")"
+
+  echo "$keyid"
+}
+
+# fun: any <list> <list>
+# txt: return true if any element of the first list is also in the second
+#      list.
+any ()
+{
+  case "$1" in
+    '*'|"$2") return 0;;
+    '') return 1;;
+  esac
+
+  local -A list
+
+  for item in $1; do
+    list["$item"]=1
+  done
+
+  for item in $2; do
+    [[ "${list["$item"]}" ]] && return 0
+  done
+  return 1
+}

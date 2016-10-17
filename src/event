@@ -1,0 +1,202 @@
+## vim:ft=sh
+
+# env: EVENT: associative array which contains parts of an event line.
+declare -A EVENTS_KIND=()
+declare -A EVENTS_DATE=()
+declare -A EVENTS_LINK=()
+declare -A EVENTS_TAGS=()
+declare -A EVENTS_MESG=()
+declare -A EVENTS_SIGN=()
+declare -A EVENTS_SIGN_EXTENDED=()
+
+declare -A EVENTS_CROSS_REPLY=()
+declare -A EVENTS_CROSS_TAGS=()
+declare -a EVENTS_SORTED=()
+
+# fun: event_load <account_id> <filename>
+# txt: given an content filename, parse it and store events in memory
+event_load ()
+{
+  local i=0 max_posts max_user_posts ver_ext
+
+  max_posts="$(config_get timeline.max-posts)"
+  max_user_posts="$(config_get timeline.max-user-posts)"
+
+  # reached timeline.max-posts
+  [[ "${#EVENTS_SORTED[@]}" -gt "$max_posts" ]] && return
+
+
+  while read -r line; do
+    [[ "$line" ]] || continue  # ignore empty lines
+    [[ "${line:0:1}" == '#' ]] && continue # ignore 'comments'
+
+    # XXX CONTENT should be in the root dir of the repo to work this
+    read -r commit _ < <(
+      workon "${2%/*}" git blame "${2##*/}" -L  $((i+1)),$((i+1))
+    )
+
+    ver_ext="$(workon "${2%/*}" git verify-commit "$commit" 2>&1)"
+    event_load_line "$1" "$line" "$?" "$ver_ext"
+
+    [[ $((i++)) -gt "${max_user_posts}" ]] && break
+  done < "$2"
+}
+
+# fun: event_load_line <account_id> <line> <verified> [ver_ext]
+# txt: parse a event line passed as argument and fill properly fields in
+#      a associative array called EVENT. The account id is the OID
+#      associated to the pull_url of the account.
+#
+#      The POST kind has the fields: timestamp,kind,message
+#      The REPLY kind has the fields: timestamp,kind,ref,message
+#      The TAG kind has the fields: timestamp,kind,ref,tags
+event_load_line ()
+{
+  local line="$2" eid="$1" verified="$3" ver_ext="$4"
+  local date kind rest link mesg tags
+
+  read -r date kind rest <<< "$line"
+
+  case "$kind" in
+    P|POST)
+      mesg="$rest"
+      kind='post'
+      ;;
+    R|REPLY)
+      read -r link mesg <<<"$rest"
+      kind='reply'
+      ;;
+    T|TAG)
+      read -r link tags <<<"$rest"
+      kind='tag'
+      ;;
+    *)
+      E=1 error $"Malformed event: '$line'"
+      ;;
+  esac
+
+  EVENTS_KIND["$eid:$date"]="$kind"
+  EVENTS_DATE["$eid:$date"]="$date"
+  EVENTS_LINK["$eid:$date"]="$link"
+  EVENTS_TAGS["$eid:$date"]="$tags"
+  EVENTS_MESG["$eid:$date"]="$mesg"
+  EVENTS_SIGN["$eid:$date"]="$verified"
+  EVENTS_SIGN_EXTENDED["$eid:$date"]="$ver_ext"
+
+  # XXX some array abused. Because arrays allows any index number, and are
+  # sorted by definition, we do not need to sort anything. To avoid
+  # collision between accounts, add a RANDOM prefix.
+  EVENTS_SORTED["$date$(printf %03d "$((RANDOM % 100))")"]="$eid:$date"
+
+  if [[ "$kind" = 'reply' ]]; then
+    EVENTS_CROSS_REPLY[$link]+=" $eid:$date "
+  elif [[ "$kind" = 'tag' ]]; then
+    EVENTS_CROSS_TAGS[$link]+=" $eid:$date "
+  fi
+}
+
+# fun: event_sign <eid>
+# txt: return true if EID is signed
+event_sign ()
+{
+  echo "${EVENTS_SIGN[$1]}"
+}
+
+# fun: event_sign_ext <eid>
+# txt: print extended signing information for EID
+event_sign_ext ()
+{
+  echo "${EVENTS_SIGN_EXTENDED[$1]}"
+}
+
+# fun: event_replies <eid>
+# txt: given an specific eid return the eids of the replies of that post
+event_replies ()
+{
+  echo "${EVENTS_CROSS_REPLY[$1]}"
+}
+
+# fun: event_labels <eid>
+# txt: given an specific eid return the eids of the tags of that post
+event_labels ()
+{
+  echo "${EVENTS_CROSS_TAGS[$1]}"
+}
+
+# fun: event_iter
+# txt: print a list of events saved in memory
+event_iter ()
+{
+  echo "${EVENTS_SORTED[@]}"
+}
+
+# fun: event_kind <eid>
+# txt: given an event id, get the kind of the event
+event_kind ()
+{
+  echo "${EVENTS_KIND["$1"]}"
+}
+
+# fun: event_date <eid>
+# txt: given an event id, get the date of the event
+event_date ()
+{
+  echo "${EVENTS_DATE["$1"]}"
+}
+
+# fun: event_link <eid>
+# txt: given an event id, get the link of the event (only for TAGS and
+#      REPLIES)
+event_link ()
+{
+  echo "${EVENTS_LINK["$1"]}"
+}
+
+# fun: event_tags <eid>
+# txt: given an event id, get the tags of the event (only for TAGS)
+event_tags ()
+{
+  echo "${EVENTS_TAGS["$1"]}"
+}
+
+# fun: event_mesg <eid>
+# txt: given an event id, get the message of the event (only for REPLY and
+#      POST)
+event_mesg ()
+{
+  echo "${EVENTS_MESG["$1"]}"
+}
+
+# fun: event_create <args>
+# txt: create new event. Args can vary depends of event type, the order of
+#      the arguments should be:
+#      For posts: date kind mesg
+#      For reply: date kind link mesg
+#      For tags:  date kind link tags
+event_create ()
+{
+  local path auto_push
+  local -a content
+
+  auto_push="$(
+    config_get_empty "account.$(account_active_name).auto-push"
+  )"
+
+  if ! [[ "$auto_push" ]]; then
+    auto_push="$(config_get account.auto-push)"
+  fi
+
+  path="$(account_active_path)"
+  mapfile -t content < "${path}/$TIMELINE_CONTENT"
+
+  echo "$*" > "${path}/$TIMELINE_CONTENT"
+  for line in "${content[@]}"; do
+    echo "$line" >> "${path}/$TIMELINE_CONTENT"
+  done
+
+  account_commit
+
+  if [[ "$auto_push" = "true" ]]; then
+    account_push
+  fi
+}

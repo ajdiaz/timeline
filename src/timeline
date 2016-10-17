@@ -1,0 +1,267 @@
+## vim:ft=sh
+
+# env: TIMELINE_CONTENT: The path relative to the account root, where
+#      CONTENT file is stored.
+TIMELINE_CONTENT="CONTENT"
+
+# env: TIMELINE_FOLLOW The path relative to the account root, where
+#      FOLLOW dir is located.
+TIMELINE_FOLLOW="FOLLOW"
+
+# env: TIMELINE_PRINTED: Internal associative array which contains the EID
+#      of events alredy printed to avoid duplicates.
+declare -A TIMELINE_PRINTED=()
+
+# env: TIMELINE_INDEX: Internal array used to print an index in timeline to
+#      easy refer to an event
+declare -a TIMELINE_INDEX=()
+
+# fun: timeline_load 
+# txt: load the timeline from current active account into memory
+timeline_load ()
+{
+  local oid content_path follow_path show_own
+
+  oid="$(account_active_oid)"
+  content_path="$(account_active_path)/$TIMELINE_CONTENT"
+  follow_path="$(account_active_path)/$TIMELINE_FOLLOW"
+  show_own="$(config_get_empty timeline.own-posts)"
+
+  # Load our account timeline
+  [[ "$show_own" = "false" ]] ||
+    event_load "$oid" "${content_path}"
+
+  local dir
+  for dir in ${follow_path}/*; do
+    [[ -d "$dir" ]] || continue  # ignore non-dir files
+    [[ -r "$dir/$TIMELINE_CONTENT" ]] || continue # ignore non initialized
+
+    dir="${dir%/}"
+    event_load "${dir##*/}" "${dir}/$TIMELINE_CONTENT"
+  done
+}
+
+# fun: timeline_filter <eid>
+# txt: return true if the item should be filtered and false if not.
+timeline_filter ()
+{
+  local eid="$1"
+  local ret=1
+
+  filter_eval hide "$eid" &&
+    timeline_hide_thread "$eid" && ret=0
+
+  filter_eval show "$eid" &&
+    timeline_show_thread "$eid" && ret=1
+
+  return "$ret"
+}
+
+
+# fun: timeline_hide_thread <eid>
+# txt: hide the thread of the specific EID
+timeline_hide_thread ()
+{
+  TIMELINE_PRINTED["$1"]=1
+  for event in $(event_labels "$1"); do
+    timeline_hide_thread "$event"
+  done
+  for event in $(event_replies "$1"); do
+    timeline_hide_thread "$event"
+  done
+  return 0
+}
+
+# fun: timeline_show_thread <eid>
+# txt: show the thread of the specific EID
+timeline_show_thread ()
+{
+  unset TIMELINE_PRINTED["$1"]
+  for event in $(event_labels "$1"); do
+    timeline_show_thread "$event"
+  done
+  for event in $(event_replies "$1"); do
+    timeline_show_thread "$event"
+  done
+  return 0
+}
+
+# fun: timeline_list_thread <eid>
+# txt: print thread for specific eid passed as argument
+timeline_list_thread ()
+{
+  local prefix indent date kind mesg tags link name eid="$1"
+  local flag flags=""
+
+  # item is already printed? then do nothing
+  [[ "${TIMELINE_PRINTED["$eid"]}" ]] && return
+
+  date="$(event_date "$eid")"
+  kind="$(event_kind "$eid")"
+  name="$(username "$eid")"
+  sign="$(event_sign "$eid")"
+
+  case "$kind" in
+    post)
+      mesg="$(event_mesg "$eid")"
+      ;;
+    tag)
+      tags="$(event_tags "$eid")"
+      tags="${tags// /, }"
+      link="$(event_link "$eid")"
+      ;;
+    reply)
+      mesg="$(event_mesg "$eid")"
+      link="$(event_link "$eid")"
+      ;;
+  esac
+
+  if [[ "$kind" = "post" ]]; then
+    timeline_filter "$eid" && return
+  fi
+
+  indent="$(config_get_empty "timeline.$kind.indent")"
+  prefix="$(config_get_empty "timeline.$kind.prefix")"
+
+  if [[ "$sign" -eq 0 ]]; then
+    flag="$(config_get_empty "timeline.$kind.flag-signed")"
+    flags+=" ${flag:-signed} "
+  fi
+
+  # composing the output
+  format_compose "timeline.$kind" index "${#TIMELINE_INDEX[@]}"
+  format_compose "timeline.$kind" name "$name"
+  format_compose "timeline.$kind" date "$date"
+  format_compose "timeline.$kind" tags "${2}${indent}${prefix}${tags}"
+  format_compose "timeline.$kind" link "$link"
+  format_compose "timeline.$kind" mesg "${2}${indent}${prefix}${mesg}"
+  format_compose "timeline.$kind" flags "$flags"
+  format_dumps "timeline.$kind"
+
+  TIMELINE_PRINTED["$eid"]=1
+  TIMELINE_INDEX+=( "$eid" )
+
+  for tags in $(event_labels "$eid"); do
+    timeline_list_thread "$tags" "$2${indent}"
+  done
+
+  for reply in $(event_replies "$eid"); do
+    timeline_list_thread "$reply" "$2${indent}"
+  done
+}
+
+# fun: timeline_list [filter]
+# txt: print the entire timelist
+timeline_list ()
+{
+  TIMELINE_PRINTED=()
+  TIMELINE_INDEX=()
+
+  local -a filter_show
+  local -a filter_hide
+
+  filter_show=( $(config_get_empty timeline.filter.show) )
+  filter_hide=( $(config_get_empty timeline.filter.hide) )
+
+  [[ "${#filter_show[@]}" -gt 0 ]] &&
+    filter_add show "${filter_show[@]}"
+
+  [[ "${#filter_hide[@]}" -gt 0 ]] &&
+    filter_add hide "${filter_hide[@]}"
+
+  if [[ "$1" ]]; then
+    filter_add hide "tag:*"
+    filter_add show "$@"
+  fi
+
+  for eid in $(event_iter); do
+    timeline_list_thread "$eid" ''
+  done
+
+  timeline_index_save
+}
+
+# fun: timeline_index_save
+# txt: dumps TIMELINE_INDEX to a sourceable file to be loaded before any
+#      input to identify an event easily.
+timeline_index_save ()
+{
+  {
+    echo "declare -ag TIMELINE_INDEX=("
+    for var in "${TIMELINE_INDEX[@]}"; do
+      echo "'$var'"
+    done
+    echo ")"
+  } > "${CACHE_DIR}/.timeline-index"
+}
+
+# fun: timeline_index_load
+# txt: source index saved file with timeline_index_save
+timeline_index_load ()
+{
+  # shellcheck source=/dev/null
+  [[ -r "${CACHE_DIR}/.timeline-index" ]] &&
+    source "${CACHE_DIR}/.timeline-index" 
+}
+
+# fun: timeline_index_get <num>
+# txt: return the EID of the event indexed by number passed as argument
+timeline_index_get ()
+{
+  if [[ "$1" -ge ${#TIMELINE_INDEX[@]} ]]; then
+    E=1 error $"Index out of bounds: %s in %s" "$1" "TIMELINE_INDEX"
+  else
+    echo "${TIMELINE_INDEX[$1]}"
+  fi
+}
+
+# fun: timeline_info <eid>
+# txt: given an eid, print the infortmation related with this event
+timeline_info ()
+{
+  local eid="$1" date kind mesg tags reply link name item
+
+  # XXX Move this block to a sub function or similar?
+  date="$(event_date "$eid")"
+  kind="$(event_kind "$eid")"
+  name="$(username "$eid")"
+
+  if [[ -z "$kind" ]]; then
+    E=1 error $"Not found information for EID '$eid'"
+    return 1
+  fi
+
+  case "$kind" in
+    post)
+      mesg="$(event_mesg "$eid")"
+      ;;
+    tag)
+      tags="$(event_tags "$eid")"
+      link="$(event_link "$eid")"
+      ;;
+    reply)
+      mesg="$(event_mesg "$eid")"
+      link="$(event_link "$eid")"
+      ;;
+  esac
+
+  printf $"%-10s %s\n" "EID:"   "$eid"
+  printf $"%-10s %s (%s)\n" "UID:"   "${eid%:*}" "$(username "$eid")"
+  printf $"%-10s %s (%(%Y-%m-%d %H:%M:%S)T)\n" "Date:"  "$date" "$date"
+  printf $"%-10s %s\n" "Kind:"   "${kind^^}"
+  printf $"%-10s %s\n" "Link:"   "${link}"
+  printf $"%-10s %s\n" "Tags:"   "${tags}"
+  printf $"%-10s %s\n" "Mesg:"   "${mesg}"
+  printf $"Tagged  by:\n"
+  for item in $(event_labels "$eid"); do
+    printf "  -  %s\n" "$item"
+  done
+  printf $"Replied by:\n"
+  for item in $(event_replies "$eid"); do
+    printf "  -  %s\n" "$item"
+  done
+
+  if [[ "$(event_sign "$eid")" = "0" ]]; then
+    event_sign_ext "$eid"
+  fi
+}

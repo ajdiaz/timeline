@@ -1,0 +1,28 @@
+## vim:ft=sh
+
+# env: REQUIREMENTS: array which contains requirements to satisfy to run the
+#      application. If requirement is prefixed with + means that program is
+#      mandatory, if prefixed with ? means that it's recommended.
+REQUIREMENTS=(
+  "+tput"
+  "+git"
+)
+
+# fun: reqs_eval
+# txt: ensure that requirements defined in `$REQUIREMENTS` are present in
+#      the system, otherwise exists with fatal error.
+reqs_eval ()
+{
+  local req kind
+
+  for req in "${REQUIREMENTS[@]}"; do
+    kind="${req:0:1}"; req="${req#$kind}"
+
+    mute type -P "$req" ||
+      case "$kind" in
+        "+") E=1 fatal $"Binary '%s' is a mandatory dependency" "$req";;
+        "?") E=1 error $"Binary '%s' is recommended, but not found" "$req";;
+        *) E=1 fatal $"Unknown depedency kind '%s'" "$kind";;
+      esac
+  done
+}

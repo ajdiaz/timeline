@@ -1,0 +1,70 @@
+## vim:ft=sh
+
+# fun: follow_list <path>
+# txt: given a path get the submodules into FOLLOW directory
+follow_list ()
+{
+  local line path="$1"
+
+  while read -r line; do
+    line="${line#*${TIMELINE_FOLLOW}/}"
+    case "$line" in
+      *'.url='*)
+        echo "${line%.url=*}" "${line#*.url=}"
+      ;;
+    esac
+  done < <(workon "$path" command git config -f .gitmodules -l 2>/dev/null)
+}
+
+
+# fun: follow_add <pull_url> [name]
+# txt: Add new following using pull_url passed as argument. Optional name
+#      will add a config entry for user alias to this name.
+follow_add ()
+{
+  local path pull_url="${1%.git}" name="$2"
+  
+  path="$(account_active_path)"
+
+  workon "$path" command git submodule add \
+    "$pull_url" "${TIMELINE_FOLLOW}/$(oid "$pull_url")"
+  workon "$path" command git submodule init
+  workon "$path" command git submodule update --remote
+
+  account_commit
+  account_push
+
+  if [[ "$name" ]]; then
+    config_set "user.alias-$(oid "$pull_url")" "$name"
+    config_save "${CONFIG_FILE}"
+  fi
+
+}
+
+# fun: follow_del <uid>
+# txt: remove following for user identified by specific UID
+follow_del ()
+{
+  local path uid="$1"
+
+  path="$(account_active_path)"
+  mpath="${TIMELINE_FOLLOW}/$uid"
+
+  # remove gitconfig sections
+  workon "$path" mute command git config -f .git/config \
+    --remove-section "submodule.$mpath"
+
+  workon "$path" mute command git config -f .gitmodules \
+    --remove-section "submodule.$mpath"
+
+  account_commit
+
+  workon "$path" command git rm --cached "$mpath"
+  workon "$path" rm -rf ".git/modules/$mpath"
+ 
+  if [[ -d "$path/$mpath" ]]; then
+    rm -rf "${path:?}/${mpath:?}"
+  fi
+
+  account_push
+}

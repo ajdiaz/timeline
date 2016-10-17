@@ -1,0 +1,24 @@
+## vim:ft=sh
+
+# fun: info <message>
+# txt: print informational message on stdout
+info ()
+{
+  format_compose timeline.info name "$(config_get timeline.info.name)"
+  format_compose timeline.info date "$(timestamp)"
+  # shellcheck disable=SC2059
+  format_compose timeline.info mesg "$(printf -- "$@")"
+  format_dumps timeline.info
+}
+
+# fun: info_multi
+# txt: get messages from stdint and print informational messages to stdout
+info_multi ()
+{
+  local -a lines
+  mapfile -t lines
+
+  for line in "${lines[@]}"; do
+    info "%s" "$line"
+  done
+}

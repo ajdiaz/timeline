@@ -1,0 +1,66 @@
+## vim:ft=sh
+
+# fun: complete_alternatives <level> <prefix>
+# txt: print a list of valid alternatives for specific prefix.
+complete_alternatives ()
+{
+  local level="$1" prefix="$2"
+  local -A items=()
+
+  while read -r _ _ cmd; do
+    case "$cmd" in
+      command_${prefix}*)
+        cmd="${cmd#command_}"
+        for ((i=0;i<level;i++)); do
+          cmd="${cmd#*_}"
+        done
+
+        items["${cmd%%_*}"]=1
+    esac
+  done < <(declare -F)
+
+  echo "${!items[@]}"
+}
+
+
+# fun: complete_item
+# txt: print list of available completion
+complete_item ()
+{
+  local -a words=( ${READLINE_LINE} )
+  local cur=$((${#words[@]}-1))
+  local -a alts=( $(complete_alternatives "$cur") )
+  local -a values
+
+  if [[ $cur -eq -1 ]]; then
+    values=( "${alts[@]}" )
+  else
+    values=( $(compgen -W "${alts[*]}" "${words[$cur]}") )
+  fi
+  
+  if [[ ${#values[@]} -eq 0 ]]; then
+    values=( "${alts[@]}" )
+  fi
+
+  if [[ ${#values[@]} -eq 1 ]]; then
+    if [[ "${READLINE_LINE}" = "${values[0]} " ]]; then
+      complete_alternatives $((cur +1)) "${values[0]}_"
+    else
+      READLINE_LINE="${words[*]:0:$cur}"
+      [[ "$READLINE_LINE" ]] && READLINE_LINE+=" "
+      READLINE_LINE+="${values[*]} "
+      READLINE_POINT=${#READLINE_LINE}
+    fi
+  else
+    echo "${values[@]}"
+  fi
+}
+
+# fun: complete_load
+# txt: set tab completion
+complete_load ()
+{
+  set -o vi
+  bind 'set completion-ignore-case on'
+  bind -x '"\t":"complete_item"';
+}

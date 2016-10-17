@@ -1,0 +1,62 @@
+## vim:ft=sh
+
+# fun: color_consistent <color> <item>
+# txt: get a consistent color from color preference passed as argument. If
+#      preference is `CONSISTENT`, then color is chosen randomly, but
+#      consistenly with the item to be colorized. To choose colors use the
+#      `colors` configuration variable
+color_consistent ()
+{
+  if [ "$1" != "CONSISTENT" ]; then
+    echo "$1"
+  else
+    local key=$((0x$(oid "$2")0))
+    local -a avail_colors=(
+      $(split "$(config_get timeline.consistent-colors)")
+    )
+    echo "${avail_colors[$((key % ${#avail_colors[@]}))]}"
+  fi
+}
+
+# fun: color_eval <var> <fg,bg> <dfg,dbg> <message>
+# txt: print a message between colors defined in two first arguments.
+color_eval ()
+{
+  local fg bg dfg dbg
+  local var="$1"; shift
+
+  IFS=',' read -r fg bg <<< "$(config_get_empty "$1")"; shift
+  IFS=',' read -r dfg dbg <<< "$(config_get "$1")"; shift
+
+  fg="$(color_consistent "$fg" "$1")"
+  dfg="$(color_consistent "$dfg" "$1")"
+  bg="$(color_consistent "$bg" "$1")"
+  dbg="$(color_consistent "$dbg" "$1")"
+
+  eval "${var}[0]=''"
+  eval "${var}[1]=''"
+  eval "${var}[2]=''"
+
+  if [[ "$fg" ]]; then
+    eval "${var}[0]+=\"\$(tput setaf $fg)\""
+  elif [[ "$dfg" ]]; then
+    eval "${var}[0]+=\"\$(tput setaf $dfg)\""
+  fi
+
+  if [[ "$bg" ]]; then
+    eval "${var}[0]+=\"\$(tput setab $bg)\""
+  elif [[ "$dbg" ]]; then
+    eval "${var}[0]+=\"\$(tput setab $dbg)\""
+  fi
+
+  eval "${var}[1]+=\"${1//\"/\\\"}\""
+
+  [[ "$dfg" ]] && eval "${var}[2]+=\"\$(tput setaf $dfg)\""
+  [[ "$dbg" ]] && eval "${var}[2]+=\"\$(tput setab $dbg)\""
+}
+
+# fun: color_reset
+# txt: print reset code to reset all enabled color codes (in theory)
+color_reset () {
+  tput sgr0
+}

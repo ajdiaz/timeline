@@ -1,0 +1,254 @@
+## vim:ft=sh
+
+# env: ACCOUNT_NAME: A variable contains the name of the acctive account.
+ACCOUNT_NAME=
+
+# fun: account_list
+# txt: output a new-line separated list of defined accounts.
+account_list ()
+{
+  local account
+
+  for account in $(config_iter account.); do
+    case "$account" in
+      account.*.path)
+        account="${account#account.}"
+        account="${account%.path}"
+        echo "$account"
+      ;;
+    esac
+  done
+}
+
+# fun: account_load [name]
+# txt: load the account named as argument, if argument is omit, then try to
+#      load the account using the `account.default` configuration value or,
+#      if missing and there is only one configured account this one.
+#      Otherwise failed.
+account_load ()
+{
+  local name="$1"
+
+  name="${name:-$(config_get_empty account.default)}"
+
+  if [[ -z "$name" ]]; then
+
+    # try to infer the account name if none is provided
+    
+    local all_accounts=( $(account_list) )
+
+    case "${#all_accounts[@]}" in
+      0) return 1;;
+      1) name="${all_accounts[0]}";;
+      *) E=1 fatal $"There are may accounts.";;
+    esac
+
+  fi
+
+  ACCOUNT_NAME="$name"
+}
+
+NOACTIVE=$"There are no active accounts"
+
+# fun: account_active_name
+# txt: print the name of the current active account
+account_active_name ()
+{
+  echo "${ACCOUNT_NAME}"
+}
+
+# fun: account_active_oid
+# txt: print the OID of the current active account
+account_active_oid ()
+{
+  [[ "$ACCOUNT_NAME" ]] ||
+    E=1 fatal "$NOACTIVE"
+  oid "$(config_get "account.$ACCOUNT_NAME.pull-url")"
+}
+
+# fun: account_active_path
+# txt: print the path of the current active account
+account_active_path ()
+{
+  [[ "$ACCOUNT_NAME" ]] ||
+    E=1 fatal "$NOACTIVE"
+  config_get "account.$ACCOUNT_NAME.path"
+}
+
+# fun: account_exists [name]
+# txt: return true if the account name passed as argument is a initialized
+#      account. If name is omit, then use active account path.
+account_exists ()
+{
+  local path=
+  
+  [[ "$1" ]] && path="$(config_get "account.$1.path")"
+
+  if [[ -z "$path" ]]; then
+    path="$(account_active_path)"
+  fi
+  [ -d "${path%.git}/.git" ]
+}
+
+# fun: account_create <name> <push_url> <pull_url> [keyid] [path]
+# txt: create a new account named as name, with specific push and pull url,
+#      if path is provided then set the account path to this one, otherwise,
+#      use the default path for accounts as prefix
+account_create ()
+{
+  local name="$1" push_url="$2" pull_url="$3" keyid="$4" path="$5"
+
+  if [[ "$(config_get_empty "account.$name.path")" ]]; then
+    E=1 fatal $"Another account already exists with that name"
+  else
+    path="${path:-$(try_path "$(config_get account.path)")/$name}"
+    config_set "account.$name.push-url" "$push_url"
+    config_set "account.$name.pull-url" "$pull_url"
+    config_set "account.$name.path" "$path"
+    config_set "account.$name.keyid" "$keyid"
+    config_set "user.alias-$(oid "$pull_url")" "$name"
+    account_init "$name"
+    config_save "${CONFIG_FILE}"
+  fi
+}
+
+# fun: account_clone <name> <push_url> <pull_url> [keyid] [path]
+# txt: clone new account named as name, from the specific push url,
+#      if path is provided then set the account path to this one, otherwise,
+#      use the default path for accounts as prefix
+account_clone ()
+{
+  local name="$1" push_url="$2" pull_url="$3" keyid="$4" path="$5"
+
+  if [[ "$(config_get_empty "account.$name.path")" ]]; then
+    E=1 fatal $"Another account already exists with that name"
+  else
+    path="${path:-$(try_path "$(config_get account.path)")/$name}"
+    config_set "account.$name.push-url" "$push_url"
+    config_set "account.$name.pull-url" "$pull_url"
+    config_set "account.$name.keyid" "$keyid"
+    config_set "account.$name.path" "$path"
+    config_set "user.alias-$(oid "$pull_url")" "$name"
+    command git clone "$push_url" "$path"
+    workon "$path" command git submodule init
+    account_config "$path" "$pull_url"
+    config_save "${CONFIG_FILE}"
+  fi
+}
+
+# fun: account_init <name>
+# txt: initialized the accoutn passed as argument
+account_init ()
+{
+  if account_exists "$1"; then
+    E=1 fatal $"Trying to initializating an already initialized account"
+  else
+    local path push_url pull_url keyid
+
+    path="$(config_get "account.$1.path")"
+    pull_url="$(config_get "account.$1.pull-url")"
+    push_url="$(config_get "account.$1.push-url")"
+    keyid="$(keyid "$1")"
+
+    # create empty dir for init
+    mkdir -p "$path" ||
+      E=1 fatal $"Unable to create account directory: %s" "$path"
+
+    workon "$path" command git init
+    account_config "$path" "$pull_url"
+    workon "$path" command git add .
+    if [[ "$keyid" ]]; then
+      workon "$path" command git commit -S -m 'Initial commit'
+    else
+      workon "$path" command git commit -m 'Initial commit'
+    fi
+    workon "$path" command git remote add origin "$push_url"
+  fi
+}
+
+# fun: account_config <path> <pull_url> [keyid]
+# txt: configure user and other required things in the repo
+account_config ()
+{
+  local path="$1" pull_url="$2" keyid="$3"
+  workon "$path" command git config user.name "$(oid "$pull_url")"
+  workon "$path" command git config user.email "$(oid "$pull_url")@timeline"
+  [[ "$keyid" ]] &&
+    workon "$path" command git config user.signingkey "$keyid"
+  workon "$path" command touch CONTENT
+  workon "$path" command mkdir -p "FOLLOW"
+}
+
+# fun: account_commit
+# txt: set a commit point into current active account
+account_commit ()
+{
+  local path keyid
+
+  path="$(account_active_path)"
+  keyid="$(keyid "$(account_active_name)")"
+
+  workon "$path" command git add .
+  if [[ "$keyid" ]]; then
+    workon "$path" command git commit -S -m "Timeline Autosave: $(timestamp)"
+  else
+    workon "$path" command git commit -m "Timeline Autosave: $(timestamp)"
+  fi
+}
+
+# fun: account_push [remote]
+# txt: push active account content to remote passed as argument or, if
+#      missing, to `origin`.
+account_push ()
+{
+  # TODO Add support for multiple branches
+  workon "$(account_active_path)" command git push "${1:-origin}" master
+}
+
+# fun: account_refresh [remote]
+# txt: rebase changes to current account from remote passed as argument or,
+#     if missing, `origin`.
+account_refresh ()
+{
+  local path
+
+  path="$(account_active_path)"
+
+  account_commit
+
+  workon "$path" command git fetch --all
+  # TODO Add support for multiple branches
+  workon "$path" command git rebase "${1:-origin}/master"
+  workon "$path" command git submodule update --remote
+
+  account_push "${1:-origin}"
+}
+
+# fun: account_delete [name]
+# txt: delete account by name passed as argument or active account if none
+#      name is provided.
+account_delete ()
+{
+  local name="${1:-$ACCOUNT_NAME}" path oid
+
+  path="$(config_get "account.$name.path")"
+  oid="$(oid "$(config_get "account.$name.pull-url")")"
+
+  if [[ -d "$path" ]]; then
+    rm -rf "$path"
+  fi
+
+  config_unset "account.$name"
+  config_unset "user.alias-$oid"
+
+  config_save "${CONFIG_FILE}"
+}
+
+# fun: account_set_keyid <name> <keyid>
+# txt: set keyid for an existant account
+account_set_keyid ()
+{
+  workon "$(config_get "account.$1.path")" \
+    command git config user.signingkey "$2"
+  config_set "account.$1.keyid" "$2"
+}

@@ -1,0 +1,104 @@
+## vim:ft=sh
+
+# env: NETWORK: an associative array which contains all network information
+declare -A NETWORK_ITEMS=()
+declare -A NETWORK_SCORE=()
+declare -A NETWORK_PARENTS=()
+
+NETWORK_PATH_PREFIX="network"
+
+# fun: network_list
+# txt: print the current discovered network
+network_list ()
+{
+  local -a sort_score=()
+
+  # first sort scores
+  for items in "${!NETWORK_SCORE[@]}"; do
+    sort_score[${NETWORK_SCORE["$items"]}]+=" $items "
+  done
+
+  # reverse score array and print results
+  i=$((${#sort_score[@]}))
+  for ((;i>=1; i--)); do
+    items="${sort_score[$i]}"
+
+    for item in $items; do
+      format_compose network.list date "$(timestamp)"
+      format_compose network.list name "NETWORK"
+      format_compose network.list score "$i"
+      format_compose network.list user "$(username "$item")"
+      format_compose network.list url "${NETWORK_ITEMS["$item"]}"
+      format_dumps network.list
+      for follow in ${NETWORK_PARENTS["$item"]}; do
+        format_compose network.list date "$(timestamp)"
+        format_compose network.list name "NETWORK"
+        format_compose network.follower user "$(username "$follow")"
+        format_dumps network.follower
+      done
+    done
+  done
+}
+
+# fun: network_load <path> [parent] [depth]
+# txt: Build network graph from path
+# env: UPDATE: if true performs refresh
+network_load ()
+{
+  local path="$1" parent="$2" depth=${3:-0}
+  local max_depth ignoredup cache
+  local uid url
+
+  max_depth="$(config_get network.depth)"
+  ignoredup="$(config_get network.ignore-duplicates)"
+
+  cache="${CACHE_DIR}/${NETWORK_PATH_PREFIX}"
+
+  # finish recursion: max depth reached
+  [[ "$depth" -gt "$max_depth" ]] && return
+
+  if [[ "$depth" -eq 0 ]]; then
+    NETWORK_ITEMS=()
+    NETWORK_SCORE=()
+    NETWORK_PARENTS=()
+  fi
+
+  mkdir -p "${cache}"
+
+  while read -r uid url; do
+    # ignore duplicates
+    [[ "${ignoredup}" = "true" ]] &&
+      [[ "${NETWORK_ITEMS[$uid]}" ]] && continue
+
+    if [[ -d "${cache}/$uid" ]]; then
+      # repo already exists, just rebase
+      ${UPDATE:-false} &&
+        workon "${cache}/$uid" command git pull --rebase 2>&1
+    else
+      # repo does not exists yet, cloning...
+      ${UPDATE:-false} &&
+        workon "${cache}" git clone --depth 1 "$url" "$uid" 2>&1
+    fi
+
+    if ${UPDATE:-false} && [[ $? -ne 0 ]]; then
+      # clone or pull failed
+      error $"Unable to clone/pulling repository for '%s' at '%s'" \
+        "$uid" "$url"
+      continue
+    fi
+
+    NETWORK_ITEMS["$uid"]="$url"
+    NETWORK_SCORE["$uid"]=$((${NETWORK_SCORE["$uid"]:-0} + 1))
+    [[ "$parent" ]] && NETWORK_PARENTS["$uid"]+=" $parent "
+
+    network_load "${cache}/$uid" "$uid" "$((depth + 1))"
+
+  done < <(follow_list "${path}")
+}
+
+# fun: network_refresh <path>
+# txt: Refresh the network, looking for new followers in the graph.
+network_refresh ()
+{
+  UPDATE=true network_load "$1"
+}

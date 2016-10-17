@@ -1,0 +1,98 @@
+
+████████╗██╗███╗   ███╗███████╗██╗     ██╗███╗   ██╗███████╗
+╚══██╔══╝██║████╗ ████║██╔════╝██║     ██║████╗  ██║██╔════╝
+   ██║   ██║██╔████╔██║█████╗  ██║     ██║██╔██╗ ██║█████╗
+   ██║   ██║██║╚██╔╝██║██╔══╝  ██║     ██║██║╚██╗██║██╔══╝
+   ██║   ██║██║ ╚═╝ ██║███████╗███████╗██║██║ ╚████║███████╗
+   ╚═╝   ╚═╝╚═╝     ╚═╝╚══════╝╚══════╝╚═╝╚═╝  ╚═══╝╚══════╝
+
+
+
+Timeline is a plain-text based distributed social network build on top of
+git configuration manager. Timeline is:
+
+
+- Distributed / Descentralized
+- Secure / Solid / Spam aware
+- GPL3 licensed
+- Fun!
+
+
+
+----- Installation ------------------------------------------------------------
+
+Just curl for it:
+
+  curl -o ./tl \
+    https://git.connectical.com/connectical/timeline/raw/master/tl && \
+    chmod 755 ./tl
+
+
+
+----- Getting started ---------------------------------------------------------
+
+
+  # create new account (i.e. git repo) and sync with remote one.
+  ./tl account create name ssh://user@host/therepo.git http://myrepopublicurl
+  #                   ^^^^ ^^^^^^^^^^^^^^^^^^^^^^^^^^^ ^^^^^^^^^^^^^^^^^^^^^^
+  #                   name url to push                 url to public pull
+
+  # add some people to follow
+  ./tl follow http://githost.com/repo.git myfriend
+  #           ^^^^^^^^^^^^^^^^^^^^^^^^^^^ ^^^^^^^^
+  #           url to pull from            optional alias for this repo
+
+  # done! check your timeline
+  ./tl timeline refresh
+
+  # Or if you are lazy, you can use alias
+  ./tl tr
+
+
+----- Understanding timeline --------------------------------------------------
+
+
+Timeline works linking different user's accounts, which are actually git
+repositories. The people you follows are submodules of your account
+repository, so it's easy to update and parse using a common format for
+content.
+
+To discover new people just use the `network refresh` command, which follows
+your followings in order to discover all people connected with you.
+
+Followings only works in one way, that means that even if you publish some
+content, only people who follows you can read that messages in their
+timelines.
+
+You can create your repository public or private, if it's private, then
+security is delegated to the git client (usually uses HTTPS or SSH).
+
+
+----- Some advantages ---------------------------------------------------------
+
+
+1. Is a decentralized network. No one controls the network, and no one can
+   close it.
+2. Each follower has a reduced copy of your repo, so even if you repository
+   is deleted, each follower of you can upload a copy of your repository,
+   keeping your message online.
+3. There are no tracks, no one spy you if you don't want to.
+4. You can manage multiple copies of your repo, so if for some reason one is
+   deleted, you can still using others.
+5. There are no spam, because only people who follows can publish to you
+   (i.e. you only see messages from people who follows).
+6. There are no indiscriminated following. Well, there could be, but makes
+   no sense, because you do not realized that who is following you, so
+   following you to achive more followers for a third account doesn't work
+   anymore.
+
+
+------ Get involved -----------------------------------------------------------
+
+This is a basic implementation of timeline protocol, but any other
+implementation is welcome too. If you found a bug or want any enhancement,
+please open a issue.
+
+
+-- 
+Happy hacking!

@@ -1,0 +1,38 @@
+## vim:ft=sh
+
+# fun: history_load
+# txt: if is defined prompt_history and prompt_history_file configuration
+#      file, load from there the history of the commands.
+history_load ()
+{
+  hist_enabled="$(config_get history.enabled)"
+  hist_file="$(config_get_empty history.file)"
+
+  history -c
+
+  if [ "${hist_enabled}" = "true" ] &&
+     [ "${hist_file}" ] && 
+     [ -r "${hist_file}" ]; then
+    history -r "${hist_file}"
+  fi
+}
+
+# fun: history_save
+# txt: if defined history_file configuration file, save history to that
+#      file.
+history_save ()
+{
+  hist_enabled="$(config_get history.enabled)"
+  hist_file="$(config_get_empty history.file)"
+
+  [ "${hist_enabled}" = "true" ] && [ "${hist_file}" ] &&
+    history -w "${hist_file}"
+}
+
+# fun: history_append <command>
+# txt: append command into history line if history is enabled
+history_append ()
+{
+  hist_enabled="$(config_get history.enabled)"
+  [ "${hist_enabled}" = "true" ] && history -s "$1"
+}

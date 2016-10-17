@@ -1,0 +1,63 @@
+## vim:ft=sh
+
+FILTER_HIDE=()
+FILTER_SHOW=()
+
+# fun: filter <tags_to_filter> <eid>
+# txt: return true if EID need to be filtered
+filter_tag ()
+{
+  local fpattern="$1" eid="$2"
+  local event tag
+
+  [[ "$fpattern" = "*" ]] && return 0
+
+  for event in $(event_labels "$eid"); do
+    for tag in $(event_tags "$event"); do
+      if any "$fpattern" "$tag"; then
+        return 0
+      fi
+    done
+  done
+  return 1
+}
+
+# fun: filter_add {hide|show} <expr>
+# txt: Add an expression filter
+filter_add ()
+{
+  local mode="$1"; shift
+
+  case "$mode" in
+    hide) FILTER_HIDE+=( "$@" );;
+    show) FILTER_SHOW+=( "$@" );;
+  esac
+}
+
+# fun: filter_eval {hide|show} <eid>
+# txt: evaluate filtering of the eid for the specified mode. If this funcion
+#      return 0, means that the item is filtered, otherwise is not filtered.
+filter_eval ()
+{
+  local mode="$1"; shift
+  local -a expr_array=()
+
+  case "$mode" in
+    hide) expr_array+=( "${FILTER_HIDE[@]}" );;
+    show) expr_array+=( "${FILTER_SHOW[@]}" );;
+  esac
+
+  for expr in "${expr_array[@]}"; do
+    case "$expr" in
+      '') ;;
+      tag:*)
+        filter_tag "${expr#tag:}" "$@"
+        [[ $? -eq 0 ]] && return 0
+        ;;
+      *)
+        E=3 error $"This kind of filtering is not implemented yet"
+        ;;
+    esac
+  done
+  return 1
+}

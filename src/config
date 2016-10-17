@@ -1,0 +1,317 @@
+## vim:ft=sh
+
+# env: CONFIG: associative array contains the configuration values. This
+#      array should be loaded from file with `config_load` function, and
+#      accessed by `config_get` and `config_set` to read and write,
+#      res pectively.
+declare -xA CONFIG=(
+  [interactive.show-banner]=true
+  [account.auto-push]=true
+  [account.default]=''
+  [account.keyid]=''
+  [account.path]="$HOME/.local/share/tl/account:$HOME/.tl/account"
+  [plugin.path]="$HOME/.local/share/tl/plugin:$HOME/.tl/plugin"
+  [cache.path]="$HOME/.cache/tl:$HOME/.tl/cache"
+  [network.depth]=10
+  [network.ignore-duplicates]=true
+  [prompt.format]='%b%s:%b '
+  [prompt.fields]='account'
+  [prompt.color]='7,'
+  [prompt.color-name]='7,'
+  [history.enabled]=true
+  [history.file]="$HOME/.local/share/tl/history"
+  [timeline.filter.show]=''
+  [timeline.filter.hide]='tag:spam'
+  [timeline.own-posts]=true
+  [timeline.max-posts]=100
+  [timeline.max-user-posts]=20
+  [timeline.use-short-ids]=true
+  [timeline.post.format]='%b%-3d%b %b%(%Y-%m-%d %H:%M:%S)T%b %b%10s%b %b%3s%b %b%s%b'
+  [timeline.post.fields]='index,date,name,flags,mesg'
+  [timeline.post.prefix]=''
+  [timeline.post.color]='7,'
+  [timeline.post.color-index]='7,'
+  [timeline.post.color-date]='7,'
+  [timeline.post.color-name]='7,'
+  [timeline.post.color-flags]='7,'
+  [timeline.post.color-mesg]='7,'
+  [timeline.post.style-index]='normal'
+  [timeline.post.style-date]='normal'
+  [timeline.post.style-name]='normal'
+  [timeline.post.style-flags]='normal'
+  [timeline.post.style-mesg]='normal'
+  [timeline.post.flag-signed]='S'
+  [timeline.tag.format]='%b%-3d%b %b%(%Y-%m-%d %H:%M:%S)T%b %b%10s%b %b%3s%b %b%s%b'
+  [timeline.tag.fields]='index,date,name,flags,tags'
+  [timeline.tag.prefix]='# '
+  [timeline.tag.indent]=' '
+  [timeline.tag.color]='7,'
+  [timeline.tag.color-index]='7,'
+  [timeline.tag.color-date]='7,'
+  [timeline.tag.color-name]='7,'
+  [timeline.tag.color-mesg]='7,'
+  [timeline.tag.color-flags]='7,'
+  [timeline.tag.color-tags]='7,'
+  [timeline.tag.style-index]='normal'
+  [timeline.tag.style-date]='normal'
+  [timeline.tag.style-name]='normal'
+  [timeline.tag.style-flags]='normal'
+  [timeline.tag.style-tags]='normal'
+  [timeline.tag.flag-signed]='S'
+  [timeline.reply.format]='%b%-3d%b %b%(%Y-%m-%d %H:%M:%S)T%b %b%10s%b %b%3s%b %b%s%b'
+  [timeline.reply.fields]='index,date,name,flags,mesg'
+  [timeline.reply.prefix]='> '
+  [timeline.reply.indent]=' '
+  [timeline.reply.color]='7,'
+  [timeline.reply.color-index]='7,'
+  [timeline.reply.color-date]='7,'
+  [timeline.reply.color-name]='7,'
+  [timeline.reply.color-flags]='7,'
+  [timeline.reply.color-mesg]='7,'
+  [timeline.reply.style-index]='normal'
+  [timeline.reply.style-date]='normal'
+  [timeline.reply.style-name]='normal'
+  [timeline.reply.style-flags]='normal'
+  [timeline.reply.style-mesg]='normal'
+  [timeline.reply.flag-signed]='S'
+  [timeline.fatal.format]='*** %b%(%Y-%m-%d %H:%M:%S)T%b %b%10s%b   %b%s%b'
+  [timeline.fatal.fields]='date,name,mesg'
+  [timeline.fatal.name]='FATAL'
+  [timeline.fatal.color]='7,'
+  [timeline.fatal.color-date]='7,'
+  [timeline.fatal.color-name]='7,'
+  [timeline.fatal.color-mesg]='7,'
+  [timeline.fatal.style-date]='normal'
+  [timeline.fatal.style-name]='normal'
+  [timeline.fatal.style-mesg]='normal'
+  [timeline.error.format]='*** %b%(%Y-%m-%d %H:%M:%S)T%b %b%10s%b   %b%s%b'
+  [timeline.error.fields]='date,name,mesg'
+  [timeline.error.name]='ERROR'
+  [timeline.error.color]='7,'
+  [timeline.error.color-date]='7,'
+  [timeline.error.color-name]='7,'
+  [timeline.error.color-mesg]='7,'
+  [timeline.error.style-date]='normal'
+  [timeline.error.style-name]='normal'
+  [timeline.error.style-mesg]='normal'
+  [timeline.info.format]='*** %b%(%Y-%m-%d %H:%M:%S)T%b %b%10s%b   %b%s%b'
+  [timeline.info.fields]='date,name,mesg'
+  [timeline.info.name]='INFO'
+  [timeline.info.color]='7,'
+  [timeline.info.color-date]='7,'
+  [timeline.info.color-name]='7,'
+  [timeline.info.color-mesg]='7,'
+  [timeline.info.style-date]='normal'
+  [timeline.info.style-name]='normal'
+  [timeline.info.style-mesg]='normal'
+  [timeline.consistent-colors]=''
+  [network.list.format]='*** %b%(%Y-%m-%d %H:%M:%S)T%b %b%10s%b  score: %b%-03d%b  %b%-10s%b %b%s%b'
+  [network.list.fields]='date,name,score,user,url'
+  [network.list.color-score]='7,'
+  [network.list.color-date]='7,'
+  [network.list.color-name]='7,'
+  [network.list.color-user]='7,'
+  [network.list.color-url]='7,'
+  [network.list.color]='7,'
+  [network.list.style-date]='normal'
+  [network.list.style-name]='normal'
+  [network.list.style-score]='normal'
+  [network.list.style-user]='normal'
+  [network.list.style-url]='normal'
+  [network.show-followers]=true
+  [network.follower.format]='*** %b%(%Y-%m-%d %H:%M:%S)T%b %b%10s%b                         FOLLOWED BY %b%-10s%b'
+  [network.follower.fields]='date,name,user'
+  [network.follower-color-date]='7,'
+  [network.follower-color-name]='7,'
+  [network.follower-color-user]='7,'
+  [network.follower.color]='7,'
+  [alias.tr]='timeline refresh'
+  [alias.tl]='timeline list'
+  [alias.post]='event post'
+  [alias.reply]='event reply'
+  [alias.tag]='event tag'
+  [alias.info]='timeline info'
+)
+
+if test -t 1; then
+  case "$(tput colors)" in
+     8)
+       CONFIG['timeline.post.color']=8,
+       CONFIG['timeline.post.color-date']=8,
+       CONFIG['timeline.post.color-mesg']=7,
+       CONFIG['timeline.post.color-flags']=11,
+       CONFIG['timeline.post.color-name']=CONSISTENT,
+       CONFIG['timeline.reply.color']=8,
+       CONFIG['timeline.reply.color-date']=8,
+       CONFIG['timeline.reply.color-mesg']=7,
+       CONFIG['timeline.reply.color-flags']=11,
+       CONFIG['timeline.reply.color-name']=CONSISTENT,
+       CONFIG['timeline.tag.color']=8,
+       CONFIG['timeline.tag.color-date']=8,
+       CONFIG['timeline.tag.color-tags']=3,
+       CONFIG['timeline.tag.color-name']=CONSISTENT,
+       CONFIG['timeline.tag.color-flags']=11,
+       CONFIG['timeline.info.color']=8,
+       CONFIG['timeline.info.color-date']=8,
+       CONFIG['timeline.info.color-name']=6,
+       CONFIG['timeline.info.color-mesg']=7,
+       CONFIG['timeline.error.color']=8,
+       CONFIG['timeline.error.color-date']=8,
+       CONFIG['timeline.error.color-name']=4,
+       CONFIG['timeline.error.color-mesg']=7,
+       CONFIG['timeline.fatal.color']=8,
+       CONFIG['timeline.fatal.color-date']=8,
+       CONFIG['timeline.fatal.color-name']=4,
+       CONFIG['timeline.fatal.color-mesg']=7,
+       CONFIG['timeline.consistent-colors']="3,5,6,9"
+       CONFIG['network.list.color-date']=8,
+       CONFIG['network.list.color-name']=6,
+       CONFIG['network.list.color-score']=3,
+       CONFIG['network.list.color-user']=CONSISTENT,
+       CONFIG['network.list.color-url']=4,
+       CONFIG['network.follower.color-user']=6,
+       CONFIG['network.follower.color-name']=6,
+       CONFIG['network.follower.color-date']=8,
+       CONFIG['network.follower.color']=8,
+       CONFIG['prompt.color']=4,
+      ;;
+   256)
+       CONFIG['timeline.post.color']=240,
+       CONFIG['timeline.post.color-date']=240,
+       CONFIG['timeline.post.color-mesg']=7,
+       CONFIG['timeline.post.color-name']=CONSISTENT,
+       CONFIG['timeline.post.color-flags']=11,
+       CONFIG['timeline.post.flag-signed']='✓'
+       CONFIG['timeline.reply.color']=240,
+       CONFIG['timeline.reply.color-date']=240,
+       CONFIG['timeline.reply.color-mesg']=245,
+       CONFIG['timeline.reply.color-name']=CONSISTENT,
+       CONFIG['timeline.reply.color-flags']=11,
+       CONFIG['timeline.reply.flag-signed']='✓'
+       CONFIG['timeline.reply.prefix']='⤷ ' # XXX 256colors -> unicode!!!
+       CONFIG['timeline.tag.color']=240,
+       CONFIG['timeline.tag.color-date']=240,
+       CONFIG['timeline.tag.color-tags']=136,
+       CONFIG['timeline.tag.color-name']=CONSISTENT,
+       CONFIG['timeline.tag.style-tags']=italic
+       CONFIG['timeline.tag.color-flags']=11,
+       CONFIG['timeline.tag.flag-signed']='✓'
+       CONFIG['timeline.info.color']=240,
+       CONFIG['timeline.info.color-date']=240,
+       CONFIG['timeline.info.color-name']=69,
+       CONFIG['timeline.info.color-mesg']=7,
+       CONFIG['timeline.info.style-mesg']=italic
+       CONFIG['timeline.error.color']=240,
+       CONFIG['timeline.error.color-date']=240,
+       CONFIG['timeline.error.color-name']=9,
+       CONFIG['timeline.error.color-mesg']=7,
+       CONFIG['timeline.fatal.color']=240,
+       CONFIG['timeline.fatal.color-date']=240,
+       CONFIG['timeline.fatal.color-name']=9,
+       CONFIG['timeline.fatal.color-mesg']=7,
+       CONFIG['timeline.consistent-colors']="34,139,149,199,209,173,153"
+       CONFIG['network.list.color-date']=240,
+       CONFIG['network.list.color-name']=165,
+       CONFIG['network.list.color-score']=226,
+       CONFIG['network.list.color-user']=CONSISTENT,
+       CONFIG['network.list.color-url']=69,
+       CONFIG['network.follower.color-user']=214,
+       CONFIG['network.follower.color-name']=165,
+       CONFIG['network.follower.color-date']=240,
+       CONFIG['network.follower.style-user']='italic'
+       CONFIG['network.follower.color']=240,
+       CONFIG['prompt.color']=69,
+       ;;
+  esac
+fi
+
+
+# fun: config_load <filename>
+# txt: given a filename path as argument, read the content and save it in
+#      `$CONFIG` environment variable properly.
+config_load ()
+{
+  local IFS='='
+  while read -r key val; do
+    CONFIG["$key"]="$val"
+  done < <(command git config -f "$1" -l)
+}
+
+# fun: config_get <key>
+# txt: get the configuration value corresponding with the configuration
+#      keyword passed as argument, or fails if not found.
+config_get ()
+{
+  local val="${CONFIG["$1"]}"
+
+  [[ "$val" ]] ||
+    E=1 error $"Unknown configuration variable '%s'" "$1"
+
+  echo "$val"
+}
+
+# fun: config_get_empty <key>
+# txt: similar to `config_get`, but if key is not defined an empty value is
+#      returned instead of failing.
+config_get_empty ()
+{
+  echo "${CONFIG["$1"]}"
+}
+
+# fun: config_set <key> <val>
+# txt: set the properly value of configuration key passed as argument using
+#      value provided.
+config_set ()
+{
+  CONFIG["$1"]="$2"
+}
+
+# fun: config_unset key
+# txt: unset config key with named passed as parameter key.
+config_unset ()
+{
+  CONFIG["$1"]=''
+}
+
+# fun: config_iter <prefix>
+# txt: given a fixed prefix, return all keys matched with specified prefix.
+config_iter ()
+{
+  for key in "${!CONFIG[@]}"; do
+    case "$key" in
+      "$1"*) echo "$key";;
+    esac
+  done
+}
+
+# fun: config_save <filename>
+# txt: given a filename passed as argument, dump the content of `$CONFIG`
+#      variable to that file
+config_save ()
+{
+  local val
+
+  if [[ ! -d "${1%/*}" ]]; then
+    mkdir -p "${1%/*}"
+  fi
+
+  for var in "${!CONFIG[@]}"; do
+    val="${CONFIG["$var"]}"
+
+    if [[ "$val" ]]; then
+      command git config -f "$1" "$var" "${CONFIG["$var"]}"
+    else
+      mute command git config -f "$1" --remove-section "${var}" ||
+        command git config -f "$1" --unset "${var}"
+    fi
+  done
+}
+
+# fun: config_list
+# txt: print all configuration values
+config_list ()
+{
+  for var in "${!CONFIG[@]}"; do
+    echo "${var}=${CONFIG[$var]}"
+  done
+}

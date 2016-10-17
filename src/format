@@ -1,0 +1,57 @@
+## vim:ft=sh
+
+# env: FORMAT: interal variable which contains the format to be printed with
+#      `format_dumps`. Do not use this variable directly, instead use
+#      `formaT_compose` function.
+declare -A FORMAT=()
+
+# fun: format_stype <style_config> <item>
+# txt: stylize a message called item with style provided in config addressed
+#      by key style_config.
+format_style ()
+{
+  local style
+  style="$(config_get_empty "$1")"
+
+  case "$style" in
+    italic) echo "$(tput sitm)$2$(tput ritm)";;
+    underline) echo "$(tput smul)$2$(tput rmul)";;
+    *) echo "$2";;
+  esac
+}
+
+# fun: format_compose <kind> <field> <value>
+# txt: compose a new format for kind passed as argument, setting the field
+#      provided with specified value.
+# use: format_compose timeline username "me"
+format_compose ()
+{
+  if test -t 1 || ${T:-false}; then
+    local -a format=()
+    color_eval format "${1}.color-${2}" "${1}.color" "$3"
+    format[1]="$(format_style "${1}.style-${2}" "${format[1]}")"
+    FORMAT["$2"]="$(join $'\n' "${format[@]}")"
+  else
+    FORMAT["$2"]=$'\n'"$3"$'\n'
+  fi
+}
+
+# fun: format_dumps <kind>
+# txt: dumps to stdout the format composed previously with `format_compose`.
+format_dumps ()
+{
+  local format fields
+  local -a args=()
+
+  format="$(config_get "${1}.format")"
+  fields="$(config_get "${1}.fields")"
+
+  [ "$format" ] || format=''
+
+  for field in $(split "$fields"); do
+    mapfile -t -O "${#args[@]}" args <<< "${FORMAT["$field"]}"
+  done
+
+  # shellcheck disable=SC2059
+  printf "${format}%b\n" "${args[@]}" "$(color_reset)"
+}
