@@ -24,7 +24,7 @@ git configuration manager. Timeline is:
 Just curl for it:
 
   curl -o ./tl \
-    https://git.connectical.com/connectical/timeline/raw/master/tl && \
+    https://raw.githubusercontent.com/ajdiaz/timeline/master/tl && \
     chmod 755 ./tl
 
 
