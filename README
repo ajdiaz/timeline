@@ -48,6 +48,9 @@ Just curl for it:
   # Or if you are lazy, you can use alias
   ./tl tr
 
+  # And you can filter your results by tags
+  ./tl tr tag:Timeline
+
 
 ----- Understanding timeline --------------------------------------------------
 

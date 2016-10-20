@@ -427,7 +427,7 @@ timeline_index_get ()
 # txt: given an eid, print the infortmation related with this event
 timeline_info ()
 {
-  local eid="$1" date kind mesg tags reply link name item
+  local eid="$1" date kind mesg tags reply link name item tag
 
   # XXX Move this block to a sub function or similar?
   date="$(event_date "$eid")"
@@ -460,8 +460,18 @@ timeline_info ()
   printf $"%-10s %s\n" "Link:"   "${link}"
   printf $"%-10s %s\n" "Tags:"   "${tags}"
   printf $"%-10s %s\n" "Mesg:"   "${mesg}"
-  printf $"Tagged  by:\n"
+  printf $"Tagged by:\n"
   for item in $(event_labels "$eid"); do
+    printf "  -  %s\n" "$item"
+  done
+  local -A taggedas=()
+  for item in $(event_labels "$eid"); do
+    for tag in $(event_tags "$item"); do
+      taggedas["$tag"]=1
+    done
+  done
+  printf $"Tagged as:\n"
+  for item in "${!taggedas[@]}"; do
     printf "  -  %s\n" "$item"
   done
   printf $"Replied by:\n"
@@ -470,7 +480,14 @@ timeline_info ()
   done
 
   if [[ "$(event_sign "$eid")" = "0" ]]; then
-    event_sign_ext "$eid"
+    printf "Signed: Yes\n"
+    printf "Signature information:\n"
+
+    while read -r line; do
+      printf "  %s\n" "$line"
+    done < <(event_sign_ext "$eid")
+  else
+    printf "Signed: No\n"
   fi
 }
 ## vim:ft=sh
