@@ -333,7 +333,7 @@ timeline_list_thread ()
 
   if [[ "$sign" -eq 0 ]]; then
     flag="$(config_get_empty "timeline.$kind.flag-signed")"
-    flags+=" ${flag:-signed} "
+    flags+="${flag:-S}"
   fi
 
   # composing the output
@@ -343,19 +343,35 @@ timeline_list_thread ()
   format_compose "timeline.$kind" tags "${2}${indent}${prefix}${tags}"
   format_compose "timeline.$kind" link "$link"
   format_compose "timeline.$kind" mesg "${2}${indent}${prefix}${mesg}"
-  format_compose "timeline.$kind" flags "$flags"
-  format_dumps "timeline.$kind"
 
   TIMELINE_PRINTED["$eid"]=1
   TIMELINE_INDEX+=( "$eid" )
 
-  for tags in $(event_labels "$eid"); do
-    timeline_list_thread "$tags" "$2${indent}"
-  done
+  if [[ "$(config_get_empty "timeline.show-tags")" = "true" ]]; then
+    format_compose "timeline.$kind" flags "$flags"
+    format_dumps "timeline.$kind"
 
-  for reply in $(event_replies "$eid"); do
-    timeline_list_thread "$reply" "$2${indent}"
-  done
+    for tags in $(event_labels "$eid"); do
+      timeline_list_thread "$tags" "$2${indent}"
+    done
+  elif [[ "$(event_labels "$eid")" ]]; then
+    flag="$(config_get_empty "timeline.$kind.flag-tagged")"
+    flags+="${flag:-T}"
+
+    format_compose "timeline.$kind" flags "$flags"
+    format_dumps "timeline.$kind"
+  else
+    format_compose "timeline.$kind" flags "$flags"
+    format_dumps "timeline.$kind"
+  fi
+
+
+
+  if [[ "$(config_get_empty "timeline.show-replies")" = "true" ]]; then
+    for reply in $(event_replies "$eid"); do
+      timeline_list_thread "$reply" "$2${indent}"
+    done
+  fi
 }
 
 # fun: timeline_list [filter]
@@ -383,7 +399,9 @@ timeline_list ()
   fi
 
   for eid in $(event_iter); do
-    timeline_list_thread "$eid" ''
+    if [[ "$(event_kind "$eid")" = "post" ]]; then
+      timeline_list_thread "$eid" ''
+    fi
   done
 
   timeline_index_save
@@ -1340,13 +1358,15 @@ declare -xA CONFIG=(
   [prompt.color-name]='7,'
   [history.enabled]=true
   [history.file]="$HOME/.local/share/tl/history"
+  [timeline.show-replies]=true
+  [timeline.show-tags]=false
   [timeline.filter.show]=''
   [timeline.filter.hide]='tag:spam'
   [timeline.own-posts]=true
   [timeline.max-posts]=100
   [timeline.max-user-posts]=20
   [timeline.use-short-ids]=true
-  [timeline.post.format]='%b%-3d%b %b%(%Y-%m-%d %H:%M:%S)T%b %b%10s%b %b%3s%b %b%s%b'
+  [timeline.post.format]='%b%-3d%b %b%(%Y-%m-%d %H:%M:%S)T%b %b%10s%b %b%-5s%b %b%s%b'
   [timeline.post.fields]='index,date,name,flags,mesg'
   [timeline.post.prefix]=''
   [timeline.post.color]='7,'
@@ -1361,7 +1381,7 @@ declare -xA CONFIG=(
   [timeline.post.style-flags]='normal'
   [timeline.post.style-mesg]='normal'
   [timeline.post.flag-signed]='S'
-  [timeline.tag.format]='%b%-3d%b %b%(%Y-%m-%d %H:%M:%S)T%b %b%10s%b %b%3s%b %b%s%b'
+  [timeline.tag.format]='%b%-3d%b %b%(%Y-%m-%d %H:%M:%S)T%b %b%10s%b %b%-5s%b %b%s%b'
   [timeline.tag.fields]='index,date,name,flags,tags'
   [timeline.tag.prefix]='# '
   [timeline.tag.indent]=' '
@@ -1378,7 +1398,7 @@ declare -xA CONFIG=(
   [timeline.tag.style-flags]='normal'
   [timeline.tag.style-tags]='normal'
   [timeline.tag.flag-signed]='S'
-  [timeline.reply.format]='%b%-3d%b %b%(%Y-%m-%d %H:%M:%S)T%b %b%10s%b %b%3s%b %b%s%b'
+  [timeline.reply.format]='%b%-3d%b %b%(%Y-%m-%d %H:%M:%S)T%b %b%10s%b %b%-5s%b %b%s%b'
   [timeline.reply.fields]='index,date,name,flags,mesg'
   [timeline.reply.prefix]='> '
   [timeline.reply.indent]=' '
@@ -1502,12 +1522,14 @@ if test -t 1; then
        CONFIG['timeline.post.color-name']=CONSISTENT,
        CONFIG['timeline.post.color-flags']=11,
        CONFIG['timeline.post.flag-signed']='✓'
+       CONFIG['timeline.post.flag-tagged']='✐'
        CONFIG['timeline.reply.color']=240,
        CONFIG['timeline.reply.color-date']=240,
        CONFIG['timeline.reply.color-mesg']=245,
        CONFIG['timeline.reply.color-name']=CONSISTENT,
        CONFIG['timeline.reply.color-flags']=11,
        CONFIG['timeline.reply.flag-signed']='✓'
+       CONFIG['timeline.reply.flag-tagged']='✐'
        CONFIG['timeline.reply.prefix']='⤷ ' # XXX 256colors -> unicode!!!
        CONFIG['timeline.tag.color']=240,
        CONFIG['timeline.tag.color-date']=240,
