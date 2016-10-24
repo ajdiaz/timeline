@@ -22,6 +22,31 @@ filter_tag ()
   return 1
 }
 
+# fun: filter {score-min|score-max} <value> <eid>
+# txt: return true if EID need to be filtered according to score values
+#      passsed as argument.
+filter_score ()
+{
+  local kind="$1" value="$2" eid="$3"
+  local score
+
+  score="$(event_score "$eid")"
+
+  case "$kind" in
+    score-min)
+      [[ "${score:-0}" -lt "${value}" ]] && return 0
+    ;;
+    score-max)
+      [[ "${score:-0}" -gt "${value}" ]] && return 0
+    ;;
+    *)
+      E=1 fatal $"Invalud score filter: %s" "$kind"
+    ;;
+  esac
+
+  return 1
+}
+
 # fun: filter_add {hide|show} <expr>
 # txt: Add an expression filter
 filter_add ()
@@ -52,6 +77,10 @@ filter_eval ()
       '') ;;
       tag:*)
         filter_tag "${expr#tag:}" "$@"
+        [[ $? -eq 0 ]] && return 0
+        ;;
+      score-min:*|score-max:*)
+        filter_score "${expr%%:*}" "${expr#*:}" "$@"
         [[ $? -eq 0 ]] && return 0
         ;;
       *)

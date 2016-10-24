@@ -7,10 +7,12 @@ declare -A EVENTS_LINK=()
 declare -A EVENTS_TAGS=()
 declare -A EVENTS_MESG=()
 declare -A EVENTS_SIGN=()
+declare -A EVENTS_SCORE=()
 declare -A EVENTS_SIGN_EXTENDED=()
 
 declare -A EVENTS_CROSS_REPLY=()
 declare -A EVENTS_CROSS_TAGS=()
+declare -A EVENTS_CROSS_SCORE=()
 declare -a EVENTS_SORTED=()
 
 # fun: event_load <account_id> <filename>
@@ -53,7 +55,7 @@ event_load ()
 event_load_line ()
 {
   local line="$2" eid="$1" verified="$3" ver_ext="$4"
-  local date kind rest link mesg tags
+  local date kind rest link mesg tags score
 
   read -r date kind rest <<< "$line"
 
@@ -70,8 +72,17 @@ event_load_line ()
       read -r link tags <<<"$rest"
       kind='tag'
       ;;
+    S|SCORE)
+      kind='score'
+      read -r link score <<<"$rest"
+      case "$score" in
+        -1) score="-1";;
+        *) score="1";;
+      esac
+      ;;
     *)
-      E=1 error $"Malformed event: '$line'"
+      error $"Ignored malformed event: '$line'"
+      return 0
       ;;
   esac
 
@@ -92,6 +103,11 @@ event_load_line ()
     EVENTS_CROSS_REPLY[$link]+=" $eid:$date "
   elif [[ "$kind" = 'tag' ]]; then
     EVENTS_CROSS_TAGS[$link]+=" $eid:$date "
+  elif [[ "$kind" = 'score' ]]; then
+    if ! [[ "${EVENTS_CROSS_SCORE[$eid:$link]}" ]]; then
+      EVENTS_CROSS_SCORE["$eid:$link"]=1
+      (( EVENTS_SCORE["$link"]+=score ))
+    fi
   fi
 }
 
@@ -121,6 +137,13 @@ event_replies ()
 event_labels ()
 {
   echo "${EVENTS_CROSS_TAGS[$1]}"
+}
+
+# fun: event_score <eid>
+# txt: return the score of the specified event
+event_score ()
+{
+  echo "${EVENTS_SCORE[$1]:-0}"
 }
 
 # fun: event_iter

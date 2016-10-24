@@ -299,7 +299,8 @@ timeline_show_thread ()
 timeline_list_thread ()
 {
   local prefix indent date kind mesg tags link name eid="$1"
-  local flag flags=""
+  local flag show_tags show_replies
+  local -a flags=( ' ' )
 
   # item is already printed? then do nothing
   [[ "${TIMELINE_PRINTED["$eid"]}" ]] && return
@@ -333,7 +334,7 @@ timeline_list_thread ()
 
   if [[ "$sign" -eq 0 ]]; then
     flag="$(config_get_empty "timeline.$kind.flag-signed")"
-    flags+="${flag:-S}"
+    flags[0]="${flag:-S}"
   fi
 
   # composing the output
@@ -342,32 +343,43 @@ timeline_list_thread ()
   format_compose "timeline.$kind" date "$date"
   format_compose "timeline.$kind" tags "${2}${indent}${prefix}${tags}"
   format_compose "timeline.$kind" link "$link"
+  format_compose "timeline.$kind" score "$(event_score "$eid")"
   format_compose "timeline.$kind" mesg "${2}${indent}${prefix}${mesg}"
 
   TIMELINE_PRINTED["$eid"]=1
   TIMELINE_INDEX+=( "$eid" )
 
-  if [[ "$(config_get_empty "timeline.show-tags")" = "true" ]]; then
-    format_compose "timeline.$kind" flags "$flags"
-    format_dumps "timeline.$kind"
+  show_tags="$(config_get_empty "timeline.show-tags")"
+  show_replies="$(config_get_empty "timeline.show-replies")"
 
+  if [[ "$show_tags" != "true" ]]; then
+    if [[ "$(event_labels "$eid")" ]]; then
+      flag="$(config_get_empty "timeline.$kind.flag-tagged")"
+      flags[1]="${flag:-T}"
+    else
+      flags[1]=" "
+    fi
+  fi
+
+  if [[ "$show_replies" != "true" ]]; then
+    if [[ "$(event_replies "$eid")" ]]; then
+      flag="$(config_get_empty "timeline.$kind.flag-replied")"
+      flags[2]="${flag:-R}"
+    else
+      flags[2]=" "
+    fi
+  fi
+
+  format_compose "timeline.$kind" flags "${flags[0]}${flags[1]}${flags[2]}"
+  format_dumps "timeline.$kind"
+
+  if [[ "$show_tags" = "true" ]]; then
     for tags in $(event_labels "$eid"); do
       timeline_list_thread "$tags" "$2${indent}"
     done
-  elif [[ "$(event_labels "$eid")" ]]; then
-    flag="$(config_get_empty "timeline.$kind.flag-tagged")"
-    flags+="${flag:-T}"
-
-    format_compose "timeline.$kind" flags "$flags"
-    format_dumps "timeline.$kind"
-  else
-    format_compose "timeline.$kind" flags "$flags"
-    format_dumps "timeline.$kind"
   fi
 
-
-
-  if [[ "$(config_get_empty "timeline.show-replies")" = "true" ]]; then
+  if [[ "$show_replies" = "true" ]]; then
     for reply in $(event_replies "$eid"); do
       timeline_list_thread "$reply" "$2${indent}"
     done
@@ -978,6 +990,52 @@ command_event_tag ()
   fi
 }
 
+# help:event:fun: event score [--eid] <num/eid> {up|down}
+# help:event:txt: Score up or down an specific id. Please note that you can
+# help:event:txt: only vote once fer EID, other votes will be ignored
+command_event_score ()
+{
+  local eid score
+
+  if [[ $# -eq 0 ]]; then
+    E=2 error $"Event score requires almost two parameters: num/eid, up/down"
+    return 1
+  elif [[ "$1" = "--eid" ]]; then
+    if [[ "$2" ]]; then
+      eid="$2"; shift 2;
+    else
+      E=2 error \
+        $"Event reply with --eid required almost two arguments: eid, up/down"
+      return 1
+    fi
+  fi
+
+  command_account_active "$(account_active_name)"
+
+  if [[ -z "$eid" ]]; then
+    if ! is_decimal "$1"; then
+      E=2 error $"Invalid index number '%s'" "$1"
+      return 1
+    else
+      eid="$(timeline_index_get "$1")" || return 1
+      shift
+    fi
+  fi
+
+  if [[ $# -eq 0 ]]; then
+    E=2 error $"Event score required an argument: up/down"
+  else
+
+    case "$1" in
+      up)   score="1";;
+      down) score="-1";;
+    esac
+
+    command_account_refresh
+    event_create "$(timestamp)" S "$eid" "$score" 2>&1 | info_multi
+  fi
+}
+
 # help:fun: follow {list|add|del} {args...}
 # help:txt: Manage your followings.
 command_follow ()
@@ -1361,13 +1419,13 @@ declare -xA CONFIG=(
   [timeline.show-replies]=true
   [timeline.show-tags]=false
   [timeline.filter.show]=''
-  [timeline.filter.hide]='tag:spam'
+  [timeline.filter.hide]='tag:spam score-min:0'
   [timeline.own-posts]=true
   [timeline.max-posts]=100
   [timeline.max-user-posts]=20
   [timeline.use-short-ids]=true
-  [timeline.post.format]='%b%-3d%b %b%(%Y-%m-%d %H:%M:%S)T%b %b%10s%b %b%-5s%b %b%s%b'
-  [timeline.post.fields]='index,date,name,flags,mesg'
+  [timeline.post.format]='%b%-3d%b %b%(%Y%m%d %H%M%S)T%b %b%10s%b [%b%s%b] (%b%d%b) %b%s%b'
+  [timeline.post.fields]='index,date,name,flags,score,mesg'
   [timeline.post.prefix]=''
   [timeline.post.color]='7,'
   [timeline.post.color-index]='7,'
@@ -1375,14 +1433,18 @@ declare -xA CONFIG=(
   [timeline.post.color-name]='7,'
   [timeline.post.color-flags]='7,'
   [timeline.post.color-mesg]='7,'
+  [timeline.post.color-score]='7,'
   [timeline.post.style-index]='normal'
   [timeline.post.style-date]='normal'
   [timeline.post.style-name]='normal'
   [timeline.post.style-flags]='normal'
   [timeline.post.style-mesg]='normal'
+  [timeline.post.style-score]='normal'
   [timeline.post.flag-signed]='S'
-  [timeline.tag.format]='%b%-3d%b %b%(%Y-%m-%d %H:%M:%S)T%b %b%10s%b %b%-5s%b %b%s%b'
-  [timeline.tag.fields]='index,date,name,flags,tags'
+  [timeline.post.flag-tagged]='T'
+  [timeline.post.flag-replied]='R'
+  [timeline.tag.format]='%b%-3d%b %b%(%Y%m%d %H%M%S)T%b %b%10s%b [%b%s%b] (%b%d%b) %b%s%b'
+  [timeline.tag.fields]='index,date,name,flags,score,tags'
   [timeline.tag.prefix]='# '
   [timeline.tag.indent]=' '
   [timeline.tag.color]='7,'
@@ -1390,16 +1452,20 @@ declare -xA CONFIG=(
   [timeline.tag.color-date]='7,'
   [timeline.tag.color-name]='7,'
   [timeline.tag.color-mesg]='7,'
+  [timeline.tag.color-score]='7,'
   [timeline.tag.color-flags]='7,'
   [timeline.tag.color-tags]='7,'
   [timeline.tag.style-index]='normal'
   [timeline.tag.style-date]='normal'
   [timeline.tag.style-name]='normal'
+  [timeline.tag.style-score]='normal'
   [timeline.tag.style-flags]='normal'
   [timeline.tag.style-tags]='normal'
   [timeline.tag.flag-signed]='S'
-  [timeline.reply.format]='%b%-3d%b %b%(%Y-%m-%d %H:%M:%S)T%b %b%10s%b %b%-5s%b %b%s%b'
-  [timeline.reply.fields]='index,date,name,flags,mesg'
+  [timeline.tag.flag-tagged]='T'
+  [timeline.tag.flag-replied]='R'
+  [timeline.reply.format]='%b%-3d%b %b%(%Y%m%d %H%M%S)T%b %b%10s%b [%b%s%b] (%b%d%b) %b%s%b'
+  [timeline.reply.fields]='index,date,name,flags,score,mesg'
   [timeline.reply.prefix]='> '
   [timeline.reply.indent]=' '
   [timeline.reply.color]='7,'
@@ -1408,13 +1474,17 @@ declare -xA CONFIG=(
   [timeline.reply.color-name]='7,'
   [timeline.reply.color-flags]='7,'
   [timeline.reply.color-mesg]='7,'
+  [timeline.reply.color-score]='7,'
   [timeline.reply.style-index]='normal'
   [timeline.reply.style-date]='normal'
   [timeline.reply.style-name]='normal'
+  [timeline.reply.style-score]='normal'
   [timeline.reply.style-flags]='normal'
   [timeline.reply.style-mesg]='normal'
   [timeline.reply.flag-signed]='S'
-  [timeline.fatal.format]='*** %b%(%Y-%m-%d %H:%M:%S)T%b %b%10s%b   %b%s%b'
+  [timeline.reply.flag-tagged]='T'
+  [timeline.reply.flag-replied]='R'
+  [timeline.fatal.format]='*** %b%(%Y%m%d %H%M%S)T%b %b%10s%b %b%s%b'
   [timeline.fatal.fields]='date,name,mesg'
   [timeline.fatal.name]='FATAL'
   [timeline.fatal.color]='7,'
@@ -1424,7 +1494,7 @@ declare -xA CONFIG=(
   [timeline.fatal.style-date]='normal'
   [timeline.fatal.style-name]='normal'
   [timeline.fatal.style-mesg]='normal'
-  [timeline.error.format]='*** %b%(%Y-%m-%d %H:%M:%S)T%b %b%10s%b   %b%s%b'
+  [timeline.error.format]='*** %b%(%Y%m%d %H%M%S)T%b %b%10s%b %b%s%b'
   [timeline.error.fields]='date,name,mesg'
   [timeline.error.name]='ERROR'
   [timeline.error.color]='7,'
@@ -1434,7 +1504,7 @@ declare -xA CONFIG=(
   [timeline.error.style-date]='normal'
   [timeline.error.style-name]='normal'
   [timeline.error.style-mesg]='normal'
-  [timeline.info.format]='*** %b%(%Y-%m-%d %H:%M:%S)T%b %b%10s%b   %b%s%b'
+  [timeline.info.format]='*** %b%(%Y%m%d %H%M%S)T%b %b%10s%b %b%s%b'
   [timeline.info.fields]='date,name,mesg'
   [timeline.info.name]='INFO'
   [timeline.info.color]='7,'
@@ -1445,7 +1515,7 @@ declare -xA CONFIG=(
   [timeline.info.style-name]='normal'
   [timeline.info.style-mesg]='normal'
   [timeline.consistent-colors]=''
-  [network.list.format]='*** %b%(%Y-%m-%d %H:%M:%S)T%b %b%10s%b  score: %b%-03d%b  %b%-10s%b %b%s%b'
+  [network.list.format]='*** %b%(%Y%m%d %H%M%S)T%b %b%10s%b  score: %b%-03d%b  %b%-10s%b %b%s%b'
   [network.list.fields]='date,name,score,user,url'
   [network.list.color-score]='7,'
   [network.list.color-date]='7,'
@@ -1459,7 +1529,7 @@ declare -xA CONFIG=(
   [network.list.style-user]='normal'
   [network.list.style-url]='normal'
   [network.show-followers]=true
-  [network.follower.format]='*** %b%(%Y-%m-%d %H:%M:%S)T%b %b%10s%b                         FOLLOWED BY %b%-10s%b'
+  [network.follower.format]='*** %b%(%Y%m%d %H%M%S)T%b %b%10s%b                         FOLLOWED BY %b%-10s%b'
   [network.follower.fields]='date,name,user'
   [network.follower-color-date]='7,'
   [network.follower-color-name]='7,'
@@ -1471,6 +1541,7 @@ declare -xA CONFIG=(
   [alias.reply]='event reply'
   [alias.tag]='event tag'
   [alias.info]='timeline info'
+  [alias.score]='event score'
 )
 
 if test -t 1; then
@@ -1480,17 +1551,20 @@ if test -t 1; then
        CONFIG['timeline.post.color-date']=8,
        CONFIG['timeline.post.color-mesg']=7,
        CONFIG['timeline.post.color-flags']=11,
+       CONFIG['timeline.post.color-score']=3,
        CONFIG['timeline.post.color-name']=CONSISTENT,
        CONFIG['timeline.reply.color']=8,
        CONFIG['timeline.reply.color-date']=8,
        CONFIG['timeline.reply.color-mesg']=7,
        CONFIG['timeline.reply.color-flags']=11,
+       CONFIG['timeline.reply.color-score']=3,
        CONFIG['timeline.reply.color-name']=CONSISTENT,
        CONFIG['timeline.tag.color']=8,
        CONFIG['timeline.tag.color-date']=8,
        CONFIG['timeline.tag.color-tags']=3,
        CONFIG['timeline.tag.color-name']=CONSISTENT,
        CONFIG['timeline.tag.color-flags']=11,
+       CONFIG['timeline.tag.color-score']=3,
        CONFIG['timeline.info.color']=8,
        CONFIG['timeline.info.color-date']=8,
        CONFIG['timeline.info.color-name']=6,
@@ -1519,25 +1593,23 @@ if test -t 1; then
        CONFIG['timeline.post.color']=240,
        CONFIG['timeline.post.color-date']=240,
        CONFIG['timeline.post.color-mesg']=7,
+       CONFIG['timeline.post.color-score']=3,
        CONFIG['timeline.post.color-name']=CONSISTENT,
        CONFIG['timeline.post.color-flags']=11,
-       CONFIG['timeline.post.flag-signed']='✓'
-       CONFIG['timeline.post.flag-tagged']='✐'
        CONFIG['timeline.reply.color']=240,
        CONFIG['timeline.reply.color-date']=240,
        CONFIG['timeline.reply.color-mesg']=245,
+       CONFIG['timeline.reply.color-score']=3,
        CONFIG['timeline.reply.color-name']=CONSISTENT,
        CONFIG['timeline.reply.color-flags']=11,
-       CONFIG['timeline.reply.flag-signed']='✓'
-       CONFIG['timeline.reply.flag-tagged']='✐'
        CONFIG['timeline.reply.prefix']='⤷ ' # XXX 256colors -> unicode!!!
        CONFIG['timeline.tag.color']=240,
        CONFIG['timeline.tag.color-date']=240,
        CONFIG['timeline.tag.color-tags']=136,
+       CONFIG['timeline.tag.color-score']=3,
        CONFIG['timeline.tag.color-name']=CONSISTENT,
        CONFIG['timeline.tag.style-tags']=italic
        CONFIG['timeline.tag.color-flags']=11,
-       CONFIG['timeline.tag.flag-signed']='✓'
        CONFIG['timeline.info.color']=240,
        CONFIG['timeline.info.color-date']=240,
        CONFIG['timeline.info.color-name']=69,
@@ -1785,6 +1857,31 @@ filter_tag ()
   return 1
 }
 
+# fun: filter {score-min|score-max} <value> <eid>
+# txt: return true if EID need to be filtered according to score values
+#      passsed as argument.
+filter_score ()
+{
+  local kind="$1" value="$2" eid="$3"
+  local score
+
+  score="$(event_score "$eid")"
+
+  case "$kind" in
+    score-min)
+      [[ "${score:-0}" -lt "${value}" ]] && return 0
+    ;;
+    score-max)
+      [[ "${score:-0}" -gt "${value}" ]] && return 0
+    ;;
+    *)
+      E=1 fatal $"Invalud score filter: %s" "$kind"
+    ;;
+  esac
+
+  return 1
+}
+
 # fun: filter_add {hide|show} <expr>
 # txt: Add an expression filter
 filter_add ()
@@ -1817,6 +1914,10 @@ filter_eval ()
         filter_tag "${expr#tag:}" "$@"
         [[ $? -eq 0 ]] && return 0
         ;;
+      score-min:*|score-max:*)
+        filter_score "${expr%%:*}" "${expr#*:}" "$@"
+        [[ $? -eq 0 ]] && return 0
+        ;;
       *)
         E=3 error $"This kind of filtering is not implemented yet"
         ;;
@@ -1833,10 +1934,12 @@ declare -A EVENTS_LINK=()
 declare -A EVENTS_TAGS=()
 declare -A EVENTS_MESG=()
 declare -A EVENTS_SIGN=()
+declare -A EVENTS_SCORE=()
 declare -A EVENTS_SIGN_EXTENDED=()
 
 declare -A EVENTS_CROSS_REPLY=()
 declare -A EVENTS_CROSS_TAGS=()
+declare -A EVENTS_CROSS_SCORE=()
 declare -a EVENTS_SORTED=()
 
 # fun: event_load <account_id> <filename>
@@ -1879,7 +1982,7 @@ event_load ()
 event_load_line ()
 {
   local line="$2" eid="$1" verified="$3" ver_ext="$4"
-  local date kind rest link mesg tags
+  local date kind rest link mesg tags score
 
   read -r date kind rest <<< "$line"
 
@@ -1896,8 +1999,17 @@ event_load_line ()
       read -r link tags <<<"$rest"
       kind='tag'
       ;;
+    S|SCORE)
+      kind='score'
+      read -r link score <<<"$rest"
+      case "$score" in
+        -1) score="-1";;
+        *) score="1";;
+      esac
+      ;;
     *)
-      E=1 error $"Malformed event: '$line'"
+      error $"Ignored malformed event: '$line'"
+      return 0
       ;;
   esac
 
@@ -1918,6 +2030,11 @@ event_load_line ()
     EVENTS_CROSS_REPLY[$link]+=" $eid:$date "
   elif [[ "$kind" = 'tag' ]]; then
     EVENTS_CROSS_TAGS[$link]+=" $eid:$date "
+  elif [[ "$kind" = 'score' ]]; then
+    if ! [[ "${EVENTS_CROSS_SCORE[$eid:$link]}" ]]; then
+      EVENTS_CROSS_SCORE["$eid:$link"]=1
+      (( EVENTS_SCORE["$link"]+=score ))
+    fi
   fi
 }
 
@@ -1947,6 +2064,13 @@ event_replies ()
 event_labels ()
 {
   echo "${EVENTS_CROSS_TAGS[$1]}"
+}
+
+# fun: event_score <eid>
+# txt: return the score of the specified event
+event_score ()
+{
+  echo "${EVENTS_SCORE[$1]:-0}"
 }
 
 # fun: event_iter

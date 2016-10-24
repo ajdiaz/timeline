@@ -468,6 +468,52 @@ command_event_tag ()
   fi
 }
 
+# help:event:fun: event score [--eid] <num/eid> {up|down}
+# help:event:txt: Score up or down an specific id. Please note that you can
+# help:event:txt: only vote once fer EID, other votes will be ignored
+command_event_score ()
+{
+  local eid score
+
+  if [[ $# -eq 0 ]]; then
+    E=2 error $"Event score requires almost two parameters: num/eid, up/down"
+    return 1
+  elif [[ "$1" = "--eid" ]]; then
+    if [[ "$2" ]]; then
+      eid="$2"; shift 2;
+    else
+      E=2 error \
+        $"Event reply with --eid required almost two arguments: eid, up/down"
+      return 1
+    fi
+  fi
+
+  command_account_active "$(account_active_name)"
+
+  if [[ -z "$eid" ]]; then
+    if ! is_decimal "$1"; then
+      E=2 error $"Invalid index number '%s'" "$1"
+      return 1
+    else
+      eid="$(timeline_index_get "$1")" || return 1
+      shift
+    fi
+  fi
+
+  if [[ $# -eq 0 ]]; then
+    E=2 error $"Event score required an argument: up/down"
+  else
+
+    case "$1" in
+      up)   score="1";;
+      down) score="-1";;
+    esac
+
+    command_account_refresh
+    event_create "$(timestamp)" S "$eid" "$score" 2>&1 | info_multi
+  fi
+}
+
 # help:fun: follow {list|add|del} {args...}
 # help:txt: Manage your followings.
 command_follow ()

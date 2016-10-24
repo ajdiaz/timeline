@@ -52,6 +52,41 @@ Just curl for it:
   ./tl tr tag:Timeline
 
 
+----- Use common tags ---------------------------------------------------------
+
+Though you can tag any post/reply/tag with any tag that you want, there are
+some common used tags with special meanings that you may want to known.
+Please note that this is a convention, but there are no technical meaning of
+use that.
+
+spam: means that the tagged object is SPAM, and should be ignored
+news: means that the tagged object is a breaking news and probable should be
+      highlighted
+
+timeline: means that this is a timeline related news or fact, usually is
+          used by timeline developers to notify changes.
+
+
+A General rule: use lowercase and the largest tag, for example tag
+"politics" is preferred instead of "Politics" or "POL". Please note that
+tags are social, which means that everyone can see what tags you publish,
+adn how are you tagging other contents. If you mark a spam with "news" tag,
+does not means anything, because your tag "news" can be tagged as "spam"
+too.
+
+----- Using scores ------------------------------------------------------------
+
+Since version 1.1 you can use scores to filter even more your timeline.
+Scores are a numerical value for a post. When someone score a post give to
+the post one point, or even substract one point. Only one scored is taken in
+consideration for each user, so if the same user add two scores, only one is
+used.
+
+Score is presented in the timeline and you can use "score-min:<value>" or
+"score-max:<value>" as filter to filter your timeline using scores. Also,
+setting configuration variable timeline.filter-show and timeline.filter-hide
+you can use scores to filter timeline by default.
+
 ----- Understanding timeline --------------------------------------------------
 
 

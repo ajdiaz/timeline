@@ -91,7 +91,8 @@ timeline_show_thread ()
 timeline_list_thread ()
 {
   local prefix indent date kind mesg tags link name eid="$1"
-  local flag flags=""
+  local flag show_tags show_replies
+  local -a flags=( ' ' )
 
   # item is already printed? then do nothing
   [[ "${TIMELINE_PRINTED["$eid"]}" ]] && return
@@ -125,7 +126,7 @@ timeline_list_thread ()
 
   if [[ "$sign" -eq 0 ]]; then
     flag="$(config_get_empty "timeline.$kind.flag-signed")"
-    flags+="${flag:-S}"
+    flags[0]="${flag:-S}"
   fi
 
   # composing the output
@@ -134,32 +135,43 @@ timeline_list_thread ()
   format_compose "timeline.$kind" date "$date"
   format_compose "timeline.$kind" tags "${2}${indent}${prefix}${tags}"
   format_compose "timeline.$kind" link "$link"
+  format_compose "timeline.$kind" score "$(event_score "$eid")"
   format_compose "timeline.$kind" mesg "${2}${indent}${prefix}${mesg}"
 
   TIMELINE_PRINTED["$eid"]=1
   TIMELINE_INDEX+=( "$eid" )
 
-  if [[ "$(config_get_empty "timeline.show-tags")" = "true" ]]; then
-    format_compose "timeline.$kind" flags "$flags"
-    format_dumps "timeline.$kind"
+  show_tags="$(config_get_empty "timeline.show-tags")"
+  show_replies="$(config_get_empty "timeline.show-replies")"
 
+  if [[ "$show_tags" != "true" ]]; then
+    if [[ "$(event_labels "$eid")" ]]; then
+      flag="$(config_get_empty "timeline.$kind.flag-tagged")"
+      flags[1]="${flag:-T}"
+    else
+      flags[1]=" "
+    fi
+  fi
+
+  if [[ "$show_replies" != "true" ]]; then
+    if [[ "$(event_replies "$eid")" ]]; then
+      flag="$(config_get_empty "timeline.$kind.flag-replied")"
+      flags[2]="${flag:-R}"
+    else
+      flags[2]=" "
+    fi
+  fi
+
+  format_compose "timeline.$kind" flags "${flags[0]}${flags[1]}${flags[2]}"
+  format_dumps "timeline.$kind"
+
+  if [[ "$show_tags" = "true" ]]; then
     for tags in $(event_labels "$eid"); do
       timeline_list_thread "$tags" "$2${indent}"
     done
-  elif [[ "$(event_labels "$eid")" ]]; then
-    flag="$(config_get_empty "timeline.$kind.flag-tagged")"
-    flags+="${flag:-T}"
-
-    format_compose "timeline.$kind" flags "$flags"
-    format_dumps "timeline.$kind"
-  else
-    format_compose "timeline.$kind" flags "$flags"
-    format_dumps "timeline.$kind"
   fi
 
-
-
-  if [[ "$(config_get_empty "timeline.show-replies")" = "true" ]]; then
+  if [[ "$show_replies" = "true" ]]; then
     for reply in $(event_replies "$eid"); do
       timeline_list_thread "$reply" "$2${indent}"
     done
