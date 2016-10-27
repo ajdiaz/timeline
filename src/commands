@@ -618,3 +618,46 @@ command_quit ()
 {
   exit 0
 }
+
+# help:fun: view {list|add|del} {args...}
+# help:txt: Create and save views. A view is a filter which can be used to
+# help:txt: show or hide posts from timeline. You can think a view like a
+# help:txt: name for a filter.
+command_view ()
+{
+  local cmd="$1"; shift
+  if fun "command_view_$cmd"; then
+    "command_view_$cmd" "$@"
+  else
+    E=1 error "$NOSUBCMD" "$cmd" "view"
+  fi
+}
+
+# help:view:fun: view list
+# help:view:txt: List all created views
+command_view_list ()
+{
+  for view in $(config_iter views); do
+    info "$view"
+  done
+}
+
+# help:view:fun: view add <name> <filter>+
+# help:view:txt: Create new view named as defined in arguments
+command_view_add ()
+{
+  local name="$1"; shift
+  config_set "views.$name" "$*"
+  config_save "${CONFIG_FILE}"
+}
+
+
+# help:view:fun: view del <name>
+# help:view:txt: Delete view named as defined in arguments
+command_view_del ()
+{
+  local name="$1"; shift
+  config_unset "views.$name"
+  config_save "${CONFIG_FILE}"
+}
+

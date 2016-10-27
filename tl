@@ -1140,6 +1140,49 @@ command_quit ()
 {
   exit 0
 }
+
+# help:fun: view {list|add|del} {args...}
+# help:txt: Create and save views. A view is a filter which can be used to
+# help:txt: show or hide posts from timeline. You can think a view like a
+# help:txt: name for a filter.
+command_view ()
+{
+  local cmd="$1"; shift
+  if fun "command_view_$cmd"; then
+    "command_view_$cmd" "$@"
+  else
+    E=1 error "$NOSUBCMD" "$cmd" "view"
+  fi
+}
+
+# help:view:fun: view list
+# help:view:txt: List all created views
+command_view_list ()
+{
+  for view in $(config_iter views); do
+    info "$view"
+  done
+}
+
+# help:view:fun: view add <name> <filter>+
+# help:view:txt: Create new view named as defined in arguments
+command_view_add ()
+{
+  local name="$1"; shift
+  config_set "views.$name" "$*"
+  config_save "${CONFIG_FILE}"
+}
+
+
+# help:view:fun: view del <name>
+# help:view:txt: Delete view named as defined in arguments
+command_view_del ()
+{
+  local name="$1"; shift
+  config_unset "views.$name"
+  config_save "${CONFIG_FILE}"
+}
+
 ## vim:ft=sh
 
 # env: ACCOUNT_NAME: A variable contains the name of the acctive account.
@@ -1857,6 +1900,20 @@ filter_tag ()
   return 1
 }
 
+# fun: filter <view> <eid>
+# txt: return true if EID need to be filtered
+filter_view ()
+{
+  local fpattern="$1" eid="$2"
+  local -a view=( $(config_get_empty "views.$fpattern") )
+
+  if [[ "${#view[@]}" -ne 0 ]]; then
+    filter_eval_expr "$eid" "${view[@]}"
+  else
+    E=1 fatal $"No view named: %s" "$fpattern"
+  fi
+}
+
 # fun: filter {score-min|score-max} <value> <eid>
 # txt: return true if EID need to be filtered according to score values
 #      passsed as argument.
@@ -1875,7 +1932,7 @@ filter_score ()
       [[ "${score:-0}" -gt "${value}" ]] && return 0
     ;;
     *)
-      E=1 fatal $"Invalud score filter: %s" "$kind"
+      E=1 fatal $"Invalid score filter: %s" "$kind"
     ;;
   esac
 
@@ -1899,7 +1956,7 @@ filter_add ()
 #      return 0, means that the item is filtered, otherwise is not filtered.
 filter_eval ()
 {
-  local mode="$1"; shift
+  local mode="$1" eid="$2"
   local -a expr_array=()
 
   case "$mode" in
@@ -1907,16 +1964,26 @@ filter_eval ()
     show) expr_array+=( "${FILTER_SHOW[@]}" );;
   esac
 
-  for expr in "${expr_array[@]}"; do
+  filter_eval_expr "$eid" "${expr_array[@]}"
+}
+
+# fun: filter_eval_expr <eid> <expr>...
+# txt: eval an expression and return true if filtered or false if not
+filter_eval_expr ()
+{
+  local eid="$1" expr=; shift
+
+  for expr in "${@}"; do
     case "$expr" in
       '') ;;
       tag:*)
-        filter_tag "${expr#tag:}" "$@"
-        [[ $? -eq 0 ]] && return 0
+        filter_tag "${expr#tag:}" "$eid" && return 0
         ;;
       score-min:*|score-max:*)
-        filter_score "${expr%%:*}" "${expr#*:}" "$@"
-        [[ $? -eq 0 ]] && return 0
+        filter_score "${expr%%:*}" "${expr#*:}" "$eid" && return 0
+        ;;
+      view:*)
+        filter_view "${expr#view:}" "$eid" && return 0
         ;;
       *)
         E=3 error $"This kind of filtering is not implemented yet"
