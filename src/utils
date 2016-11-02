@@ -18,6 +18,7 @@ mute ()
 # txt: print current timestamp in UTC
 timestamp ()
 {
+  # shellcheck disable=SC2183
   printf "%(%s)T"
 }
 

@@ -26,7 +26,7 @@ format_style ()
 # use: format_compose timeline username "me"
 format_compose ()
 {
-  if test -t 1 || ${T:-false}; then
+  if ( test -t 1 || ${T:-false} ) && ${COLOR:-true}; then
     local -a format=()
     color_eval format "${1}.color-${2}" "${1}.color" "$3"
     format[1]="$(format_style "${1}.style-${2}" "${format[1]}")"

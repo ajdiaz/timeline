@@ -1,0 +1,104 @@
+## vim:ft=sh
+
+# env: DAEMON_LOG_FILE: Internal variable where file redirections are saved.
+DAEMON_LOG_FILE=
+# env: DAEMON_LOG_LEVEL: Internal variable to store daemon log level.
+DAEMON_LOG_LEVEL=
+# env: DAEMON_INTERVAL: Internal variable to store daemon interval time.
+DAEMON_INTERVAL=
+# env: DAEMON_COMMANDS: Internal variable to store commands to run in bg.
+DAEMON_COMMANDS=
+
+# env: NOLOG: if true do not log anything
+NOLOG=false
+# env: PIDFILE: Internal variable where pidfile path is saved.
+PIDFILE=
+
+# fun: daemon_reload_config
+# txt: reload daemon config from config file
+daemon_reload_config ()
+{
+  PIDFILE="$(config_get daemon.pidfile)"
+  DAEMON_LOG_FILE="$(config_get_empty daemon.log.file)"
+  case "$DAEMON_LOG_FILE" in
+    none) NOLOG=true;;
+    stdout|STDOUT|stderr|STDERR) DAEMON_LOG_FILE="";;
+    *) DAEMON_LOG_FILE=">> ${DAEMON_LOG_FILE}";;
+  esac
+  DAEMON_LOG_LEVEL="$(config_get_empty daemon.log.level)"
+  case "${DAEMON_LOG_LEVEL}" in
+    error) DAEMON_LOG_FILE+=" 2>&1 >/dev/null";;
+    info) DAEMON_LOG_FILE+=" 2>&1";;
+  esac
+  DAEMON_INTERVAL="$(config_get_empty daemon.interval)"
+  DAEMON_COMMANDS="$(config_get_empty daemon.commands)"
+}
+
+# fun: daemon_run <pidfile>
+# txt: Run the commands configured for the daemon every interval.
+daemon_run ()
+{
+  daemon_reload_config
+
+  PIDFILE="$1"
+
+  trap daemon_reload_config HUP
+  trap daemon_remove_pid TERM
+
+  # while sleep ...
+  while sleep "${DAEMON_INTERVAL:-300}"
+  do
+    if ! ${NOLOG:-false}; then
+      eval "main_standalone ${DAEMON_COMMANDS} ${DAEMON_LOG_FILE}"
+    fi
+  done
+}
+
+# fun: daemon_start
+# txt: Start daemon in background.
+daemon_start ()
+{
+  local pid
+  daemon_reload_config
+
+  [ -r "${PIDFILE}" ] && pid="$(<"${PIDFILE}")"
+
+  if [[ "$pid" ]]; then
+    fatal $"There are another daemon running. Force quit with daemon kill"
+  else
+    daemon_run "${PIDFILE}" &
+    echo "$!" > "${PIDFILE}"
+    disown
+    info $"Starting daemon at pid %d" "$!"
+  fi
+}
+
+# fun: daemon_stop <signal>
+# txt: Stop daemon running in background with signal passed as argument.
+daemon_stop ()
+{
+  local pid
+  daemon_reload_config
+
+  [ -r "${PIDFILE}" ] && pid="$(<"${PIDFILE}")"
+
+  if [[ "$pid" ]]; then
+    pkill "-$1" -P "$pid" && rm "${PIDFILE}"
+  fi
+}
+
+# fun: daemon_list
+# txt: print if the daemon is currently running.
+daemon_list ()
+{
+  local pid
+  daemon_reload_config
+
+  [ -r "${PIDFILE}" ] && pid="$(<"${PIDFILE}")"
+
+  if [[ "$pid" ]]; then
+    info $"Daemon running at pid: %d" "$pid"
+  else
+    info $"There is no daemon running"
+  fi
+}

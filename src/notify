@@ -1,0 +1,34 @@
+## vim:ft=sh
+
+# fun: notify <eid>
+# txt: send notification for specified eid if match the notification filter.
+notify ()
+{
+  local user uid="${1%%:*}" date="${1##*:}" last_date=0
+  local fexpr ncommand
+
+  ncommand="$(config_get_empty notify.command)"
+
+  [[ "$ncommand" ]] || return 0
+
+  last_date_file="$(config_get notify.cache_file)"
+  [[ -r "${last_date_file}" ]] && 
+    last_date="$(< "$last_date_file")"
+
+  # discard old events
+  [[ "$date" -le "${last_date}" ]] &&
+    return
+
+  # discard own events
+  user="$(account_active_oid)"
+  [[ "$uid" = "$user" ]] &&
+    return
+
+  fexpr="$(config_get_empty notify.filter)"
+
+  if [[ "$fexpr" ]] && filter_eval_expr "$1" "$fexpr"; then
+    # shellcheck disable=SC2059
+    "$ncommand" "$(printf "$(config_get notify.format)" "$(username "$uid")")"
+    echo "$date" > "${last_date_file}"
+  fi
+}

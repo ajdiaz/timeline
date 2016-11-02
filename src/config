@@ -139,6 +139,15 @@ declare -xA CONFIG=(
   [network.follower-color-name]='7,'
   [network.follower-color-user]='7,'
   [network.follower.color]='7,'
+  [daemon.interval]='300'
+  [daemon.commands]='timeline refresh'
+  [daemon.pidfile]="${HOME}/.local/share/tl/daemon.pid"
+  [daemon.log.file]="${HOME}/.local/share/tl/daemon.log"
+  [daemon.log.level]=info
+  [notify.command]="notify-send"
+  [notify.format]='Knock knock from %s'
+  [notify.filter]="mention"
+  [notify.cache_file]="${HOME}/.cache/tl/notify.cache"
   [alias.tr]='timeline refresh'
   [alias.tl]='timeline list'
   [alias.post]='event post'
@@ -240,9 +249,11 @@ if test -t 1; then
        CONFIG['network.follower.color']=240,
        CONFIG['prompt.color']=69,
        ;;
-  esac
+    *) export COLOR=false;;
+   esac
+else
+   export COLOR=false
 fi
-
 
 # fun: config_load <filename>
 # txt: given a filename path as argument, read the content and save it in

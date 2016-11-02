@@ -109,6 +109,8 @@ event_load_line ()
       (( EVENTS_SCORE["$link"]+=score ))
     fi
   fi
+
+  notify "$eid:$date"
 }
 
 # fun: event_sign <eid>

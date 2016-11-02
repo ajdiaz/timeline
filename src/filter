@@ -61,6 +61,39 @@ filter_score ()
   return 1
 }
 
+# fun: filter_text <pattern> <eid>
+# txt: return true if especified eid contains text which match with pattern
+#      passed as argument (glob pattern supported only).
+filter_text ()
+{
+  local fpattern="$1" eid="$2"
+
+  case "$(event_mesg "$eid")" in
+    $fpattern) return 0;;
+  esac
+  return 1
+}
+
+# fun: filter_mention <eid>
+# txt: return true if myself is mentioned in eid
+filter_mention ()
+{
+  local eid="$1" uid pattern
+  uid="$(account_active_oid)"
+
+  # no acctive account
+  [[ "$uid" ]] || return 1
+
+  # ignore if I mention myself
+  #[[ "${eid%%:*}" = "${uid}" ]] && return 1
+
+  for pattern in "@$uid" "@${uid:0:8}" "$(username "$uid")"; do
+    filter_text "*${pattern}*" "$eid" && return 0
+  done
+
+  return 1
+}
+
 # fun: filter_add {hide|show} <expr>
 # txt: Add an expression filter
 filter_add ()
@@ -106,6 +139,12 @@ filter_eval_expr ()
         ;;
       view:*)
         filter_view "${expr#view:}" "$eid" && return 0
+        ;;
+      text:*)
+        filter_text "${expr#text:}" "$eid" && return 0
+        ;;
+      mention)
+        filter_mention "$eid" && return 0
         ;;
       *)
         E=3 error $"This kind of filtering is not implemented yet"

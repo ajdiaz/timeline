@@ -58,5 +58,5 @@ color_eval ()
 # fun: color_reset
 # txt: print reset code to reset all enabled color codes (in theory)
 color_reset () {
-  tput sgr0
+  ${COLOR:-true} && tput sgr0
 }

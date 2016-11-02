@@ -661,3 +661,44 @@ command_view_del ()
   config_save "${CONFIG_FILE}"
 }
 
+
+# help:fun: daemon {start|stop|kill|status} 
+# help:txt: Manage daemon mode of timeline.
+command_daemon ()
+{
+  local cmd="$1"; shift
+  if fun "command_daemon_$cmd"; then
+    "command_daemon_$cmd" "$@"
+  else
+    E=1 error "$NOSUBCMD" "$cmd" "daemon"
+  fi
+}
+
+# help:daemon:fun: daemon start
+# help:daemon:txt: Start daemon in background
+command_daemon_start ()
+{
+  daemon_start
+}
+
+
+# help:daemon:fun: daemon stop
+# help:daemon:txt: Clean stop daemon running in background
+command_daemon_stop ()
+{
+  daemon_stop TERM
+}
+
+# help:daemon:fun: daemon kill
+# help:daemon:txt: Force kill daemon running in background
+command_daemon_kill ()
+{
+  daemon_stop KILL
+}
+
+# help:daemon:fun: daemon status
+# help:daemon:txt: Show if daemon is running or not
+command_daemon_status ()
+{
+  daemon_list
+}

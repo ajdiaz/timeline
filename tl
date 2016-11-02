@@ -59,7 +59,7 @@ color_eval ()
 # fun: color_reset
 # txt: print reset code to reset all enabled color codes (in theory)
 color_reset () {
-  tput sgr0
+  ${COLOR:-true} && tput sgr0
 }
 ## vim: ft=sh
 
@@ -81,6 +81,7 @@ mute ()
 # txt: print current timestamp in UTC
 timestamp ()
 {
+  # shellcheck disable=SC2183
   printf "%(%s)T"
 }
 
@@ -1183,6 +1184,151 @@ command_view_del ()
   config_save "${CONFIG_FILE}"
 }
 
+
+# help:fun: daemon {start|stop|kill|status} 
+# help:txt: Manage daemon mode of timeline.
+command_daemon ()
+{
+  local cmd="$1"; shift
+  if fun "command_daemon_$cmd"; then
+    "command_daemon_$cmd" "$@"
+  else
+    E=1 error "$NOSUBCMD" "$cmd" "daemon"
+  fi
+}
+
+# help:daemon:fun: daemon start
+# help:daemon:txt: Start daemon in background
+command_daemon_start ()
+{
+  daemon_start
+}
+
+
+# help:daemon:fun: daemon stop
+# help:daemon:txt: Clean stop daemon running in background
+command_daemon_stop ()
+{
+  daemon_stop TERM
+}
+
+# help:daemon:fun: daemon kill
+# help:daemon:txt: Force kill daemon running in background
+command_daemon_kill ()
+{
+  daemon_stop KILL
+}
+
+# help:daemon:fun: daemon status
+# help:daemon:txt: Show if daemon is running or not
+command_daemon_status ()
+{
+  daemon_list
+}
+## vim:ft=sh
+
+# env: DAEMON_LOG_FILE: Internal variable where file redirections are saved.
+DAEMON_LOG_FILE=
+# env: DAEMON_LOG_LEVEL: Internal variable to store daemon log level.
+DAEMON_LOG_LEVEL=
+# env: DAEMON_INTERVAL: Internal variable to store daemon interval time.
+DAEMON_INTERVAL=
+# env: DAEMON_COMMANDS: Internal variable to store commands to run in bg.
+DAEMON_COMMANDS=
+
+# env: NOLOG: if true do not log anything
+NOLOG=false
+# env: PIDFILE: Internal variable where pidfile path is saved.
+PIDFILE=
+
+# fun: daemon_reload_config
+# txt: reload daemon config from config file
+daemon_reload_config ()
+{
+  PIDFILE="$(config_get daemon.pidfile)"
+  DAEMON_LOG_FILE="$(config_get_empty daemon.log.file)"
+  case "$DAEMON_LOG_FILE" in
+    none) NOLOG=true;;
+    stdout|STDOUT|stderr|STDERR) DAEMON_LOG_FILE="";;
+    *) DAEMON_LOG_FILE=">> ${DAEMON_LOG_FILE}";;
+  esac
+  DAEMON_LOG_LEVEL="$(config_get_empty daemon.log.level)"
+  case "${DAEMON_LOG_LEVEL}" in
+    error) DAEMON_LOG_FILE+=" 2>&1 >/dev/null";;
+    info) DAEMON_LOG_FILE+=" 2>&1";;
+  esac
+  DAEMON_INTERVAL="$(config_get_empty daemon.interval)"
+  DAEMON_COMMANDS="$(config_get_empty daemon.commands)"
+}
+
+# fun: daemon_run <pidfile>
+# txt: Run the commands configured for the daemon every interval.
+daemon_run ()
+{
+  daemon_reload_config
+
+  PIDFILE="$1"
+
+  trap daemon_reload_config HUP
+  trap daemon_remove_pid TERM
+
+  # while sleep ...
+  while sleep "${DAEMON_INTERVAL:-300}"
+  do
+    if ! ${NOLOG:-false}; then
+      eval "main_standalone ${DAEMON_COMMANDS} ${DAEMON_LOG_FILE}"
+    fi
+  done
+}
+
+# fun: daemon_start
+# txt: Start daemon in background.
+daemon_start ()
+{
+  local pid
+  daemon_reload_config
+
+  [ -r "${PIDFILE}" ] && pid="$(<"${PIDFILE}")"
+
+  if [[ "$pid" ]]; then
+    fatal $"There are another daemon running. Force quit with daemon kill"
+  else
+    daemon_run "${PIDFILE}" &
+    echo "$!" > "${PIDFILE}"
+    disown
+    info $"Starting daemon at pid %d" "$!"
+  fi
+}
+
+# fun: daemon_stop <signal>
+# txt: Stop daemon running in background with signal passed as argument.
+daemon_stop ()
+{
+  local pid
+  daemon_reload_config
+
+  [ -r "${PIDFILE}" ] && pid="$(<"${PIDFILE}")"
+
+  if [[ "$pid" ]]; then
+    pkill "-$1" -P "$pid" && rm "${PIDFILE}"
+  fi
+}
+
+# fun: daemon_list
+# txt: print if the daemon is currently running.
+daemon_list ()
+{
+  local pid
+  daemon_reload_config
+
+  [ -r "${PIDFILE}" ] && pid="$(<"${PIDFILE}")"
+
+  if [[ "$pid" ]]; then
+    info $"Daemon running at pid: %d" "$pid"
+  else
+    info $"There is no daemon running"
+  fi
+}
 ## vim:ft=sh
 
 # env: ACCOUNT_NAME: A variable contains the name of the acctive account.
@@ -1578,6 +1724,15 @@ declare -xA CONFIG=(
   [network.follower-color-name]='7,'
   [network.follower-color-user]='7,'
   [network.follower.color]='7,'
+  [daemon.interval]='300'
+  [daemon.commands]='timeline refresh'
+  [daemon.pidfile]="${HOME}/.local/share/tl/daemon.pid"
+  [daemon.log.file]="${HOME}/.local/share/tl/daemon.log"
+  [daemon.log.level]=info
+  [notify.command]="notify-send"
+  [notify.format]='Knock knock from %s'
+  [notify.filter]="mention"
+  [notify.cache_file]="${HOME}/.cache/tl/notify.cache"
   [alias.tr]='timeline refresh'
   [alias.tl]='timeline list'
   [alias.post]='event post'
@@ -1679,9 +1834,11 @@ if test -t 1; then
        CONFIG['network.follower.color']=240,
        CONFIG['prompt.color']=69,
        ;;
-  esac
+    *) export COLOR=false;;
+   esac
+else
+   export COLOR=false
 fi
-
 
 # fun: config_load <filename>
 # txt: given a filename path as argument, read the content and save it in
@@ -1939,6 +2096,39 @@ filter_score ()
   return 1
 }
 
+# fun: filter_text <pattern> <eid>
+# txt: return true if especified eid contains text which match with pattern
+#      passed as argument (glob pattern supported only).
+filter_text ()
+{
+  local fpattern="$1" eid="$2"
+
+  case "$(event_mesg "$eid")" in
+    $fpattern) return 0;;
+  esac
+  return 1
+}
+
+# fun: filter_mention <eid>
+# txt: return true if myself is mentioned in eid
+filter_mention ()
+{
+  local eid="$1" uid pattern
+  uid="$(account_active_oid)"
+
+  # no acctive account
+  [[ "$uid" ]] || return 1
+
+  # ignore if I mention myself
+  #[[ "${eid%%:*}" = "${uid}" ]] && return 1
+
+  for pattern in "@$uid" "@${uid:0:8}" "$(username "$uid")"; do
+    filter_text "*${pattern}*" "$eid" && return 0
+  done
+
+  return 1
+}
+
 # fun: filter_add {hide|show} <expr>
 # txt: Add an expression filter
 filter_add ()
@@ -1984,6 +2174,12 @@ filter_eval_expr ()
         ;;
       view:*)
         filter_view "${expr#view:}" "$eid" && return 0
+        ;;
+      text:*)
+        filter_text "${expr#text:}" "$eid" && return 0
+        ;;
+      mention)
+        filter_mention "$eid" && return 0
         ;;
       *)
         E=3 error $"This kind of filtering is not implemented yet"
@@ -2103,6 +2299,8 @@ event_load_line ()
       (( EVENTS_SCORE["$link"]+=score ))
     fi
   fi
+
+  notify "$eid:$date"
 }
 
 # fun: event_sign <eid>
@@ -2466,7 +2664,7 @@ format_style ()
 # use: format_compose timeline username "me"
 format_compose ()
 {
-  if test -t 1 || ${T:-false}; then
+  if ( test -t 1 || ${T:-false} ) && ${COLOR:-true}; then
     local -a format=()
     color_eval format "${1}.color-${2}" "${1}.color" "$3"
     format[1]="$(format_style "${1}.style-${2}" "${format[1]}")"
@@ -2726,6 +2924,40 @@ error ()
 
   if [ "${INTERACTIVE:-false}" = "false" ] && [ "$E" ]; then
     exit "$E"
+  fi
+}
+## vim:ft=sh
+
+# fun: notify <eid>
+# txt: send notification for specified eid if match the notification filter.
+notify ()
+{
+  local user uid="${1%%:*}" date="${1##*:}" last_date=0
+  local fexpr ncommand
+
+  ncommand="$(config_get_empty notify.command)"
+
+  [[ "$ncommand" ]] || return 0
+
+  last_date_file="$(config_get notify.cache_file)"
+  [[ -r "${last_date_file}" ]] && 
+    last_date="$(< "$last_date_file")"
+
+  # discard old events
+  [[ "$date" -le "${last_date}" ]] &&
+    return
+
+  # discard own events
+  user="$(account_active_oid)"
+  [[ "$uid" = "$user" ]] &&
+    return
+
+  fexpr="$(config_get_empty notify.filter)"
+
+  if [[ "$fexpr" ]] && filter_eval_expr "$1" "$fexpr"; then
+    # shellcheck disable=SC2059
+    "$ncommand" "$(printf "$(config_get notify.format)" "$(username "$uid")")"
+    echo "$date" > "${last_date_file}"
   fi
 }
 main "$@"
