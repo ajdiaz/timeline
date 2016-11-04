@@ -43,7 +43,7 @@ join ()
 # txt: create a unique object id for the string passed as argument
 oid ()
 {
-  command git hash-object --stdin <<<"$1"
+  command git hash-object --stdin <<<"${1%.git}"
 }
 
 # fun: try_path <path_list>

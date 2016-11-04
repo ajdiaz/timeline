@@ -47,7 +47,8 @@ command_account_create ()
       E=1 error "$INVALIDURL" "$pull_url"
     else
       account_create "$name" "$push_url" "$pull_url" "$keyid" "$path"
-      command_account_active "$(account_active_name)"
+      config_load "${CONFIG_FILE}"
+      command_account_active "$name"
     fi
   fi
 }
@@ -106,6 +107,8 @@ command_account_clone ()
       E=1 error "$INVALIDURL" "$pull_url"
     else
       account_clone "$name" "$push_url" "$pull_url" "$keyid" "$path"
+      config_load "${CONFIG_FILE}"
+      command_account_active "$name"
     fi
   fi
 }

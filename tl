@@ -106,7 +106,7 @@ join ()
 # txt: create a unique object id for the string passed as argument
 oid ()
 {
-  command git hash-object --stdin <<<"$1"
+  command git hash-object --stdin <<<"${1%.git}"
 }
 
 # fun: try_path <path_list>
@@ -570,7 +570,8 @@ command_account_create ()
       E=1 error "$INVALIDURL" "$pull_url"
     else
       account_create "$name" "$push_url" "$pull_url" "$keyid" "$path"
-      command_account_active "$(account_active_name)"
+      config_load "${CONFIG_FILE}"
+      command_account_active "$name"
     fi
   fi
 }
@@ -629,6 +630,8 @@ command_account_clone ()
       E=1 error "$INVALIDURL" "$pull_url"
     else
       account_clone "$name" "$push_url" "$pull_url" "$keyid" "$path"
+      config_load "${CONFIG_FILE}"
+      command_account_active "$name"
     fi
   fi
 }
@@ -1463,7 +1466,7 @@ account_clone ()
     config_set "user.alias-$(oid "$pull_url")" "$name"
     command git clone "$push_url" "$path"
     workon "$path" command git submodule init
-    account_config "$path" "$pull_url"
+    account_config "$path" "$pull_url" "$keyid"
     config_save "${CONFIG_FILE}"
   fi
 }
@@ -1487,7 +1490,7 @@ account_init ()
       E=1 fatal $"Unable to create account directory: %s" "$path"
 
     workon "$path" command git init
-    account_config "$path" "$pull_url"
+    account_config "$path" "$pull_url" "$keyid"
     workon "$path" command git add .
     if [[ "$keyid" ]]; then
       workon "$path" command git commit -S -m 'Initial commit'
