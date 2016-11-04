@@ -532,7 +532,7 @@ command_account ()
 {
   local cmd="$1"; shift
   if fun "command_account_$cmd"; then
-    "command_account_$cmd" "$@" | info_multi
+    "command_account_$cmd" "$@"
   else
     E=1 error "$NOSUBCMD" "$cmd" "account"
   fi
@@ -569,7 +569,8 @@ command_account_create ()
     elif ! valid_url "$pull_url"; then
       E=1 error "$INVALIDURL" "$pull_url"
     else
-      account_create "$name" "$push_url" "$pull_url" "$keyid" "$path"
+      account_create "$name" "$push_url" "$pull_url" "$keyid" "$path" |
+        info_multi
       config_load "${CONFIG_FILE}"
       command_account_active "$name"
     fi
@@ -597,7 +598,7 @@ command_account_delete ()
   elif ! account_exists "$name" && ! ${force}; then
     E=1 error $"Account '%s' does not exists." "$name"
   else
-    account_delete "$name"
+    account_delete "$name" | info_multi
   fi
 }
 
@@ -629,7 +630,8 @@ command_account_clone ()
     elif ! valid_url "$pull_url"; then
       E=1 error "$INVALIDURL" "$pull_url"
     else
-      account_clone "$name" "$push_url" "$pull_url" "$keyid" "$path"
+      account_clone "$name" "$push_url" "$pull_url" "$keyid" "$path" |
+        info_multi
       config_load "${CONFIG_FILE}"
       command_account_active "$name"
     fi
@@ -640,7 +642,7 @@ command_account_clone ()
 # help:account:txt: List all accounts registered in the configuration.
 command_account_list ()
 {
-  account_list
+  account_list | info_multi
 }
 
 # help:fun: help [command]
@@ -1229,6 +1231,14 @@ command_daemon_status ()
 {
   daemon_list
 }
+
+# hey! you do not want to use this, only for debug purposes
+if ${DEBUG:-false}; then
+  command_debug ()
+  {
+    eval "$@"
+  }
+fi
 ## vim:ft=sh
 
 # env: DAEMON_LOG_FILE: Internal variable where file redirections are saved.
