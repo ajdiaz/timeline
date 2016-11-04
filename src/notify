@@ -11,7 +11,7 @@ notify ()
 
   [[ "$ncommand" ]] || return 0
 
-  last_date_file="$(config_get notify.cache_file)"
+  last_date_file="$(config_get notify.cache-file)"
   [[ -r "${last_date_file}" ]] && 
     last_date="$(< "$last_date_file")"
 

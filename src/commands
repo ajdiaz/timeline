@@ -47,6 +47,7 @@ command_account_create ()
       E=1 error "$INVALIDURL" "$pull_url"
     else
       account_create "$name" "$push_url" "$pull_url" "$keyid" "$path"
+      command_account_active "$(account_active_name)"
     fi
   fi
 }

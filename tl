@@ -570,6 +570,7 @@ command_account_create ()
       E=1 error "$INVALIDURL" "$pull_url"
     else
       account_create "$name" "$push_url" "$pull_url" "$keyid" "$path"
+      command_account_active "$(account_active_name)"
     fi
   fi
 }
@@ -1732,7 +1733,7 @@ declare -xA CONFIG=(
   [notify.command]="notify-send"
   [notify.format]='Knock knock from %s'
   [notify.filter]="mention"
-  [notify.cache_file]="${HOME}/.cache/tl/notify.cache"
+  [notify.cache-file]="${HOME}/.cache/tl/notify.cache"
   [alias.tr]='timeline refresh'
   [alias.tl]='timeline list'
   [alias.post]='event post'
@@ -2939,7 +2940,7 @@ notify ()
 
   [[ "$ncommand" ]] || return 0
 
-  last_date_file="$(config_get notify.cache_file)"
+  last_date_file="$(config_get notify.cache-file)"
   [[ -r "${last_date_file}" ]] && 
     last_date="$(< "$last_date_file")"
 
