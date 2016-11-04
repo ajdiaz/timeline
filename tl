@@ -2335,14 +2335,26 @@ event_sign_ext ()
 # txt: given an specific eid return the eids of the replies of that post
 event_replies ()
 {
-  echo "${EVENTS_CROSS_REPLY[$1]}"
+  local -a sorted_replies=()
+
+  for reply in ${EVENTS_CROSS_REPLY["$1"]}; do
+    sorted_replies[${reply#*:}]="$reply"
+  done
+
+  echo "${sorted_replies[@]}"
 }
 
 # fun: event_labels <eid>
 # txt: given an specific eid return the eids of the tags of that post
 event_labels ()
 {
-  echo "${EVENTS_CROSS_TAGS[$1]}"
+  local -a sorted_labels=()
+
+  for label in ${EVENTS_CROSS_TAGS["$1"]}; do
+    sorted_labels[${label#*:}]="$label"
+  done
+
+  echo "${sorted_labels[@]}"
 }
 
 # fun: event_score <eid>
