@@ -2906,15 +2906,33 @@ follow_del ()
 }
 ## vim:ft=sh
 
+# fun: usage
+# txt: print help screen
+usage ()
+{
+  printf $"tl: [options] [command [args]]\n\n"
+  printf $"Options:\n"
+  printf $"  -h           Show this help screen\n"
+  printf $"  -a <account> Use specified account\n"
+  printf $"  -C <file>    Load specified config file\n"
+  printf $"See all available commands with command 'help'\n"
+}
+
 # fun: args_eval <arg>+
 # txt: parse and evaluate program arguments
 args_eval ()
 {
   OPTERR=1
-  while getopts "C:" opt; do
+  while getopts "hC:a:" opt; do
     case $opt in
+      h)
+        usage; exit 0
+      ;;
       C)
         export CONFIG_FILE="$OPTARG"
+      ;;
+      a)
+        command_account_active "$OPTARG"
       ;;
     esac
   done
