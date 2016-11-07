@@ -1561,6 +1561,7 @@ declare -xA CONFIG=(
   [timeline.use-short-ids]=true
   [timeline.post.format]='%b%-3d%b %b%(%Y%m%d %H%M%S)T%b %b%10s%b [%b%s%b] (%b%d%b) %b%s%b'
   [timeline.post.fields]='index,date,name,flags,score,mesg'
+  [timeline.post.highlight-mesg]='@*'
   [timeline.post.prefix]=''
   [timeline.post.color]='7,'
   [timeline.post.color-index]='7,'
@@ -1601,6 +1602,7 @@ declare -xA CONFIG=(
   [timeline.tag.flag-replied]='R'
   [timeline.reply.format]='%b%-3d%b %b%(%Y%m%d %H%M%S)T%b %b%10s%b [%b%s%b] (%b%d%b) %b%s%b'
   [timeline.reply.fields]='index,date,name,flags,score,mesg'
+  [timeline.reply.highlight-mesg]='@*'
   [timeline.reply.prefix]='> '
   [timeline.reply.indent]=' '
   [timeline.reply.color]='7,'
@@ -2685,6 +2687,27 @@ format_style ()
   esac
 }
 
+# fun: format_highlight <config> <text>
+# txt: highlight patterns in text
+format_highlight ()
+{
+  local highlight line="$2"
+  local -a ret=()
+  highlight="$(config_get_empty "$1")"
+
+  if [[ -z "$highlight" ]]; then
+    echo "$line"
+  else
+    for word in $line; do
+      case "$word" in
+        $highlight) ret+=( "$(tput bold)${word}$(tput sgr0)" );;
+        *) ret+=( "$word" );;
+      esac
+    done
+    echo "${ret[*]}"
+  fi
+}
+
 # fun: format_compose <kind> <field> <value>
 # txt: compose a new format for kind passed as argument, setting the field
 #      provided with specified value.
@@ -2695,6 +2718,7 @@ format_compose ()
     local -a format=()
     color_eval format "${1}.color-${2}" "${1}.color" "$3"
     format[1]="$(format_style "${1}.style-${2}" "${format[1]}")"
+    format[1]="$(format_highlight "${1}.highlight-${2}" "${format[1]}")"
     FORMAT["$2"]="$(join $'\n' "${format[@]}")"
   else
     FORMAT["$2"]=$'\n'"$3"$'\n'

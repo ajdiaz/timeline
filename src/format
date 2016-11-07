@@ -20,6 +20,27 @@ format_style ()
   esac
 }
 
+# fun: format_highlight <config> <text>
+# txt: highlight patterns in text
+format_highlight ()
+{
+  local highlight line="$2"
+  local -a ret=()
+  highlight="$(config_get_empty "$1")"
+
+  if [[ -z "$highlight" ]]; then
+    echo "$line"
+  else
+    for word in $line; do
+      case "$word" in
+        $highlight) ret+=( "$(tput bold)${word}$(tput sgr0)" );;
+        *) ret+=( "$word" );;
+      esac
+    done
+    echo "${ret[*]}"
+  fi
+}
+
 # fun: format_compose <kind> <field> <value>
 # txt: compose a new format for kind passed as argument, setting the field
 #      provided with specified value.
@@ -30,6 +51,7 @@ format_compose ()
     local -a format=()
     color_eval format "${1}.color-${2}" "${1}.color" "$3"
     format[1]="$(format_style "${1}.style-${2}" "${format[1]}")"
+    format[1]="$(format_highlight "${1}.highlight-${2}" "${format[1]}")"
     FORMAT["$2"]="$(join $'\n' "${format[@]}")"
   else
     FORMAT["$2"]=$'\n'"$3"$'\n'
