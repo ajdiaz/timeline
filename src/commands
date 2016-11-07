@@ -229,42 +229,6 @@ command_timeline_refresh ()
   timeline_list "$@"
 }
 
-# help:timeline:fun: timeline info [--eid] <num/eid>
-# help:timeline:txt: Given the index number of an event in the timeline,
-# help:timeline:txt: display internal information about the event.
-# help:timeline:txt: If '--eid' is present, then use the argument as valid
-# help:timeline:txt: EID instead of index number.
-command_timeline_info ()
-{
-  local eid
-
-  if [[ $# -eq 0 ]]; then
-    E=2 error $"Timeline info requires one parameter: num"
-    return 1
-  elif [[ "$1" = "--eid" ]]; then
-    if [[ "$2" ]]; then
-      eid="$2"
-    else
-      E=2 error $"Timeline info with --eid required argument: eid"
-      return 1
-    fi
-  fi
-
-  command_account_active "$(account_active_name)"
-
-  if [[ -z "$eid" ]]; then
-    if ! is_decimal "$1"; then
-      E=2 error $"Invalid index number '%s'" "$1"
-      return 1
-    else
-      eid="$(timeline_index_get "$1")" || return 1
-    fi
-  fi
-
-  timeline_load
-  timeline_info "$eid" | info_multi
-}
-
 # help:fun: config {list|get|set|save} {args...}
 # help:txt: Change configuration settings
 command_config ()
@@ -518,6 +482,42 @@ command_event_score ()
     command_account_refresh
     event_create "$(timestamp)" S "$eid" "$score" 2>&1 | info_multi
   fi
+}
+
+# help:timeline:fun: event info [--eid] <num/eid>
+# help:timeline:txt: Given the index number of an event in the timeline,
+# help:timeline:txt: display internal information about the event.
+# help:timeline:txt: If '--eid' is present, then use the argument as valid
+# help:timeline:txt: EID instead of index number.
+command_event_info ()
+{
+  local eid
+
+  if [[ $# -eq 0 ]]; then
+    E=2 error $"Timeline info requires one parameter: num"
+    return 1
+  elif [[ "$1" = "--eid" ]]; then
+    if [[ "$2" ]]; then
+      eid="$2"
+    else
+      E=2 error $"Timeline info with --eid required argument: eid"
+      return 1
+    fi
+  fi
+
+  command_account_active "$(account_active_name)"
+
+  if [[ -z "$eid" ]]; then
+    if ! is_decimal "$1"; then
+      E=2 error $"Invalid index number '%s'" "$1"
+      return 1
+    else
+      eid="$(timeline_index_get "$1")" || return 1
+    fi
+  fi
+
+  timeline_load
+  event_info "$eid" | info_multi
 }
 
 # help:fun: follow {list|add|del} {args...}

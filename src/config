@@ -153,7 +153,7 @@ declare -xA CONFIG=(
   [alias.post]='event post'
   [alias.reply]='event reply'
   [alias.tag]='event tag'
-  [alias.info]='timeline info'
+  [alias.info]='event info'
   [alias.score]='event score'
 )
 

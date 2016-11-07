@@ -453,74 +453,6 @@ timeline_index_get ()
     echo "${TIMELINE_INDEX[$1]}"
   fi
 }
-
-# fun: timeline_info <eid>
-# txt: given an eid, print the infortmation related with this event
-timeline_info ()
-{
-  local eid="$1" date kind mesg tags reply link name item tag
-
-  # XXX Move this block to a sub function or similar?
-  date="$(event_date "$eid")"
-  kind="$(event_kind "$eid")"
-  name="$(username "$eid")"
-
-  if [[ -z "$kind" ]]; then
-    E=1 error $"Not found information for EID '$eid'"
-    return 1
-  fi
-
-  case "$kind" in
-    post)
-      mesg="$(event_mesg "$eid")"
-      ;;
-    tag)
-      tags="$(event_tags "$eid")"
-      link="$(event_link "$eid")"
-      ;;
-    reply)
-      mesg="$(event_mesg "$eid")"
-      link="$(event_link "$eid")"
-      ;;
-  esac
-
-  printf $"%-10s %s\n" "EID:"   "$eid"
-  printf $"%-10s %s (%s)\n" "UID:"   "${eid%:*}" "$(username "$eid")"
-  printf $"%-10s %s (%(%Y-%m-%d %H:%M:%S)T)\n" "Date:"  "$date" "$date"
-  printf $"%-10s %s\n" "Kind:"   "${kind^^}"
-  printf $"%-10s %s\n" "Link:"   "${link}"
-  printf $"%-10s %s\n" "Tags:"   "${tags}"
-  printf $"%-10s %s\n" "Mesg:"   "${mesg}"
-  printf $"Tagged by:\n"
-  for item in $(event_labels "$eid"); do
-    printf "  -  %s\n" "$item"
-  done
-  local -A taggedas=()
-  for item in $(event_labels "$eid"); do
-    for tag in $(event_tags "$item"); do
-      taggedas["$tag"]=1
-    done
-  done
-  printf $"Tagged as:\n"
-  for item in "${!taggedas[@]}"; do
-    printf "  -  %s\n" "$item"
-  done
-  printf $"Replied by:\n"
-  for item in $(event_replies "$eid"); do
-    printf "  -  %s\n" "$item"
-  done
-
-  if [[ "$(event_sign "$eid")" = "0" ]]; then
-    printf "Signed: Yes\n"
-    printf "Signature information:\n"
-
-    while read -r line; do
-      printf "  %s\n" "$line"
-    done < <(event_sign_ext "$eid")
-  else
-    printf "Signed: No\n"
-  fi
-}
 ## vim:ft=sh
 
 NOSUBCMD=$"No valid subcomand '%s' for command '%s'"
@@ -750,42 +682,6 @@ command_timeline_refresh ()
   command_account_refresh
   timeline_load
   timeline_list "$@"
-}
-
-# help:timeline:fun: timeline info [--eid] <num/eid>
-# help:timeline:txt: Given the index number of an event in the timeline,
-# help:timeline:txt: display internal information about the event.
-# help:timeline:txt: If '--eid' is present, then use the argument as valid
-# help:timeline:txt: EID instead of index number.
-command_timeline_info ()
-{
-  local eid
-
-  if [[ $# -eq 0 ]]; then
-    E=2 error $"Timeline info requires one parameter: num"
-    return 1
-  elif [[ "$1" = "--eid" ]]; then
-    if [[ "$2" ]]; then
-      eid="$2"
-    else
-      E=2 error $"Timeline info with --eid required argument: eid"
-      return 1
-    fi
-  fi
-
-  command_account_active "$(account_active_name)"
-
-  if [[ -z "$eid" ]]; then
-    if ! is_decimal "$1"; then
-      E=2 error $"Invalid index number '%s'" "$1"
-      return 1
-    else
-      eid="$(timeline_index_get "$1")" || return 1
-    fi
-  fi
-
-  timeline_load
-  timeline_info "$eid" | info_multi
 }
 
 # help:fun: config {list|get|set|save} {args...}
@@ -1041,6 +937,42 @@ command_event_score ()
     command_account_refresh
     event_create "$(timestamp)" S "$eid" "$score" 2>&1 | info_multi
   fi
+}
+
+# help:timeline:fun: event info [--eid] <num/eid>
+# help:timeline:txt: Given the index number of an event in the timeline,
+# help:timeline:txt: display internal information about the event.
+# help:timeline:txt: If '--eid' is present, then use the argument as valid
+# help:timeline:txt: EID instead of index number.
+command_event_info ()
+{
+  local eid
+
+  if [[ $# -eq 0 ]]; then
+    E=2 error $"Timeline info requires one parameter: num"
+    return 1
+  elif [[ "$1" = "--eid" ]]; then
+    if [[ "$2" ]]; then
+      eid="$2"
+    else
+      E=2 error $"Timeline info with --eid required argument: eid"
+      return 1
+    fi
+  fi
+
+  command_account_active "$(account_active_name)"
+
+  if [[ -z "$eid" ]]; then
+    if ! is_decimal "$1"; then
+      E=2 error $"Invalid index number '%s'" "$1"
+      return 1
+    else
+      eid="$(timeline_index_get "$1")" || return 1
+    fi
+  fi
+
+  timeline_load
+  event_info "$eid" | info_multi
 }
 
 # help:fun: follow {list|add|del} {args...}
@@ -1752,7 +1684,7 @@ declare -xA CONFIG=(
   [alias.post]='event post'
   [alias.reply]='event reply'
   [alias.tag]='event tag'
-  [alias.info]='timeline info'
+  [alias.info]='event info'
   [alias.score]='event score'
 )
 
@@ -2439,6 +2371,75 @@ event_create ()
 
   if [[ "$auto_push" = "true" ]]; then
     account_push
+  fi
+}
+
+# fun: event_info <eid>
+# txt: given an eid, print the infortmation related with this event
+event_info ()
+{
+  local eid="$1" date kind mesg tags reply link name item tag
+
+  # XXX Move this block to a sub function or similar?
+  date="$(event_date "$eid")"
+  kind="$(event_kind "$eid")"
+  name="$(username "$eid")"
+
+  if [[ -z "$kind" ]]; then
+    E=1 error $"Not found information for EID '$eid'"
+    return 1
+  fi
+
+  case "$kind" in
+    post)
+      mesg="$(event_mesg "$eid")"
+      ;;
+    tag)
+      tags="$(event_tags "$eid")"
+      link="$(event_link "$eid")"
+      ;;
+    reply)
+      mesg="$(event_mesg "$eid")"
+      link="$(event_link "$eid")"
+      ;;
+  esac
+
+  printf $"%-10s %s\n" "EID:"   "$eid"
+  printf $"%-10s %s (%s)\n" "UID:"   "${eid%:*}" "$(username "$eid")"
+  # shellcheck disable=SC2183
+  printf $"%-10s %s (%(%Y-%m-%d %H:%M:%S)T)\n" "Date:"  "$date" "$date"
+  printf $"%-10s %s\n" "Kind:"   "${kind^^}"
+  printf $"%-10s %s\n" "Link:"   "${link}"
+  printf $"%-10s %s\n" "Tags:"   "${tags}"
+  printf $"%-10s %s\n" "Mesg:"   "${mesg}"
+  printf $"Tagged by:\n"
+  for item in $(event_labels "$eid"); do
+    printf "  -  %s\n" "$item"
+  done
+  local -A taggedas=()
+  for item in $(event_labels "$eid"); do
+    for tag in $(event_tags "$item"); do
+      taggedas["$tag"]=1
+    done
+  done
+  printf $"Tagged as:\n"
+  for item in "${!taggedas[@]}"; do
+    printf "  -  %s\n" "$item"
+  done
+  printf $"Replied by:\n"
+  for item in $(event_replies "$eid"); do
+    printf "  -  %s\n" "$item"
+  done
+
+  if [[ "$(event_sign "$eid")" = "0" ]]; then
+    printf "Signed: Yes\n"
+    printf "Signature information:\n"
+
+    while read -r line; do
+      printf "  %s\n" "$line"
+    done < <(event_sign_ext "$eid")
+  else
+    printf "Signed: No\n"
   fi
 }
 ## vim:ft=sh
