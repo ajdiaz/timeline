@@ -2069,12 +2069,9 @@ filter_mention ()
   # no acctive account
   [[ "$uid" ]] || return 1
 
-  # ignore if I mention myself
-  [[ "${eid%%:*}" = "${uid}" ]] && return 1
-
   reat=( "@$uid" "@${uid:0:8}" "$(username "$uid")" )
 
-  if [[ "$(config_get_empty timeline.react-on-all)" = "yes" ]]; then
+  if [[ "$(config_get_empty timeline.react-on-all)" = "true" ]]; then
     reat+=( "@all" "@here" )
   fi
 
