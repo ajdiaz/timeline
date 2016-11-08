@@ -22,6 +22,7 @@ declare -xA CONFIG=(
   [history.file]="$HOME/.local/share/tl/history"
   [timeline.show-replies]=true
   [timeline.show-tags]=false
+  [timeline.react-on-all]=true
   [timeline.filter.show]=''
   [timeline.filter.hide]='tag:spam score-min:0'
   [timeline.own-posts]=true

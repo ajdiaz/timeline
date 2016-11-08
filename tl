@@ -1553,6 +1553,7 @@ declare -xA CONFIG=(
   [history.file]="$HOME/.local/share/tl/history"
   [timeline.show-replies]=true
   [timeline.show-tags]=false
+  [timeline.react-on-all]=true
   [timeline.filter.show]=''
   [timeline.filter.hide]='tag:spam score-min:0'
   [timeline.own-posts]=true
@@ -2063,14 +2064,21 @@ filter_mention ()
 {
   local eid="$1" uid pattern
   uid="$(account_active_oid)"
+  local -a reat=()
 
   # no acctive account
   [[ "$uid" ]] || return 1
 
   # ignore if I mention myself
-  #[[ "${eid%%:*}" = "${uid}" ]] && return 1
+  [[ "${eid%%:*}" = "${uid}" ]] && return 1
 
-  for pattern in "@$uid" "@${uid:0:8}" "$(username "$uid")"; do
+  reat=( "@$uid" "@${uid:0:8}" "$(username "$uid")" )
+
+  if [[ "$(config_get_empty timeline.react-on-all)" = "yes" ]]; then
+    reat+=( "@all" "@here" )
+  fi
+
+  for pattern in "${reat[@]}"; do
     filter_text "*${pattern}*" "$eid" && return 0
   done
 
