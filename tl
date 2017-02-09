@@ -1465,6 +1465,8 @@ account_commit ()
   path="$(account_active_path)"
   keyid="$(keyid "$(account_active_name)")"
 
+  [[ "$path" ]] || E=1 fatal $"No active account to commit"
+
   workon "$path" command git add .
   if [[ "$keyid" ]]; then
     workon "$path" command git commit -S -m "Timeline Autosave: $(timestamp)"
