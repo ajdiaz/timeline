@@ -1070,7 +1070,7 @@ command_network_refresh ()
   info $"Discovering the network. This action could take a while..."
   network_refresh "$(account_active_path)" | info_multi
   info $"Network updated"
-  network_list
+  command_network_list
 }
 
 # help:fun: quit
@@ -1544,7 +1544,6 @@ declare -xA CONFIG=(
   [plugin.path]="$HOME/.local/share/tl/plugin:$HOME/.tl/plugin"
   [cache.path]="$HOME/.cache/tl:$HOME/.tl/cache"
   [network.depth]=10
-  [network.ignore-duplicates]=true
   [prompt.format]='%b%s:%b '
   [prompt.fields]='account'
   [prompt.color]='7,'
@@ -1689,6 +1688,9 @@ declare -xA CONFIG=(
   [alias.tag]='event tag'
   [alias.info]='event info'
   [alias.score]='event score'
+  [alias.net]='network'
+  [alias.nl]='network list'
+  [alias.nr]='network refresh'
 )
 
 if test -t 1; then
@@ -1881,9 +1883,10 @@ config_list ()
 ## vim:ft=sh
 
 # env: NETWORK: an associative array which contains all network information
-declare -A NETWORK_ITEMS=()
 declare -A NETWORK_SCORE=()
 declare -A NETWORK_PARENTS=()
+declare -A NETWORK_ITEMS=()
+declare -A NETWORK_UPDATED=()
 
 NETWORK_PATH_PREFIX="network"
 
@@ -1892,21 +1895,25 @@ NETWORK_PATH_PREFIX="network"
 network_list ()
 {
   local -a sort_score=()
+  local max=0
 
   # first sort scores
   for items in "${!NETWORK_SCORE[@]}"; do
     sort_score[${NETWORK_SCORE["$items"]}]+=" $items "
+    if [[ "${NETWORK_SCORE["$items"]}" -gt $max ]]; then
+      max=${NETWORK_SCORE["$items"]}
+    fi
   done
 
+
   # reverse score array and print results
-  i=$((${#sort_score[@]}))
-  for ((;i>=1; i--)); do
-    items="${sort_score[$i]}"
+  for ((;max>0; max--)); do
+    items="${sort_score[$max]}"
 
     for item in $items; do
       format_compose network.list date "$(timestamp)"
       format_compose network.list name "NETWORK"
-      format_compose network.list score "$i"
+      format_compose network.list score "$max"
       format_compose network.list user "$(username "$item")"
       format_compose network.list url "${NETWORK_ITEMS["$item"]}"
       format_dumps network.list
@@ -1920,67 +1927,94 @@ network_list ()
   done
 }
 
-# fun: network_load <path> [parent] [depth]
-# txt: Build network graph from path
-# env: UPDATE: if true performs refresh
-network_load ()
+# fun: network_load_repo <uid> <url> [parent]
+# txt: load the repo follows
+network_load_repo ()
 {
-  local path="$1" parent="$2" depth=${3:-0}
-  local max_depth ignoredup cache
-  local uid url
+  local uid="$1" url="$2" parent="$3" active_oid
+  local path="${CACHE_DIR}/${NETWORK_PATH_PREFIX}/$1"
+  active_oid="$(account_active_oid)"
 
-  max_depth="$(config_get network.depth)"
-  ignoredup="$(config_get network.ignore-duplicates)"
+  [[ "$uid" = "$active_oid" ]] && return
 
-  cache="${CACHE_DIR}/${NETWORK_PATH_PREFIX}"
+  [[ "$parent" ]] && NETWORK_PARENTS["$parent"]+=" $uid "
 
-  # finish recursion: max depth reached
-  [[ "$depth" -gt "$max_depth" ]] && return
-
-  if [[ "$depth" -eq 0 ]]; then
-    NETWORK_ITEMS=()
-    NETWORK_SCORE=()
-    NETWORK_PARENTS=()
-  fi
-
-  mkdir -p "${cache}"
-
-  while read -r uid url; do
-    # ignore duplicates
-    [[ "${ignoredup}" = "true" ]] &&
-      [[ "${NETWORK_ITEMS[$uid]}" ]] && continue
-
-    if [[ -d "${cache}/$uid" ]]; then
-      # repo already exists, just rebase
-      ${UPDATE:-false} &&
-        workon "${cache}/$uid" command git pull --rebase 2>&1
-    else
-      # repo does not exists yet, cloning...
-      ${UPDATE:-false} &&
-        workon "${cache}" git clone --depth 1 "$url" "$uid" 2>&1
-    fi
-
-    if ${UPDATE:-false} && [[ $? -ne 0 ]]; then
-      # clone or pull failed
-      error $"Unable to clone/pulling repository for '%s' at '%s'" \
-        "$uid" "$url"
-      continue
-    fi
-
-    NETWORK_ITEMS["$uid"]="$url"
-    NETWORK_SCORE["$uid"]=$((${NETWORK_SCORE["$uid"]:-0} + 1))
-    [[ "$parent" ]] && NETWORK_PARENTS["$uid"]+=" $parent "
-
-    network_load "${cache}/$uid" "$uid" "$((depth + 1))"
-
+  while read -r fuid furl; do
+    [[ "$fuid" = "$active_oid" ]] && continue
+    NETWORK_ITEMS["$fuid"]="$furl"
+    NETWORK_SCORE["$fuid"]="$((${NETWORK_SCORE["$fuid"]:-0}+1))"
+    NETWORK_PARENTS["$fuid"]+=" $uid "
   done < <(follow_list "${path}")
 }
 
-# fun: network_refresh <path>
+# fun: network_load <path>
+# txt: load network in cache to in-memory structure
+network_load ()
+{
+  local path="$1" active_oid
+  local cache="${CACHE_DIR}/${NETWORK_PATH_PREFIX}"
+  active_oid="$(account_active_oid)"
+
+  while read -r  uid url; do
+    [[ "$active_oid" = "$uid" ]] && continue
+
+    if [[ -d "${cache}/$uid" ]]; then
+      network_load_repo "$uid" "$url"
+    else
+      error $"Unable to load repository '%s'. Try network refresh first." \
+        "$uid"
+    fi
+  done < <(follow_list "$(account_active_path)")
+}
+
+# fun: network_refresh_repo <uid> <url> [count]
 # txt: Refresh the network, looking for new followers in the graph.
+network_refresh_repo ()
+{
+  local uid="$1" url="$2" count="${3:-0}" max_depth=
+  local cache="${CACHE_DIR}/${NETWORK_PATH_PREFIX}"
+  max_depth="$(config_get network.depth)"
+
+  if [[ "$count" -gt "$max_depth" ]]; then
+    error $"Max depth reached (%s) for uid '%s'" "$count" "$uid"
+    return
+  fi
+
+  # This uid is already updated
+  if [[ "${NETWORK_UPDATED["$uid"]}" = "true" ]]; then
+    return
+  fi
+
+  if [[ -d "${cache}/$uid" ]]; then
+    # repo already exists, just rebase
+    if ! workon "${cache}/$uid" command git pull --rebase 2>&1; then
+      error $"Unable to pull repository '%s' from '%s'" "$uid" "$url"
+      return 1
+    fi
+  else
+    # repo does not exists yet, cloning...
+    if ! workon "${cache}" git clone --depth 1 "$url" "$uid" 2>&1; then
+      error $"Unable to clone repository '%s' from '%s'" "$uid" "$url"
+      return 1
+    fi
+  fi
+
+  NETWORK_UPDATED["$uid"]=true
+
+  while read -r uid url; do
+    network_refresh_repo "$uid" "$url" "$((count++))"
+  done < <(follow_list "${cache}/$uid")
+}
+
+# fun: network_refresh <path>
+# txt: from initial path refresh the network
 network_refresh ()
 {
-  UPDATE=true network_load "$1"
+  local path="$1"
+  NETWORK_UPDATED=()
+  while read -r uid url; do
+    network_refresh_repo "$uid" "$url"
+  done < <(follow_list "$path")
 }
 ## vim:ft=sh
 

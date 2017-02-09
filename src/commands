@@ -615,7 +615,7 @@ command_network_refresh ()
   info $"Discovering the network. This action could take a while..."
   network_refresh "$(account_active_path)" | info_multi
   info $"Network updated"
-  network_list
+  command_network_list
 }
 
 # help:fun: quit

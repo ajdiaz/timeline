@@ -13,7 +13,6 @@ declare -xA CONFIG=(
   [plugin.path]="$HOME/.local/share/tl/plugin:$HOME/.tl/plugin"
   [cache.path]="$HOME/.cache/tl:$HOME/.tl/cache"
   [network.depth]=10
-  [network.ignore-duplicates]=true
   [prompt.format]='%b%s:%b '
   [prompt.fields]='account'
   [prompt.color]='7,'
@@ -158,6 +157,9 @@ declare -xA CONFIG=(
   [alias.tag]='event tag'
   [alias.info]='event info'
   [alias.score]='event score'
+  [alias.net]='network'
+  [alias.nl]='network list'
+  [alias.nr]='network refresh'
 )
 
 if test -t 1; then
