@@ -1,4 +1,5 @@
 #! /bin/bash -i
+TIMELINE_VERSION='1.3-9-g9a15595-dirty'
 ## vim:ft=sh
 
 # fun: color_consistent <color> <item>
@@ -1162,6 +1163,13 @@ command_daemon_kill ()
 command_daemon_status ()
 {
   daemon_list
+}
+
+# help:fun: version
+# help:txt: Print version number
+command_version ()
+{
+  echo "${TIMELINE_VERSION:-Unknown version}"
 }
 
 # hey! you do not want to use this, only for debug purposes
@@ -2981,6 +2989,7 @@ usage ()
   printf $"  -h           Show this help screen\n"
   printf $"  -a <account> Use specified account\n"
   printf $"  -C <file>    Load specified config file\n"
+  printf $"  -V           Print version\n"
   printf $"See all available commands with command 'help'\n"
 }
 
@@ -2989,7 +2998,7 @@ usage ()
 args_eval ()
 {
   OPTERR=1
-  while getopts "hC:a:" opt; do
+  while getopts "hC:a:V" opt; do
     case $opt in
       h)
         usage; exit 0
@@ -2999,6 +3008,9 @@ args_eval ()
       ;;
       a)
         command_account_active "$OPTARG"
+      ;;
+      V)
+        command_version; exit 0
       ;;
     esac
   done
@@ -3032,7 +3044,7 @@ error ()
   format_compose "timeline.$err_kind" mesg "$(printf -- "$@")"
   format_dumps "timeline.$err_kind" >&2
 
-  if [ "${INTERACTIVE:-false}" = "false" ] && [ "$E" ]; then
+  if [ "$E" ]; then
     exit "$E"
   fi
 }

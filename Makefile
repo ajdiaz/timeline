@@ -8,6 +8,7 @@ OUTBIN=./tl
 
 all:
 	@echo "#! /bin/bash -i" > $(OUTBIN)
+	@echo "TIMELINE_VERSION='$(shell git describe --tags --long --dirty)'" >> $(OUTBIN)
 	find $(SRCDIR) -type f -exec cat {} \; >> $(OUTBIN)
 	@echo 'main "$$@"' >> $(OUTBIN)
 	@chmod 755 $(OUTBIN)

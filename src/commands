@@ -709,6 +709,13 @@ command_daemon_status ()
   daemon_list
 }
 
+# help:fun: version
+# help:txt: Print version number
+command_version ()
+{
+  echo "${TIMELINE_VERSION:-Unknown version}"
+}
+
 # hey! you do not want to use this, only for debug purposes
 if ${DEBUG:-false}; then
   command_debug ()

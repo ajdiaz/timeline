@@ -9,6 +9,7 @@ usage ()
   printf $"  -h           Show this help screen\n"
   printf $"  -a <account> Use specified account\n"
   printf $"  -C <file>    Load specified config file\n"
+  printf $"  -V           Print version\n"
   printf $"See all available commands with command 'help'\n"
 }
 
@@ -17,7 +18,7 @@ usage ()
 args_eval ()
 {
   OPTERR=1
-  while getopts "hC:a:" opt; do
+  while getopts "hC:a:V" opt; do
     case $opt in
       h)
         usage; exit 0
@@ -27,6 +28,9 @@ args_eval ()
       ;;
       a)
         command_account_active "$OPTARG"
+      ;;
+      V)
+        command_version; exit 0
       ;;
     esac
   done

@@ -26,7 +26,7 @@ error ()
   format_compose "timeline.$err_kind" mesg "$(printf -- "$@")"
   format_dumps "timeline.$err_kind" >&2
 
-  if [ "${INTERACTIVE:-false}" = "false" ] && [ "$E" ]; then
+  if [ "$E" ]; then
     exit "$E"
   fi
 }
