@@ -1,5 +1,5 @@
 #! /bin/bash -i
-TIMELINE_VERSION='1.4-1-gfdc0dbf'
+TIMELINE_VERSION='1.4'
 ## vim:ft=sh
 
 # fun: color_consistent <color> <item>
@@ -2932,7 +2932,7 @@ follow_list ()
 #      will add a config entry for user alias to this name.
 follow_add ()
 {
-  local path pull_url="${1%.git}" name="$2"
+  local path pull_url="${1}" name="$2"
   
   path="$(account_active_path)"
 
