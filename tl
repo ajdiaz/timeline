@@ -1,5 +1,5 @@
 #! /bin/bash -i
-TIMELINE_VERSION='1.4'
+TIMELINE_VERSION='1.4-1-ge6caa49'
 ## vim:ft=sh
 
 # fun: color_consistent <color> <item>
@@ -2740,17 +2740,24 @@ format_style ()
 # txt: highlight patterns in text
 format_highlight ()
 {
-  local highlight line="$2"
+  local highlight line="${2}"
   local -a ret=()
   highlight="$(config_get_empty "$1")"
 
   if [[ -z "$highlight" ]]; then
-    echo "$line"
+    echo "${line}"
   else
-    for word in $line; do
+    local -a words
+    local prefix=''
+    mapfile -t -d ' ' words <<<"${line}"
+    for word in "${words[@]}"; do
       case "$word" in
-        $highlight) ret+=( "$(tput bold)${word}$(tput sgr0)" );;
-        *) ret+=( "$word" );;
+        $highlight)
+          ret+=( "$(tput bold)${prefix}${word%$'\n'}$(tput sgr0)" )
+          ;;
+        *)
+          ret+=( "${prefix}${word}" )
+          ;;
       esac
     done
     echo "${ret[*]}"
