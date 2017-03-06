@@ -1,5 +1,5 @@
 #! /bin/bash -i
-TIMELINE_VERSION='1.4-1-ge6caa49'
+TIMELINE_VERSION='1.5'
 ## vim:ft=sh
 
 # fun: color_consistent <color> <item>
