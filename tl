@@ -1,5 +1,5 @@
 #! /bin/bash -i
-TIMELINE_VERSION='1.5'
+TIMELINE_VERSION='1.5-1-g55ad6db'
 ## vim:ft=sh
 
 # fun: color_consistent <color> <item>
@@ -2056,6 +2056,8 @@ network_refresh_repo ()
   local uid="$1" url="$2" count="${3:-0}" max_depth=
   local cache="${CACHE_DIR}/${NETWORK_PATH_PREFIX}"
   max_depth="$(config_get network.depth)"
+
+  mkdir -p "${cache}"
 
   if [[ "$count" -gt "$max_depth" ]]; then
     error $"Max depth reached (%s) for uid '%s'" "$count" "$uid"
