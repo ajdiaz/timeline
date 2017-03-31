@@ -208,6 +208,37 @@ any ()
   done
   return 1
 }
+
+# fun: on_exit <callback>
+# txt: run callback on exit
+declare -a _on_exit=()
+trap _handler_on_exit EXIT
+_handler_on_exit ()
+{
+  local fun
+  for fun in "${_on_exit[@]}"; do
+    "$fun";
+  done
+}
+on_exit ()
+{
+  _on_exit+=( "$1" )
+}
+
+# fun: temp_file
+# txt: outputs a temporary file which will ensure that will be eliminated
+#      when exectution ends.
+temp_file ()
+{
+  local name="${TMPDIR:-/tmp}/temp_$$.$RANDOM"
+  : > "$name"
+  echo "$name"
+}
+_temp_file_exit ()
+{
+  rm -f "${TMPDIR:-/tmp}/temp_$$".*
+}
+on_exit _temp_file_exit
 ## vim:ft=sh
 
 # env: TIMELINE_CONTENT: The path relative to the account root, where
@@ -454,6 +485,36 @@ timeline_index_get ()
     echo "${TIMELINE_INDEX[$1]}"
   fi
 }
+
+# fun: timeline_edit
+# txt: interactively edit your timeline
+timeline_edit ()
+{
+  local content auto_push
+  content="$(account_active_path)/CONTENT"
+
+  if [[ -w "$content" ]]; then
+
+    auto_push="$(
+      config_get_empty "account.$(account_active_name).auto-push"
+    )"
+
+    if ! [[ "$auto_push" ]]; then
+      auto_push="$(config_get account.auto-push)"
+    fi
+
+    ${EDITOR:-nano} "$content"
+
+    account_commit | info_multi
+
+    if [[ "$auto_push" = "true" ]]; then
+      account_push | info_multi
+    fi
+
+  else
+    fatal $"Unable to edit CONTENT file"
+  fi
+}
 ## vim:ft=sh
 
 NOSUBCMD=$"No valid subcomand '%s' for command '%s'"
@@ -683,6 +744,16 @@ command_timeline_refresh ()
   command_account_refresh
   timeline_load
   timeline_list "$@"
+}
+
+# help:timeline:fun: timeline edit
+# help:timeline:txt: Interactively edit your timeline. It's an advanced mode,
+# help:timeline:txt: use with careful.
+command_timeline_edit ()
+{
+  command_account_active "$(account_active_name)"
+  command_account_refresh
+  timeline_edit
 }
 
 # help:fun: config {list|get|set|save} {args...}
@@ -940,11 +1011,11 @@ command_event_score ()
   fi
 }
 
-# help:timeline:fun: event info [--eid] <num/eid>
-# help:timeline:txt: Given the index number of an event in the timeline,
-# help:timeline:txt: display internal information about the event.
-# help:timeline:txt: If '--eid' is present, then use the argument as valid
-# help:timeline:txt: EID instead of index number.
+# help:event:fun: event info [--eid] <num/eid>
+# help:event:txt: Given the index number of an event in the timeline,
+# help:event:txt: display internal information about the event.
+# help:event:txt: If '--eid' is present, then use the argument as valid
+# help:event:txt: EID instead of index number.
 command_event_info ()
 {
   local eid
@@ -1693,6 +1764,7 @@ declare -xA CONFIG=(
   [notify.cache-file]="${HOME}/.cache/tl/notify.cache"
   [alias.tr]='timeline refresh'
   [alias.tl]='timeline list'
+  [alias.edit]='timeline edit'
   [alias.post]='event post'
   [alias.reply]='event reply'
   [alias.tag]='event tag'
@@ -2434,7 +2506,6 @@ event_info ()
   # XXX Move this block to a sub function or similar?
   date="$(event_date "$eid")"
   kind="$(event_kind "$eid")"
-  name="$(username "$eid")"
 
   if [[ -z "$kind" ]]; then
     E=1 error $"Not found information for EID '$eid'"

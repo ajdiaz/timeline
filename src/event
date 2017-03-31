@@ -247,7 +247,6 @@ event_info ()
   # XXX Move this block to a sub function or similar?
   date="$(event_date "$eid")"
   kind="$(event_kind "$eid")"
-  name="$(username "$eid")"
 
   if [[ -z "$kind" ]]; then
     E=1 error $"Not found information for EID '$eid'"

@@ -144,3 +144,34 @@ any ()
   done
   return 1
 }
+
+# fun: on_exit <callback>
+# txt: run callback on exit
+declare -a _on_exit=()
+trap _handler_on_exit EXIT
+_handler_on_exit ()
+{
+  local fun
+  for fun in "${_on_exit[@]}"; do
+    "$fun";
+  done
+}
+on_exit ()
+{
+  _on_exit+=( "$1" )
+}
+
+# fun: temp_file
+# txt: outputs a temporary file which will ensure that will be eliminated
+#      when exectution ends.
+temp_file ()
+{
+  local name="${TMPDIR:-/tmp}/temp_$$.$RANDOM"
+  : > "$name"
+  echo "$name"
+}
+_temp_file_exit ()
+{
+  rm -f "${TMPDIR:-/tmp}/temp_$$".*
+}
+on_exit _temp_file_exit

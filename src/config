@@ -152,6 +152,7 @@ declare -xA CONFIG=(
   [notify.cache-file]="${HOME}/.cache/tl/notify.cache"
   [alias.tr]='timeline refresh'
   [alias.tl]='timeline list'
+  [alias.edit]='timeline edit'
   [alias.post]='event post'
   [alias.reply]='event reply'
   [alias.tag]='event tag'

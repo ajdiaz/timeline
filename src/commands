@@ -229,6 +229,16 @@ command_timeline_refresh ()
   timeline_list "$@"
 }
 
+# help:timeline:fun: timeline edit
+# help:timeline:txt: Interactively edit your timeline. It's an advanced mode,
+# help:timeline:txt: use with careful.
+command_timeline_edit ()
+{
+  command_account_active "$(account_active_name)"
+  command_account_refresh
+  timeline_edit
+}
+
 # help:fun: config {list|get|set|save} {args...}
 # help:txt: Change configuration settings
 command_config ()
@@ -484,11 +494,11 @@ command_event_score ()
   fi
 }
 
-# help:timeline:fun: event info [--eid] <num/eid>
-# help:timeline:txt: Given the index number of an event in the timeline,
-# help:timeline:txt: display internal information about the event.
-# help:timeline:txt: If '--eid' is present, then use the argument as valid
-# help:timeline:txt: EID instead of index number.
+# help:event:fun: event info [--eid] <num/eid>
+# help:event:txt: Given the index number of an event in the timeline,
+# help:event:txt: display internal information about the event.
+# help:event:txt: If '--eid' is present, then use the argument as valid
+# help:event:txt: EID instead of index number.
 command_event_info ()
 {
   local eid
