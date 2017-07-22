@@ -153,7 +153,7 @@ command_account_active ()
     error $"There are no defined accounts."
     error $"Please create account:    %s account create <name> <push> <pull>"
     error $"Or clone an existent one:  %s account clone <name> <push> <pull>"
-    E=1 error $"Account dones not exist yet"
+    E=1 error $"Account does not exist yet"
   fi
 }
 
