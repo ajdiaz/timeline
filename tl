@@ -1,5 +1,5 @@
 #! /bin/bash -i
-TIMELINE_VERSION='1.5-3-g9a16bb7'
+TIMELINE_VERSION='1.5-4-gd8e4061'
 ## vim:ft=sh
 
 # env: DAEMON_LOG_FILE: Internal variable where file redirections are saved.
@@ -308,534 +308,6 @@ reqs_eval ()
 }
 ## vim:ft=sh
 
-# fun: usage
-# txt: print help screen
-usage ()
-{
-  printf $"tl: [options] [command [args]]\n\n"
-  printf $"Options:\n"
-  printf $"  -h           Show this help screen\n"
-  printf $"  -a <account> Use specified account\n"
-  printf $"  -C <file>    Load specified config file\n"
-  printf $"  -V           Print version\n"
-  printf $"See all available commands with command 'help'\n"
-}
-
-# fun: args_eval <arg>+
-# txt: parse and evaluate program arguments
-args_eval ()
-{
-  OPTERR=1
-  while getopts "hC:a:V" opt; do
-    case $opt in
-      h)
-        usage; exit 0
-      ;;
-      C)
-        export CONFIG_FILE="$OPTARG"
-      ;;
-      a)
-        command_account_active "$OPTARG"
-      ;;
-      V)
-        command_version; exit 0
-      ;;
-    *)
-      usage; exit 2
-      ;;
-    esac
-  done
-  return $((OPTIND-1))
-}
-## vim:ft=sh
-
-# fun: complete_alternatives <level> <prefix>
-# txt: print a list of valid alternatives for specific prefix.
-complete_alternatives ()
-{
-  local level="$1" prefix="$2"
-  local -A items=()
-
-  while read -r _ _ cmd; do
-    case "$cmd" in
-      command_${prefix}*)
-        cmd="${cmd#command_}"
-        for ((i=0;i<level;i++)); do
-          cmd="${cmd#*_}"
-        done
-
-        items["${cmd%%_*}"]=1
-    esac
-  done < <(declare -F)
-
-  echo "${!items[@]}"
-}
-
-
-# fun: complete_item
-# txt: print list of available completion
-complete_item ()
-{
-  read -ra words <<< "${READLINE_LINE}"
-  local cur=$((${#words[@]}-1))
-  read -ra alts <( complete_alternatives "$cur" )
-  local -a values
-
-  if [[ $cur -eq -1 ]]; then
-    values=( "${alts[@]}" )
-  else
-    read -ra values < <( compgen -W "${alts[*]}" "${words[$cur]}" )
-  fi
-  
-  if [[ ${#values[@]} -eq 0 ]]; then
-    values=( "${alts[@]}" )
-  fi
-
-  if [[ ${#values[@]} -eq 1 ]]; then
-    if [[ "${READLINE_LINE}" = "${values[0]} " ]]; then
-      complete_alternatives $((cur +1)) "${values[0]}_"
-    else
-      READLINE_LINE="${words[*]:0:$cur}"
-      [[ "$READLINE_LINE" ]] && READLINE_LINE+=" "
-      READLINE_LINE+="${values[*]} "
-      READLINE_POINT=${#READLINE_LINE}
-    fi
-  else
-    echo "${values[@]}"
-  fi
-}
-
-# fun: complete_load
-# txt: set tab completion
-complete_load ()
-{
-  set -o vi
-  bind 'set completion-ignore-case on'
-  bind -x '"\t":"complete_item"';
-}
-## vim:ft=sh
-
-FILTER_HIDE=()
-FILTER_SHOW=()
-
-# fun: filter <tags_to_filter> <eid>
-# txt: return true if EID need to be filtered
-filter_tag ()
-{
-  local fpattern="$1" eid="$2"
-  local event tag
-
-  [[ "$fpattern" = "*" ]] && return 0
-
-  for event in $(event_labels "$eid"); do
-    for tag in $(event_tags "$event"); do
-      if any "$fpattern" "$tag"; then
-        return 0
-      fi
-    done
-  done
-  return 1
-}
-
-# fun: filter <view> <eid>
-# txt: return true if EID need to be filtered
-filter_view ()
-{
-  local fpattern="$1" eid="$2"
-  read -ra view < <( config_get_empty "views.$fpattern" )
-
-  if [[ "${#view[@]}" -ne 0 ]]; then
-    filter_eval_expr "$eid" "${view[@]}"
-  else
-    E=1 fatal $"No view named: %s" "$fpattern"
-  fi
-}
-
-# fun: filter {score-min|score-max} <value> <eid>
-# txt: return true if EID need to be filtered according to score values
-#      passsed as argument.
-filter_score ()
-{
-  local kind="$1" value="$2" eid="$3"
-  local score
-
-  score="$(event_score "$eid")"
-
-  case "$kind" in
-    score-min)
-      [[ "${score:-0}" -lt "${value}" ]] && return 0
-    ;;
-    score-max)
-      [[ "${score:-0}" -gt "${value}" ]] && return 0
-    ;;
-    *)
-      E=1 fatal $"Invalid score filter: %s" "$kind"
-    ;;
-  esac
-
-  return 1
-}
-
-# fun: filter_text <pattern> <eid>
-# txt: return true if especified eid contains text which match with pattern
-#      passed as argument (glob pattern supported only).
-filter_text ()
-{
-  local fpattern="$1" eid="$2"
-
-  # shellcheck disable=SC2254
-  case "$(event_mesg "$eid")" in
-    $fpattern) return 0;;
-  esac
-  return 1
-}
-
-# fun: filter_mention <eid>
-# txt: return true if myself is mentioned in eid
-filter_mention ()
-{
-  local eid="$1" uid pattern
-  uid="$(account_active_oid)"
-  local -a reat=()
-
-  # no acctive account
-  [[ "$uid" ]] || return 1
-
-  reat=( "@$uid" "@${uid:0:8}" "$(username "$uid")" )
-
-  if [[ "$(config_get_empty timeline.react-on-all)" = "true" ]]; then
-    reat+=( "@all" "@here" )
-  fi
-
-  for pattern in "${reat[@]}"; do
-    filter_text "*${pattern}*" "$eid" && return 0
-  done
-
-  return 1
-}
-
-# fun: filter_add {hide|show} <expr>
-# txt: Add an expression filter
-filter_add ()
-{
-  local mode="$1"; shift
-
-  case "$mode" in
-    hide) FILTER_HIDE+=( "$@" );;
-    show) FILTER_SHOW+=( "$@" );;
-  esac
-}
-
-# fun: filter_eval {hide|show} <eid>
-# txt: evaluate filtering of the eid for the specified mode. If this funcion
-#      return 0, means that the item is filtered, otherwise is not filtered.
-filter_eval ()
-{
-  local mode="$1" eid="$2"
-  local -a expr_array=()
-
-  case "$mode" in
-    hide) expr_array+=( "${FILTER_HIDE[@]}" );;
-    show) expr_array+=( "${FILTER_SHOW[@]}" );;
-  esac
-
-  filter_eval_expr "$eid" "${expr_array[@]}"
-}
-
-# fun: filter_eval_expr <eid> <expr>...
-# txt: eval an expression and return true if filtered or false if not
-filter_eval_expr ()
-{
-  local eid="$1" expr=; shift
-
-  for expr in "${@}"; do
-    case "$expr" in
-      '') ;;
-      tag:*)
-        filter_tag "${expr#tag:}" "$eid" && return 0
-        ;;
-      score-min:*|score-max:*)
-        filter_score "${expr%%:*}" "${expr#*:}" "$eid" && return 0
-        ;;
-      view:*)
-        filter_view "${expr#view:}" "$eid" && return 0
-        ;;
-      text:*)
-        filter_text "${expr#text:}" "$eid" && return 0
-        ;;
-      mention)
-        filter_mention "$eid" && return 0
-        ;;
-      *)
-        E=3 error $"This kind of filtering is not implemented yet"
-        ;;
-    esac
-  done
-  return 1
-}
-## vim:ft=sh
-
-
-help_prefix=$"
-
-
-████████╗██╗███╗   ███╗███████╗██╗     ██╗███╗   ██╗███████╗
-╚══██╔══╝██║████╗ ████║██╔════╝██║     ██║████╗  ██║██╔════╝
-   ██║   ██║██╔████╔██║█████╗  ██║     ██║██╔██╗ ██║█████╗
-   ██║   ██║██║╚██╔╝██║██╔══╝  ██║     ██║██║╚██╗██║██╔══╝
-   ██║   ██║██║ ╚═╝ ██║███████╗███████╗██║██║ ╚████║███████╗
-   ╚═╝   ╚═╝╚═╝     ╚═╝╚══════╝╚══════╝╚═╝╚═╝  ╚═══╝╚══════╝
-
-
-
-Timeline is a plain-text based distributed social network build on top of
-git configuration manager. Timeline is:
-
-
-- Distributed / Descentralized
-- Secure / Solid / Spam aware
-- GPL3 licensed
-- Fun!
-
-
------ Commands ----------------------------------------------------------------
-"
-
-help_suffix=$"
-
-Type help <command> for more information about the command
-
--------------------------------------------------------------------------------
-"
-
-help_commands ()
-{
-  local hide_help_banner
-  hide_help_banner="$(config_get_empty general.hide-help-banner)"
-
-  [[ "$hide_help_banner" = "true" ]] || echo "$help_prefix"
-
-  _i(){
-    case "$2" in
-      "# help:fun: "*) 
-        printf "\n    %s"  "${2#\# help:fun: }";;
-      "# help:txt: "*)
-        printf "        %s" "${2#\# help:txt: }";;
-    esac
-  }
-
-  # shellcheck disable=SC2034
-  mapfile -c 1 -C _i < "$0"
-
-  [[ "$hide_help_banner" = "true" ]] || echo "$help_suffix"
-}
-
-help_subcommand ()
-{
-  local cmd="$1"
-
-  _j() {
-    case "$2" in
-      "# help:$cmd:fun: "*) 
-        echo -n "${2#\# help:$cmd:fun: }";;
-      "# help:$cmd:txt: "*)
-        echo -n "    ${2#\# help:$cmd:txt: }";;
-    esac
-  }
-
-  # shellcheck disable=SC2034
-  mapfile -c 1 -C _j < "$0"
-}
-## vim:ft=sh
-
-# fun: info <message>
-# txt: print informational message on stdout
-info ()
-{
-  format_compose timeline.info name "${CONFIG[timeline.info.name]}"
-  format_compose timeline.info date "$(printf "%(%s)T")"
-  # shellcheck disable=SC2059
-  format_compose timeline.info mesg "$(printf -- "$@")"
-  format_dumps timeline.info
-}
-
-# fun: info_multi
-# txt: get messages from stdint and print informational messages to stdout
-info_multi ()
-{
-  format_compose timeline.info name "${CONFIG[timeline.info.name]}"
-  format_compose timeline.info date "$(printf "%(%s)T")"
-  _i() {
-    format_compose timeline.info mesg "${2%$'\n'}"
-    format_dumps timeline.info
-  }
-  # shellcheck disable=SC2034
-  mapfile -c 1 -C _i
-}
-#! /usr/bin/env bash
-# 
-# Copyright (C) 2016  Andrés J. Díaz <ajdiaz@ajdiaz.me>
-# 
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-# 
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-# 
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <http://www.gnu.org/licenses/>.
-
-# env: INTERACTIVE: if true, then interactive mode is enabled
-export INTERACTIVE=
-
-# env: CONFIG_FILE: should contain the path to the config file
-export CONFIG_FILE=
-
-# env: CACHE_DIR: should contain the path to the cache directory
-export CACHE_DIR=
-
-# fun: prompt
-# txt: print prompt in interactive mode
-prompt ()
-{
-  local name
-  name="$(account_active_name)"
-
-  format_compose prompt account "${name:-<none>}"
-  format_dumps prompt
-}
-
-# fun: main_interactive
-# txt: evaluate commands in interactive mode
-main_interactive ()
-{
-  local cmd
-  local -a args
-
-  history_load
-  complete_load
-  command_account_active "$(account_active_name)"
-
-  while true; do
-    read -a args -e -r -p "$(T=true prompt)"
-    [ $? -eq 1 ] && break
-    cmd="${args[0]}"
-    local -a args=( "${args[@]:1}" )
-
-    [ "$cmd" ] || continue
-    history_append "$cmd ${args[*]}"
-    main_standalone "$cmd" "${args[@]}"
-  done
-  history_save
-}
-
-# fun: main_standalone <cmd> [args]...
-# txt: evaluate command passed as argument
-main_standalone ()
-{
-  local cmd="$1"; shift
-
-  if fun "command_$cmd"; then
-    "command_$cmd" "$@"
-  else
-    read -ra alias < <( config_get_empty "alias.$cmd" )
-
-    if [[ "${alias[*]}" ]]; then
-      main_standalone "${alias[@]}" "$@"
-    else
-      E=2 fatal $"Invalid command '%s'." "$cmd"
-    fi
-  fi
-}
-
-# fun: main [args]...
-# txt: entry point :D
-main ()
-{
-  local config_path="$HOME/.config/tl/config:$HOME/.tl/config:$HOME/.tlrc"
-  
-  CONFIG_FILE="$(try_path "$config_path")"
-  INTERACTIVE=false
-
-  reqs_eval
-  args_eval "$@" || shift $?
-
-  [ -r "${CONFIG_FILE}" ] && config_load "${CONFIG_FILE}"
-
-  CACHE_DIR="$(try_path "$(config_get cache.path)")"
-  mkdir -p "${CACHE_DIR}"
-
-  # load the timeline index to operate with previous listed timeline
-  timeline_index_load
-
-  if [ $# -eq 0 ]; then
-    if [[ "$(config_get_empty interactive.show-banner)" = "true" ]]; then
-      info "timeline  Copyright (C) %(%Y)T Andrés J. Díaz" "$(timestamp)"
-      info "This program comes with ABSOLUTELY NO WARRANTY; for details"
-      info "type 'license'. This is free software, and you are welcome to"
-      info "redistribute it under certain conditions; type 'license' for"
-      info "details."
-    fi
-
-    INTERACTIVE=true
-    main_interactive "$@"
-  else
-    main_standalone "$@"
-  fi
-}
-## vim:ft=sh
-
-declare -xa TERMINAL_COLORS_FG=()
-declare -xa TERMINAL_COLORS_BG=()
-
-COLORS="$(tput colors)"
-case "$COLORS" in
-  8|256)
-    for ((i=0; i<"${COLORS}"; i++)); do
-      TERMINAL_COLORS_FG[$i]="$(tput setaf "$i")"
-      TERMINAL_COLORS_BG[$i]="$(tput setab "$i")"
-    done;;
-esac
-
-# fun: color_consistent <color> <item>
-# txt: get a consistent color from color preference passed as argument. If
-#      preference is `CONSISTENT`, then color is chosen randomly, but
-#      consistenly with the item to be colorized. To choose colors use the
-#      `colors` configuration variable
-color_consistent ()
-{
-  if [[ "$1" != "CONSISTENT" ]]; then
-    echo "$1"
-  else
-    local key=$((0x$(oid "$2")0))
-    echo "${AVAIL_COLORS[$((key % ${#AVAIL_COLORS[@]}))]}"
-  fi
-}
-
-# fun: color_eval <fg,bg> <dfg,dbg> <message>
-# txt: print a message between colors defined in two first arguments.
-color_eval ()
-{
-  local fg bg dfg dbg
-
-  fg="${CONFIG["$1"]%,*}"; bg="${CONFIG["$1"]#*,}"; shift
-  dfg="${CONFIG["$1"]%,*}"; dbg="${CONFIG["$1"]#*,}"; shift
-
-  fg="$(color_consistent "$fg" "$1")"; dfg="$(color_consistent "$dfg" "$1")"
-  bg="$(color_consistent "$bg" "$1")"; dbg="$(color_consistent "$dbg" "$1")"
-
-  echo -n "${TERMINAL_COLORS_FG[${fg:-${dfg:-1000}}]}"
-  echo -n "${TERMINAL_COLORS_BG[${bg:-${dbg:-1000}}]}"
-  echo -e "\n$1"
-  echo -n "${TERMINAL_COLORS_FG[${dfg:-1000}]}"
-  echo -n "${TERMINAL_COLORS_BG[${dbg:-1000}]}"
-}
-## vim:ft=sh
-
 # env: NETWORK: an associative array which contains all network information
 declare -A NETWORK_SCORE=()
 declare -A NETWORK_PARENTS=()
@@ -971,6 +443,351 @@ network_refresh ()
   while read -r uid url; do
     network_refresh_repo "$uid" "$url"
   done < <(follow_list "$path")
+}
+## vim:ft=sh
+
+# env: ACCOUNT_NAME: A variable contains the name of the acctive account.
+ACCOUNT_NAME=
+
+# fun: account_list
+# txt: output a new-line separated list of defined accounts.
+account_list ()
+{
+  local account
+
+  for account in $(config_iter account.); do
+    case "$account" in
+      account.*.path)
+        account="${account#account.}"
+        account="${account%.path}"
+        echo "$account"
+      ;;
+    esac
+  done
+}
+
+# fun: account_load [name]
+# txt: load the account named as argument, if argument is omit, then try to
+#      load the account using the `account.default` configuration value or,
+#      if missing and there is only one configured account this one.
+#      Otherwise failed.
+account_load ()
+{
+  local name="$1"
+
+  name="${name:-$(config_get_empty account.default)}"
+
+  if [[ -z "$name" ]]; then
+
+    # try to infer the account name if none is provided
+    
+    read -ra all_accounts < <( account_list)
+
+    case "${#all_accounts[@]}" in
+      0) return 1;;
+      1) name="${all_accounts[0]}";;
+      *) E=1 fatal $"There are may accounts.";;
+    esac
+
+  fi
+
+  ACCOUNT_NAME="$name"
+}
+
+NOACTIVE=$"There are no active accounts"
+
+# fun: account_active_name
+# txt: print the name of the current active account
+account_active_name ()
+{
+  echo "${ACCOUNT_NAME}"
+}
+
+# fun: account_active_oid
+# txt: print the OID of the current active account
+account_active_oid ()
+{
+  [[ "$ACCOUNT_NAME" ]] ||
+    E=1 fatal "$NOACTIVE"
+  oid "$(config_get "account.$ACCOUNT_NAME.pull-url")"
+}
+
+# fun: account_active_path
+# txt: print the path of the current active account
+account_active_path ()
+{
+  [[ "$ACCOUNT_NAME" ]] ||
+    E=1 fatal "$NOACTIVE"
+  config_get "account.$ACCOUNT_NAME.path"
+}
+
+# fun: account_exists [name]
+# txt: return true if the account name passed as argument is a initialized
+#      account. If name is omit, then use active account path.
+account_exists ()
+{
+  local path=
+  
+  [[ "$1" ]] && path="$(config_get "account.$1.path")"
+
+  if [[ -z "$path" ]]; then
+    path="$(account_active_path)"
+  fi
+  [ -d "${path%.git}/.git" ]
+}
+
+# fun: account_create <name> <push_url> <pull_url> [keyid] [path]
+# txt: create a new account named as name, with specific push and pull url,
+#      if path is provided then set the account path to this one, otherwise,
+#      use the default path for accounts as prefix
+account_create ()
+{
+  local name="$1" push_url="$2" pull_url="$3" keyid="$4" path="$5"
+
+  if [[ "$(config_get_empty "account.$name.path")" ]]; then
+    E=1 fatal $"Another account already exists with that name"
+  else
+    path="${path:-$(try_path "$(config_get account.path)")/$name}"
+    config_set "account.$name.push-url" "$push_url"
+    config_set "account.$name.pull-url" "$pull_url"
+    config_set "account.$name.path" "$path"
+    config_set "account.$name.keyid" "$keyid"
+    config_set "user.alias-$(oid "$pull_url")" "$name"
+    account_init "$name"
+    config_save "${CONFIG_FILE}"
+  fi
+}
+
+# fun: account_clone <name> <push_url> <pull_url> [keyid] [path]
+# txt: clone new account named as name, from the specific push url,
+#      if path is provided then set the account path to this one, otherwise,
+#      use the default path for accounts as prefix
+account_clone ()
+{
+  local name="$1" push_url="$2" pull_url="$3" keyid="$4" path="$5"
+
+  if [[ "$(config_get_empty "account.$name.path")" ]]; then
+    E=1 fatal $"Another account already exists with that name"
+  else
+    path="${path:-$(try_path "$(config_get account.path)")/$name}"
+    config_set "account.$name.push-url" "$push_url"
+    config_set "account.$name.pull-url" "$pull_url"
+    config_set "account.$name.keyid" "$keyid"
+    config_set "account.$name.path" "$path"
+    config_set "user.alias-$(oid "$pull_url")" "$name"
+    command git clone "$push_url" "$path"
+    workon "$path" command git submodule init
+    account_config "$path" "$pull_url" "$keyid"
+    config_save "${CONFIG_FILE}"
+  fi
+}
+
+# fun: account_init <name>
+# txt: initialized the accoutn passed as argument
+account_init ()
+{
+  if account_exists "$1"; then
+    E=1 fatal $"Trying to initializating an already initialized account"
+  else
+    local path push_url pull_url keyid
+
+    path="$(config_get "account.$1.path")"
+    pull_url="$(config_get "account.$1.pull-url")"
+    push_url="$(config_get "account.$1.push-url")"
+    keyid="$(keyid "$1")"
+
+    # create empty dir for init
+    mkdir -p "$path" ||
+      E=1 fatal $"Unable to create account directory: %s" "$path"
+
+    workon "$path" command git init
+    account_config "$path" "$pull_url" "$keyid"
+    workon "$path" command git add .
+    if [[ "$keyid" ]]; then
+      workon "$path" command git commit -S -m 'Initial commit'
+    else
+      workon "$path" command git commit -m 'Initial commit'
+    fi
+    workon "$path" command git remote add origin "$push_url"
+  fi
+}
+
+# fun: account_config <path> <pull_url> [keyid]
+# txt: configure user and other required things in the repo
+account_config ()
+{
+  local path="$1" pull_url="$2" keyid="$3"
+  workon "$path" command git config user.name "$(oid "$pull_url")"
+  workon "$path" command git config user.email "$(oid "$pull_url")@timeline"
+  [[ "$keyid" ]] &&
+    workon "$path" command git config user.signingkey "$keyid"
+  workon "$path" command touch CONTENT
+  workon "$path" command mkdir -p "FOLLOW"
+}
+
+# fun: account_commit
+# txt: set a commit point into current active account
+account_commit ()
+{
+  local path keyid
+
+  path="$(account_active_path)"
+  keyid="$(keyid "$(account_active_name)")"
+
+  [[ "$path" ]] || E=1 fatal $"No active account to commit"
+
+  workon "$path" command git add .
+  if [[ "$keyid" ]]; then
+    workon "$path" command git commit -S -m "Timeline Autosave: $(timestamp)"
+  else
+    workon "$path" command git commit -m "Timeline Autosave: $(timestamp)"
+  fi
+}
+
+# fun: account_push [remote]
+# txt: push active account content to remote passed as argument or, if
+#      missing, to `origin`.
+account_push ()
+{
+  # TODO Add support for multiple branches
+  workon "$(account_active_path)" command git push "${1:-origin}" master
+}
+
+# fun: account_refresh [remote]
+# txt: rebase changes to current account from remote passed as argument or,
+#     if missing, `origin`.
+account_refresh ()
+{
+  local path
+
+  path="$(account_active_path)"
+
+  account_commit
+
+  workon "$path" command git fetch --all
+  # TODO Add support for multiple branches
+  workon "$path" command git rebase "${1:-origin}/master"
+  workon "$path" command git submodule update --remote \
+    --jobs "${CONFIG[git.jobs]}"
+
+  account_push "${1:-origin}"
+}
+
+# fun: account_delete [name]
+# txt: delete account by name passed as argument or active account if none
+#      name is provided.
+account_delete ()
+{
+  local name="${1:-$ACCOUNT_NAME}" path oid
+
+  path="$(config_get "account.$name.path")"
+  oid="$(oid "$(config_get "account.$name.pull-url")")"
+
+  if [[ -d "$path" ]]; then
+    rm -rf "$path"
+  fi
+
+  config_unset "account.$name"
+  config_unset "user.alias-$oid"
+
+  config_save "${CONFIG_FILE}"
+}
+
+# fun: account_set_keyid <name> <keyid>
+# txt: set keyid for an existant account
+account_set_keyid ()
+{
+  workon "$(config_get "account.$1.path")" \
+    command git config user.signingkey "$2"
+  config_set "account.$1.keyid" "$2"
+}
+## vim:ft=sh
+
+# fun: usage
+# txt: print help screen
+usage ()
+{
+  printf $"tl: [options] [command [args]]\n\n"
+  printf $"Options:\n"
+  printf $"  -h           Show this help screen\n"
+  printf $"  -a <account> Use specified account\n"
+  printf $"  -C <file>    Load specified config file\n"
+  printf $"  -V           Print version\n"
+  printf $"See all available commands with command 'help'\n"
+}
+
+# fun: args_eval <arg>+
+# txt: parse and evaluate program arguments
+args_eval ()
+{
+  OPTERR=1
+  while getopts "hC:a:V" opt; do
+    case $opt in
+      h)
+        usage; exit 0
+      ;;
+      C)
+        export CONFIG_FILE="$OPTARG"
+      ;;
+      a)
+        command_account_active "$OPTARG"
+      ;;
+      V)
+        command_version; exit 0
+      ;;
+    *)
+      usage; exit 2
+      ;;
+    esac
+  done
+  return $((OPTIND-1))
+}
+## vim:ft=sh
+
+declare -xa TERMINAL_COLORS_FG=()
+declare -xa TERMINAL_COLORS_BG=()
+
+COLORS="$(tput colors)"
+case "$COLORS" in
+  8|256)
+    for ((i=0; i<"${COLORS}"; i++)); do
+      TERMINAL_COLORS_FG[$i]="$(tput setaf "$i")"
+      TERMINAL_COLORS_BG[$i]="$(tput setab "$i")"
+    done;;
+esac
+
+# fun: color_consistent <color> <item>
+# txt: get a consistent color from color preference passed as argument. If
+#      preference is `CONSISTENT`, then color is chosen randomly, but
+#      consistenly with the item to be colorized. To choose colors use the
+#      `colors` configuration variable
+color_consistent ()
+{
+  if [[ "$1" != "CONSISTENT" ]]; then
+    echo "$1"
+  else
+    local key=$((0x$(oid "$2")0))
+    echo "${AVAIL_COLORS[$((key % ${#AVAIL_COLORS[@]}))]}"
+  fi
+}
+
+# fun: color_eval <fg,bg> <dfg,dbg> <message>
+# txt: print a message between colors defined in two first arguments.
+color_eval ()
+{
+  local fg bg dfg dbg
+
+  fg="${CONFIG["$1"]%,*}"; bg="${CONFIG["$1"]#*,}"; shift
+  dfg="${CONFIG["$1"]%,*}"; dbg="${CONFIG["$1"]#*,}"; shift
+
+  fg="$(color_consistent "$fg" "$1")"; dfg="$(color_consistent "$dfg" "$1")"
+  bg="$(color_consistent "$bg" "$1")"; dbg="$(color_consistent "$dbg" "$1")"
+
+  echo -n "${TERMINAL_COLORS_FG[${fg:-${dfg:-1000}}]}"
+  echo -n "${TERMINAL_COLORS_BG[${bg:-${dbg:-1000}}]}"
+  echo -e "\n$1"
+  echo -n "${TERMINAL_COLORS_FG[${dfg:-1000}]}"
+  echo -n "${TERMINAL_COLORS_BG[${dbg:-1000}]}"
 }
 ## vim:ft=sh
 
@@ -1708,260 +1525,69 @@ if ${DEBUG:-false}; then
 fi
 ## vim:ft=sh
 
-# env: ACCOUNT_NAME: A variable contains the name of the acctive account.
-ACCOUNT_NAME=
-
-# fun: account_list
-# txt: output a new-line separated list of defined accounts.
-account_list ()
+# fun: complete_alternatives <level> <prefix>
+# txt: print a list of valid alternatives for specific prefix.
+complete_alternatives ()
 {
-  local account
+  local level="$1" prefix="$2"
+  local -A items=()
 
-  for account in $(config_iter account.); do
-    case "$account" in
-      account.*.path)
-        account="${account#account.}"
-        account="${account%.path}"
-        echo "$account"
-      ;;
+  while read -r _ _ cmd; do
+    case "$cmd" in
+      command_${prefix}*)
+        cmd="${cmd#command_}"
+        for ((i=0;i<level;i++)); do
+          cmd="${cmd#*_}"
+        done
+
+        items["${cmd%%_*}"]=1
     esac
-  done
+  done < <(declare -F)
+
+  echo "${!items[@]}"
 }
 
-# fun: account_load [name]
-# txt: load the account named as argument, if argument is omit, then try to
-#      load the account using the `account.default` configuration value or,
-#      if missing and there is only one configured account this one.
-#      Otherwise failed.
-account_load ()
+
+# fun: complete_item
+# txt: print list of available completion
+complete_item ()
 {
-  local name="$1"
+  read -ra words <<< "${READLINE_LINE}"
+  local cur=$((${#words[@]}-1))
+  read -ra alts <( complete_alternatives "$cur" )
+  local -a values
 
-  name="${name:-$(config_get_empty account.default)}"
-
-  if [[ -z "$name" ]]; then
-
-    # try to infer the account name if none is provided
-    
-    read -ra all_accounts < <( account_list)
-
-    case "${#all_accounts[@]}" in
-      0) return 1;;
-      1) name="${all_accounts[0]}";;
-      *) E=1 fatal $"There are may accounts.";;
-    esac
-
+  if [[ $cur -eq -1 ]]; then
+    values=( "${alts[@]}" )
+  else
+    read -ra values < <( compgen -W "${alts[*]}" "${words[$cur]}" )
   fi
-
-  ACCOUNT_NAME="$name"
-}
-
-NOACTIVE=$"There are no active accounts"
-
-# fun: account_active_name
-# txt: print the name of the current active account
-account_active_name ()
-{
-  echo "${ACCOUNT_NAME}"
-}
-
-# fun: account_active_oid
-# txt: print the OID of the current active account
-account_active_oid ()
-{
-  [[ "$ACCOUNT_NAME" ]] ||
-    E=1 fatal "$NOACTIVE"
-  oid "$(config_get "account.$ACCOUNT_NAME.pull-url")"
-}
-
-# fun: account_active_path
-# txt: print the path of the current active account
-account_active_path ()
-{
-  [[ "$ACCOUNT_NAME" ]] ||
-    E=1 fatal "$NOACTIVE"
-  config_get "account.$ACCOUNT_NAME.path"
-}
-
-# fun: account_exists [name]
-# txt: return true if the account name passed as argument is a initialized
-#      account. If name is omit, then use active account path.
-account_exists ()
-{
-  local path=
   
-  [[ "$1" ]] && path="$(config_get "account.$1.path")"
-
-  if [[ -z "$path" ]]; then
-    path="$(account_active_path)"
+  if [[ ${#values[@]} -eq 0 ]]; then
+    values=( "${alts[@]}" )
   fi
-  [ -d "${path%.git}/.git" ]
-}
 
-# fun: account_create <name> <push_url> <pull_url> [keyid] [path]
-# txt: create a new account named as name, with specific push and pull url,
-#      if path is provided then set the account path to this one, otherwise,
-#      use the default path for accounts as prefix
-account_create ()
-{
-  local name="$1" push_url="$2" pull_url="$3" keyid="$4" path="$5"
-
-  if [[ "$(config_get_empty "account.$name.path")" ]]; then
-    E=1 fatal $"Another account already exists with that name"
-  else
-    path="${path:-$(try_path "$(config_get account.path)")/$name}"
-    config_set "account.$name.push-url" "$push_url"
-    config_set "account.$name.pull-url" "$pull_url"
-    config_set "account.$name.path" "$path"
-    config_set "account.$name.keyid" "$keyid"
-    config_set "user.alias-$(oid "$pull_url")" "$name"
-    account_init "$name"
-    config_save "${CONFIG_FILE}"
-  fi
-}
-
-# fun: account_clone <name> <push_url> <pull_url> [keyid] [path]
-# txt: clone new account named as name, from the specific push url,
-#      if path is provided then set the account path to this one, otherwise,
-#      use the default path for accounts as prefix
-account_clone ()
-{
-  local name="$1" push_url="$2" pull_url="$3" keyid="$4" path="$5"
-
-  if [[ "$(config_get_empty "account.$name.path")" ]]; then
-    E=1 fatal $"Another account already exists with that name"
-  else
-    path="${path:-$(try_path "$(config_get account.path)")/$name}"
-    config_set "account.$name.push-url" "$push_url"
-    config_set "account.$name.pull-url" "$pull_url"
-    config_set "account.$name.keyid" "$keyid"
-    config_set "account.$name.path" "$path"
-    config_set "user.alias-$(oid "$pull_url")" "$name"
-    command git clone "$push_url" "$path"
-    workon "$path" command git submodule init
-    account_config "$path" "$pull_url" "$keyid"
-    config_save "${CONFIG_FILE}"
-  fi
-}
-
-# fun: account_init <name>
-# txt: initialized the accoutn passed as argument
-account_init ()
-{
-  if account_exists "$1"; then
-    E=1 fatal $"Trying to initializating an already initialized account"
-  else
-    local path push_url pull_url keyid
-
-    path="$(config_get "account.$1.path")"
-    pull_url="$(config_get "account.$1.pull-url")"
-    push_url="$(config_get "account.$1.push-url")"
-    keyid="$(keyid "$1")"
-
-    # create empty dir for init
-    mkdir -p "$path" ||
-      E=1 fatal $"Unable to create account directory: %s" "$path"
-
-    workon "$path" command git init
-    account_config "$path" "$pull_url" "$keyid"
-    workon "$path" command git add .
-    if [[ "$keyid" ]]; then
-      workon "$path" command git commit -S -m 'Initial commit'
+  if [[ ${#values[@]} -eq 1 ]]; then
+    if [[ "${READLINE_LINE}" = "${values[0]} " ]]; then
+      complete_alternatives $((cur +1)) "${values[0]}_"
     else
-      workon "$path" command git commit -m 'Initial commit'
+      READLINE_LINE="${words[*]:0:$cur}"
+      [[ "$READLINE_LINE" ]] && READLINE_LINE+=" "
+      READLINE_LINE+="${values[*]} "
+      READLINE_POINT=${#READLINE_LINE}
     fi
-    workon "$path" command git remote add origin "$push_url"
-  fi
-}
-
-# fun: account_config <path> <pull_url> [keyid]
-# txt: configure user and other required things in the repo
-account_config ()
-{
-  local path="$1" pull_url="$2" keyid="$3"
-  workon "$path" command git config user.name "$(oid "$pull_url")"
-  workon "$path" command git config user.email "$(oid "$pull_url")@timeline"
-  [[ "$keyid" ]] &&
-    workon "$path" command git config user.signingkey "$keyid"
-  workon "$path" command touch CONTENT
-  workon "$path" command mkdir -p "FOLLOW"
-}
-
-# fun: account_commit
-# txt: set a commit point into current active account
-account_commit ()
-{
-  local path keyid
-
-  path="$(account_active_path)"
-  keyid="$(keyid "$(account_active_name)")"
-
-  [[ "$path" ]] || E=1 fatal $"No active account to commit"
-
-  workon "$path" command git add .
-  if [[ "$keyid" ]]; then
-    workon "$path" command git commit -S -m "Timeline Autosave: $(timestamp)"
   else
-    workon "$path" command git commit -m "Timeline Autosave: $(timestamp)"
+    echo "${values[@]}"
   fi
 }
 
-# fun: account_push [remote]
-# txt: push active account content to remote passed as argument or, if
-#      missing, to `origin`.
-account_push ()
+# fun: complete_load
+# txt: set tab completion
+complete_load ()
 {
-  # TODO Add support for multiple branches
-  workon "$(account_active_path)" command git push "${1:-origin}" master
-}
-
-# fun: account_refresh [remote]
-# txt: rebase changes to current account from remote passed as argument or,
-#     if missing, `origin`.
-account_refresh ()
-{
-  local path
-
-  path="$(account_active_path)"
-
-  account_commit
-
-  workon "$path" command git fetch --all
-  # TODO Add support for multiple branches
-  workon "$path" command git rebase "${1:-origin}/master"
-  workon "$path" command git submodule update --remote \
-    --jobs "${CONFIG[git.jobs]}"
-
-  account_push "${1:-origin}"
-}
-
-# fun: account_delete [name]
-# txt: delete account by name passed as argument or active account if none
-#      name is provided.
-account_delete ()
-{
-  local name="${1:-$ACCOUNT_NAME}" path oid
-
-  path="$(config_get "account.$name.path")"
-  oid="$(oid "$(config_get "account.$name.pull-url")")"
-
-  if [[ -d "$path" ]]; then
-    rm -rf "$path"
-  fi
-
-  config_unset "account.$name"
-  config_unset "user.alias-$oid"
-
-  config_save "${CONFIG_FILE}"
-}
-
-# fun: account_set_keyid <name> <keyid>
-# txt: set keyid for an existant account
-account_set_keyid ()
-{
-  workon "$(config_get "account.$1.path")" \
-    command git config user.signingkey "$2"
-  config_set "account.$1.keyid" "$2"
+  set -o vi
+  bind 'set completion-ignore-case on'
+  bind -x '"\t":"complete_item"';
 }
 ## vim:ft=sh
 
@@ -2263,6 +1889,459 @@ event_info ()
       printf "Signed: No\n"
       ;;
   esac
+}
+## vim:ft=sh
+
+FILTER_HIDE=()
+FILTER_SHOW=()
+
+# fun: filter <tags_to_filter> <eid>
+# txt: return true if EID need to be filtered
+filter_tag ()
+{
+  local fpattern="$1" eid="$2"
+  local event tag
+
+  [[ "$fpattern" = "*" ]] && return 0
+
+  for event in $(event_labels "$eid"); do
+    for tag in $(event_tags "$event"); do
+      if any "$fpattern" "$tag"; then
+        return 0
+      fi
+    done
+  done
+  return 1
+}
+
+# fun: filter <view> <eid>
+# txt: return true if EID need to be filtered
+filter_view ()
+{
+  local fpattern="$1" eid="$2"
+  read -ra view < <( config_get_empty "views.$fpattern" )
+
+  if [[ "${#view[@]}" -ne 0 ]]; then
+    filter_eval_expr "$eid" "${view[@]}"
+  else
+    E=1 fatal $"No view named: %s" "$fpattern"
+  fi
+}
+
+# fun: filter {score-min|score-max} <value> <eid>
+# txt: return true if EID need to be filtered according to score values
+#      passsed as argument.
+filter_score ()
+{
+  local kind="$1" value="$2" eid="$3"
+  local score
+
+  score="$(event_score "$eid")"
+
+  case "$kind" in
+    score-min)
+      [[ "${score:-0}" -lt "${value}" ]] && return 0
+    ;;
+    score-max)
+      [[ "${score:-0}" -gt "${value}" ]] && return 0
+    ;;
+    *)
+      E=1 fatal $"Invalid score filter: %s" "$kind"
+    ;;
+  esac
+
+  return 1
+}
+
+# fun: filter_text <pattern> <eid>
+# txt: return true if especified eid contains text which match with pattern
+#      passed as argument (glob pattern supported only).
+filter_text ()
+{
+  local fpattern="$1" eid="$2"
+
+  # shellcheck disable=SC2254
+  case "$(event_mesg "$eid")" in
+    $fpattern) return 0;;
+  esac
+  return 1
+}
+
+# fun: filter_mention <eid>
+# txt: return true if myself is mentioned in eid
+filter_mention ()
+{
+  local eid="$1" uid pattern
+  uid="$(account_active_oid)"
+  local -a reat=()
+
+  # no acctive account
+  [[ "$uid" ]] || return 1
+
+  reat=( "@$uid" "@${uid:0:8}" "$(username "$uid")" )
+
+  if [[ "$(config_get_empty timeline.react-on-all)" = "true" ]]; then
+    reat+=( "@all" "@here" )
+  fi
+
+  for pattern in "${reat[@]}"; do
+    filter_text "*${pattern}*" "$eid" && return 0
+  done
+
+  return 1
+}
+
+# fun: filter_add {hide|show} <expr>
+# txt: Add an expression filter
+filter_add ()
+{
+  local mode="$1"; shift
+
+  case "$mode" in
+    hide) FILTER_HIDE+=( "$@" );;
+    show) FILTER_SHOW+=( "$@" );;
+  esac
+}
+
+# fun: filter_eval {hide|show} <eid>
+# txt: evaluate filtering of the eid for the specified mode. If this funcion
+#      return 0, means that the item is filtered, otherwise is not filtered.
+filter_eval ()
+{
+  local mode="$1" eid="$2"
+  local -a expr_array=()
+
+  case "$mode" in
+    hide) expr_array+=( "${FILTER_HIDE[@]}" );;
+    show) expr_array+=( "${FILTER_SHOW[@]}" );;
+  esac
+
+  filter_eval_expr "$eid" "${expr_array[@]}"
+}
+
+# fun: filter_eval_expr <eid> <expr>...
+# txt: eval an expression and return true if filtered or false if not
+filter_eval_expr ()
+{
+  local eid="$1" expr=; shift
+
+  for expr in "${@}"; do
+    case "$expr" in
+      '') ;;
+      tag:*)
+        filter_tag "${expr#tag:}" "$eid" && return 0
+        ;;
+      score-min:*|score-max:*)
+        filter_score "${expr%%:*}" "${expr#*:}" "$eid" && return 0
+        ;;
+      view:*)
+        filter_view "${expr#view:}" "$eid" && return 0
+        ;;
+      text:*)
+        filter_text "${expr#text:}" "$eid" && return 0
+        ;;
+      mention)
+        filter_mention "$eid" && return 0
+        ;;
+      *)
+        E=3 error $"This kind of filtering is not implemented yet"
+        ;;
+    esac
+  done
+  return 1
+}
+## vim:ft=sh
+
+if [[ "${COLORS}" ]]; then
+  smso="$(tput smso)"
+  rmso="$(tput rmso)"
+  sgr0="$(tput sgr0)"
+  sitm="$(tput sitm)"
+  ritm="$(tput ritm)"
+  smul="$(tput smul)"
+  rmul="$(tput rmul)"
+fi
+
+# env: FORMAT: interal variable which contains the format to be printed with
+#      `format_dumps`. Do not use this variable directly, instead use
+#      `formaT_compose` function.
+declare -A FORMAT=()
+
+# fun: format_stype <style_config> <item>
+# txt: stylize a message called item with style provided in config addressed
+#      by key style_config.
+format_style ()
+{
+  local style="${CONFIG["$1"]}"
+
+  case "$style" in
+    italic) echo "$sitm$2$ritm";;
+    underline) echo "$smul$2$rmul";;
+    *) echo "$2";;
+  esac
+}
+
+# fun: format_compose <kind> <field> <value>
+# txt: compose a new format for kind passed as argument, setting the field
+#      provided with specified value.
+# use: format_compose timeline username "me"
+if ( test -t 1 || ${T:-false} ) && ${COLOR:-true}; then
+  format_compose ()
+  {
+    local out match;
+
+    case "${CONFIG["${1}.style-${2}"]}" in
+      italic) out="$sitm$3$ritm";;
+      underline) out="$smul$3$rmul";;
+      *) out="$3";;
+    esac
+
+    if [[ "$out" =~ ${CONFIG["${1}.highlight-${2}"]} ]]; then
+      for match in "${BASH_REMATCH[@]}"; do
+        out="${out//$match/$smso$match$rmso}"
+      done
+    fi
+
+    FORMAT["$2"]="$(color_eval "${1}.color-${2}" "${1}.color" "$out")"
+  }
+else
+  format_compose () {
+    FORMAT["$2"]=$'\n'"$3"$'\n'
+  }
+fi
+
+# fun: format_dumps <kind>
+# txt: dumps to stdout the format composed previously with `format_compose`.
+format_dumps ()
+{
+  local format fields
+  local -a args=()
+
+  format="${CONFIG["${1}.format"]}"
+  fields="${CONFIG["${1}.fields"]}"
+
+  [ "$format" ] || format=''
+
+  for field in $(split "$fields"); do
+    mapfile -t -O "${#args[@]}" args <<< "${FORMAT["$field"]}"
+  done
+
+  # shellcheck disable=SC2059
+  printf "${format}%b\n" "${args[@]}" "$sgr0"
+}
+## vim:ft=sh
+
+
+help_prefix=$"
+
+
+████████╗██╗███╗   ███╗███████╗██╗     ██╗███╗   ██╗███████╗
+╚══██╔══╝██║████╗ ████║██╔════╝██║     ██║████╗  ██║██╔════╝
+   ██║   ██║██╔████╔██║█████╗  ██║     ██║██╔██╗ ██║█████╗
+   ██║   ██║██║╚██╔╝██║██╔══╝  ██║     ██║██║╚██╗██║██╔══╝
+   ██║   ██║██║ ╚═╝ ██║███████╗███████╗██║██║ ╚████║███████╗
+   ╚═╝   ╚═╝╚═╝     ╚═╝╚══════╝╚══════╝╚═╝╚═╝  ╚═══╝╚══════╝
+
+
+
+Timeline is a plain-text based distributed social network build on top of
+git configuration manager. Timeline is:
+
+
+- Distributed / Descentralized
+- Secure / Solid / Spam aware
+- GPL3 licensed
+- Fun!
+
+
+----- Commands ----------------------------------------------------------------
+"
+
+help_suffix=$"
+
+Type help <command> for more information about the command
+
+-------------------------------------------------------------------------------
+"
+
+help_commands ()
+{
+  local hide_help_banner
+  hide_help_banner="$(config_get_empty general.hide-help-banner)"
+
+  [[ "$hide_help_banner" = "true" ]] || echo "$help_prefix"
+
+  _i(){
+    case "$2" in
+      "# help:fun: "*) 
+        printf "\n    %s"  "${2#\# help:fun: }";;
+      "# help:txt: "*)
+        printf "        %s" "${2#\# help:txt: }";;
+    esac
+  }
+
+  # shellcheck disable=SC2034
+  mapfile -c 1 -C _i < "$0"
+
+  [[ "$hide_help_banner" = "true" ]] || echo "$help_suffix"
+}
+
+help_subcommand ()
+{
+  local cmd="$1"
+
+  _j() {
+    case "$2" in
+      "# help:$cmd:fun: "*) 
+        echo -n "${2#\# help:$cmd:fun: }";;
+      "# help:$cmd:txt: "*)
+        echo -n "    ${2#\# help:$cmd:txt: }";;
+    esac
+  }
+
+  # shellcheck disable=SC2034
+  mapfile -c 1 -C _j < "$0"
+}
+## vim:ft=sh
+
+# fun: info <message>
+# txt: print informational message on stdout
+info ()
+{
+  format_compose timeline.info name "${CONFIG[timeline.info.name]}"
+  format_compose timeline.info date "$(printf "%(%s)T")"
+  # shellcheck disable=SC2059
+  format_compose timeline.info mesg "$(printf -- "$@")"
+  format_dumps timeline.info
+}
+
+# fun: info_multi
+# txt: get messages from stdint and print informational messages to stdout
+info_multi ()
+{
+  format_compose timeline.info name "${CONFIG[timeline.info.name]}"
+  format_compose timeline.info date "$(printf "%(%s)T")"
+  _i() {
+    format_compose timeline.info mesg "${2%$'\n'}"
+    format_dumps timeline.info
+  }
+  # shellcheck disable=SC2034
+  mapfile -c 1 -C _i
+}
+#! /usr/bin/env bash
+# 
+# Copyright (C) 2016  Andrés J. Díaz <ajdiaz@ajdiaz.me>
+# 
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+# 
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+# 
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# env: INTERACTIVE: if true, then interactive mode is enabled
+export INTERACTIVE=
+
+# env: CONFIG_FILE: should contain the path to the config file
+export CONFIG_FILE=
+
+# env: CACHE_DIR: should contain the path to the cache directory
+export CACHE_DIR=
+
+# fun: prompt
+# txt: print prompt in interactive mode
+prompt ()
+{
+  local name
+  name="$(account_active_name)"
+
+  format_compose prompt account "${name:-<none>}"
+  format_dumps prompt
+}
+
+# fun: main_interactive
+# txt: evaluate commands in interactive mode
+main_interactive ()
+{
+  local cmd
+  local -a args
+
+  history_load
+  complete_load
+  command_account_active "$(account_active_name)"
+
+  while true; do
+    read -a args -e -r -p "$(T=true prompt)"
+    [ $? -eq 1 ] && break
+    cmd="${args[0]}"
+    local -a args=( "${args[@]:1}" )
+
+    [ "$cmd" ] || continue
+    history_append "$cmd ${args[*]}"
+    main_standalone "$cmd" "${args[@]}"
+  done
+  history_save
+}
+
+# fun: main_standalone <cmd> [args]...
+# txt: evaluate command passed as argument
+main_standalone ()
+{
+  local cmd="$1"; shift
+
+  if fun "command_$cmd"; then
+    "command_$cmd" "$@"
+  else
+    read -ra alias < <( config_get_empty "alias.$cmd" )
+
+    if [[ "${alias[*]}" ]]; then
+      main_standalone "${alias[@]}" "$@"
+    else
+      E=2 fatal $"Invalid command '%s'." "$cmd"
+    fi
+  fi
+}
+
+# fun: main [args]...
+# txt: entry point :D
+main ()
+{
+  local config_path="$HOME/.config/tl/config:$HOME/.tl/config:$HOME/.tlrc"
+  
+  CONFIG_FILE="$(try_path "$config_path")"
+  INTERACTIVE=false
+
+  reqs_eval
+  args_eval "$@" || shift $?
+
+  [ -r "${CONFIG_FILE}" ] && config_load "${CONFIG_FILE}"
+
+  CACHE_DIR="$(try_path "$(config_get cache.path)")"
+  mkdir -p "${CACHE_DIR}"
+
+  # load the timeline index to operate with previous listed timeline
+  timeline_index_load
+
+  if [ $# -eq 0 ]; then
+    if [[ "$(config_get_empty interactive.show-banner)" = "true" ]]; then
+      info "timeline  Copyright (C) %(%Y)T Andrés J. Díaz" "$(timestamp)"
+      info "This program comes with ABSOLUTELY NO WARRANTY; for details"
+      info "type 'license'. This is free software, and you are welcome to"
+      info "redistribute it under certain conditions; type 'license' for"
+      info "details."
+    fi
+
+    INTERACTIVE=true
+    main_interactive "$@"
+  else
+    main_standalone "$@"
+  fi
 }
 ## vim:ft=sh
 
@@ -2715,85 +2794,6 @@ _temp_file_exit ()
 on_exit _temp_file_exit
 ## vim:ft=sh
 
-if [[ "${COLORS}" ]]; then
-  smso="$(tput smso)"
-  rmso="$(tput rmso)"
-  sgr0="$(tput sgr0)"
-  sitm="$(tput sitm)"
-  ritm="$(tput ritm)"
-  smul="$(tput smul)"
-  rmul="$(tput rmul)"
-fi
-
-# env: FORMAT: interal variable which contains the format to be printed with
-#      `format_dumps`. Do not use this variable directly, instead use
-#      `formaT_compose` function.
-declare -A FORMAT=()
-
-# fun: format_stype <style_config> <item>
-# txt: stylize a message called item with style provided in config addressed
-#      by key style_config.
-format_style ()
-{
-  local style="${CONFIG["$1"]}"
-
-  case "$style" in
-    italic) echo "$sitm$2$ritm";;
-    underline) echo "$smul$2$rmul";;
-    *) echo "$2";;
-  esac
-}
-
-# fun: format_compose <kind> <field> <value>
-# txt: compose a new format for kind passed as argument, setting the field
-#      provided with specified value.
-# use: format_compose timeline username "me"
-if ( test -t 1 || ${T:-false} ) && ${COLOR:-true}; then
-  format_compose ()
-  {
-    local out match;
-
-    case "${CONFIG["${1}.style-${2}"]}" in
-      italic) out="$sitm$3$ritm";;
-      underline) out="$smul$3$rmul";;
-      *) out="$3";;
-    esac
-
-    if [[ "$out" =~ ${CONFIG["${1}.highlight-${2}"]} ]]; then
-      for match in "${BASH_REMATCH[@]}"; do
-        out="${out//$match/$smso$match$rmso}"
-      done
-    fi
-
-    FORMAT["$2"]="$(color_eval "${1}.color-${2}" "${1}.color" "$out")"
-  }
-else
-  format_compose () {
-    FORMAT["$2"]=$'\n'"$3"$'\n'
-  }
-fi
-
-# fun: format_dumps <kind>
-# txt: dumps to stdout the format composed previously with `format_compose`.
-format_dumps ()
-{
-  local format fields
-  local -a args=()
-
-  format="${CONFIG["${1}.format"]}"
-  fields="${CONFIG["${1}.fields"]}"
-
-  [ "$format" ] || format=''
-
-  for field in $(split "$fields"); do
-    mapfile -t -O "${#args[@]}" args <<< "${FORMAT["$field"]}"
-  done
-
-  # shellcheck disable=SC2059
-  printf "${format}%b\n" "${args[@]}" "$sgr0"
-}
-## vim:ft=sh
-
 # env: CONFIG: associative array contains the configuration values. This
 #      array should be loaded from file with `config_load` function, and
 #      accessed by `config_get` and `config_set` to read and write,
@@ -2966,10 +2966,14 @@ declare -xA CONFIG=(
   [alias.tr]='timeline refresh'
   [alias.tl]='timeline list'
   [alias.edit]='timeline edit'
+  [alias.e]='timeline edit'
   [alias.post]='event post'
+  [alias.p]='event post'
   [alias.reply]='event reply'
+  [alias.r]='event reply'
   [alias.tag]='event tag'
   [alias.info]='event info'
+  [alias.show]='event info'
   [alias.score]='event score'
   [alias.net]='network'
   [alias.nl]='network list'
