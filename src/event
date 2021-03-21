@@ -31,18 +31,20 @@ event_load ()
 
 
   _i() {
-    [[ $((++i)) -gt "${max_user_posts}" ]] && return
+    [[ $i -gt "${max_user_posts}" ]] && return
 
     case "${content[i]}" in
-      ''|\#) return
+      ''|\#*) return
     esac
 
     commit="${2%% *}";
     flags="${2#$commit }"; flags="${flags%% *}"
 
-    event_load_line "$account" "${fname%/*}" "$commit" "$flags" "${content[i]}"
+    event_load_line "$account" "${fname%/*}" "$commit" \
+      "$flags" "${content[((i++))]}"
   }
 
+  # shellcheck disable=SC2034
   mapfile -c 1 -C _i < <(
     git -C "${fname%/*}" log -s --pretty=format:"%H %G? %s" \
       --no-color "$fname"
