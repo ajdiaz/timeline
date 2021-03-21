@@ -223,7 +223,6 @@ command_timeline_list ()
 # help:timeline:txt: the results.
 command_timeline_refresh ()
 {
-  command_account_active "$(account_active_name)"
   command_account_refresh
   timeline_load
   timeline_list "$@"

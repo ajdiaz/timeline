@@ -35,7 +35,7 @@ account_load ()
 
     # try to infer the account name if none is provided
     
-    local all_accounts=( $(account_list) )
+    read -ra all_accounts < <( account_list)
 
     case "${#all_accounts[@]}" in
       0) return 1;;
@@ -221,7 +221,8 @@ account_refresh ()
   workon "$path" command git fetch --all
   # TODO Add support for multiple branches
   workon "$path" command git rebase "${1:-origin}/master"
-  workon "$path" command git submodule update --remote
+  workon "$path" command git submodule update --remote \
+    --jobs "${CONFIG[git.jobs]}"
 
   account_push "${1:-origin}"
 }

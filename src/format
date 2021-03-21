@@ -1,5 +1,15 @@
 ## vim:ft=sh
 
+if [[ "${COLORS}" ]]; then
+  smso="$(tput smso)"
+  rmso="$(tput rmso)"
+  sgr0="$(tput sgr0)"
+  sitm="$(tput sitm)"
+  ritm="$(tput ritm)"
+  smul="$(tput smul)"
+  rmul="$(tput rmul)"
+fi
+
 # env: FORMAT: interal variable which contains the format to be printed with
 #      `format_dumps`. Do not use this variable directly, instead use
 #      `formaT_compose` function.
@@ -10,60 +20,43 @@ declare -A FORMAT=()
 #      by key style_config.
 format_style ()
 {
-  local style
-  style="$(config_get_empty "$1")"
+  local style="${CONFIG["$1"]}"
 
   case "$style" in
-    italic) echo "$(tput sitm)$2$(tput ritm)";;
-    underline) echo "$(tput smul)$2$(tput rmul)";;
+    italic) echo "$sitm$2$ritm";;
+    underline) echo "$smul$2$rmul";;
     *) echo "$2";;
   esac
-}
-
-# fun: format_highlight <config> <text>
-# txt: highlight patterns in text
-format_highlight ()
-{
-  local highlight line="${2}"
-  local -a ret=()
-  highlight="$(config_get_empty "$1")"
-
-  if [[ -z "$highlight" ]]; then
-    echo "${line}"
-  else
-    local -a words
-    local prefix=''
-    mapfile -t -d ' ' words <<<"${line}"
-    for word in "${words[@]}"; do
-      case "$word" in
-        $highlight)
-          ret+=( "$(tput bold)${prefix}${word%$'\n'}$(tput sgr0)" )
-          ;;
-        *)
-          ret+=( "${prefix}${word}" )
-          ;;
-      esac
-    done
-    echo "${ret[*]}"
-  fi
 }
 
 # fun: format_compose <kind> <field> <value>
 # txt: compose a new format for kind passed as argument, setting the field
 #      provided with specified value.
 # use: format_compose timeline username "me"
-format_compose ()
-{
-  if ( test -t 1 || ${T:-false} ) && ${COLOR:-true}; then
-    local -a format=()
-    color_eval format "${1}.color-${2}" "${1}.color" "$3"
-    format[1]="$(format_style "${1}.style-${2}" "${format[1]}")"
-    format[1]="$(format_highlight "${1}.highlight-${2}" "${format[1]}")"
-    FORMAT["$2"]="$(join $'\n' "${format[@]}")"
-  else
+if ( test -t 1 || ${T:-false} ) && ${COLOR:-true}; then
+  format_compose ()
+  {
+    local out match;
+
+    case "${CONFIG["${1}.style-${2}"]}" in
+      italic) out="$sitm$3$ritm";;
+      underline) out="$smul$3$rmul";;
+      *) out="$3";;
+    esac
+
+    if [[ "$out" =~ ${CONFIG["${1}.highlight-${2}"]} ]]; then
+      for match in "${BASH_REMATCH[@]}"; do
+        out="${out//$match/$smso$match$rmso}"
+      done
+    fi
+
+    FORMAT["$2"]="$(color_eval "${1}.color-${2}" "${1}.color" "$out")"
+  }
+else
+  format_compose () {
     FORMAT["$2"]=$'\n'"$3"$'\n'
-  fi
-}
+  }
+fi
 
 # fun: format_dumps <kind>
 # txt: dumps to stdout the format composed previously with `format_compose`.
@@ -72,8 +65,8 @@ format_dumps ()
   local format fields
   local -a args=()
 
-  format="$(config_get "${1}.format")"
-  fields="$(config_get "${1}.fields")"
+  format="${CONFIG["${1}.format"]}"
+  fields="${CONFIG["${1}.fields"]}"
 
   [ "$format" ] || format=''
 
@@ -82,5 +75,5 @@ format_dumps ()
   done
 
   # shellcheck disable=SC2059
-  printf "${format}%b\n" "${args[@]}" "$(color_reset)"
+  printf "${format}%b\n" "${args[@]}" "$sgr0"
 }

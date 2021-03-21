@@ -4,8 +4,8 @@
 # txt: print informational message on stdout
 info ()
 {
-  format_compose timeline.info name "$(config_get timeline.info.name)"
-  format_compose timeline.info date "$(timestamp)"
+  format_compose timeline.info name "${CONFIG[timeline.info.name]}"
+  format_compose timeline.info date "$(printf "%(%s)T")"
   # shellcheck disable=SC2059
   format_compose timeline.info mesg "$(printf -- "$@")"
   format_dumps timeline.info
@@ -15,10 +15,12 @@ info ()
 # txt: get messages from stdint and print informational messages to stdout
 info_multi ()
 {
-  local -a lines
-  mapfile -t lines
-
-  for line in "${lines[@]}"; do
-    info "%s" "$line"
-  done
+  format_compose timeline.info name "${CONFIG[timeline.info.name]}"
+  format_compose timeline.info date "$(printf "%(%s)T")"
+  _i() {
+    format_compose timeline.info mesg "${2%$'\n'}"
+    format_dumps timeline.info
+  }
+  # shellcheck disable=SC2034
+  mapfile -c 1 -C _i
 }

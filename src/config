@@ -12,6 +12,7 @@ declare -xA CONFIG=(
   [account.path]="$HOME/.local/share/tl/account:$HOME/.tl/account"
   [plugin.path]="$HOME/.local/share/tl/plugin:$HOME/.tl/plugin"
   [cache.path]="$HOME/.cache/tl:$HOME/.tl/cache"
+  [git.jobs]='4'
   [network.depth]=10
   [prompt.format]='%b%s:%b '
   [prompt.fields]='account'
@@ -30,7 +31,7 @@ declare -xA CONFIG=(
   [timeline.use-short-ids]=true
   [timeline.post.format]='%b%-3d%b %b%(%Y%m%d %H%M%S)T%b %b%10s%b [%b%s%b] (%b%d%b) %b%s%b'
   [timeline.post.fields]='index,date,name,flags,score,mesg'
-  [timeline.post.highlight-mesg]='@*'
+  [timeline.post.highlight-mesg]='@[^\ ,.:;=\!\?]+'
   [timeline.post.prefix]=''
   [timeline.post.color]='7,'
   [timeline.post.color-index]='7,'
@@ -45,7 +46,13 @@ declare -xA CONFIG=(
   [timeline.post.style-flags]='normal'
   [timeline.post.style-mesg]='normal'
   [timeline.post.style-score]='normal'
-  [timeline.post.flag-signed]='S'
+  [timeline.post.flag-signed-good]='S'
+  [timeline.post.flag-signed-bad]='!'
+  [timeline.post.flag-signed-unknown]='?'
+  [timeline.post.flag-signed-expired]='X'
+  [timeline.post.flag-signed-revoked]='R'
+  [timeline.post.flag-signed-missing]='m'
+  [timeline.post.flag-signed-none]=' '
   [timeline.post.flag-tagged]='T'
   [timeline.post.flag-replied]='R'
   [timeline.tag.format]='%b%-3d%b %b%(%Y%m%d %H%M%S)T%b %b%10s%b [%b%s%b] (%b%d%b) %b%s%b'
@@ -66,12 +73,18 @@ declare -xA CONFIG=(
   [timeline.tag.style-score]='normal'
   [timeline.tag.style-flags]='normal'
   [timeline.tag.style-tags]='normal'
-  [timeline.tag.flag-signed]='S'
+  [timeline.tag.flag-signed-good]='S'
+  [timeline.tag.flag-signed-bad]='!'
+  [timeline.tag.flag-signed-unknown]='?'
+  [timeline.tag.flag-signed-expired]='X'
+  [timeline.tag.flag-signed-revoked]='R'
+  [timeline.tag.flag-signed-missing]='m'
+  [timeline.tag.flag-signed-none]=' '
   [timeline.tag.flag-tagged]='T'
   [timeline.tag.flag-replied]='R'
   [timeline.reply.format]='%b%-3d%b %b%(%Y%m%d %H%M%S)T%b %b%10s%b [%b%s%b] (%b%d%b) %b%s%b'
   [timeline.reply.fields]='index,date,name,flags,score,mesg'
-  [timeline.reply.highlight-mesg]='@*'
+  [timeline.reply.highlight-mesg]='@[^\ ,.:;=\!\?]+'
   [timeline.reply.prefix]='> '
   [timeline.reply.indent]=' '
   [timeline.reply.color]='7,'
@@ -87,7 +100,13 @@ declare -xA CONFIG=(
   [timeline.reply.style-score]='normal'
   [timeline.reply.style-flags]='normal'
   [timeline.reply.style-mesg]='normal'
-  [timeline.reply.flag-signed]='S'
+  [timeline.reply.flag-signed-good]='S'
+  [timeline.reply.flag-signed-bad]='!'
+  [timeline.reply.flag-signed-unknown]='?'
+  [timeline.reply.flag-signed-expired]='X'
+  [timeline.reply.flag-signed-revoked]='R'
+  [timeline.reply.flag-signed-missing]='m'
+  [timeline.reply.flag-signed-none]=' '
   [timeline.reply.flag-tagged]='T'
   [timeline.reply.flag-replied]='R'
   [timeline.fatal.format]='*** %b%(%Y%m%d %H%M%S)T%b %b%10s%b %b%s%b'
@@ -153,19 +172,27 @@ declare -xA CONFIG=(
   [alias.tr]='timeline refresh'
   [alias.tl]='timeline list'
   [alias.edit]='timeline edit'
+  [alias.e]='timeline edit'
   [alias.post]='event post'
+  [alias.p]='event post'
   [alias.reply]='event reply'
+  [alias.r]='event reply'
   [alias.tag]='event tag'
   [alias.info]='event info'
+  [alias.show]='event info'
   [alias.score]='event score'
   [alias.net]='network'
   [alias.nl]='network list'
   [alias.nr]='network refresh'
 )
 
+export NO_COLORS=0
+export COLOR=false
+
 if test -t 1; then
   case "$(tput colors)" in
      8)
+       export COLOR=true
        CONFIG['timeline.post.color']=8,
        CONFIG['timeline.post.color-date']=8,
        CONFIG['timeline.post.color-mesg']=7,
@@ -209,6 +236,7 @@ if test -t 1; then
        CONFIG['prompt.color']=4,
       ;;
    256)
+       export COLOR=true
        CONFIG['timeline.post.color']=240,
        CONFIG['timeline.post.color-date']=240,
        CONFIG['timeline.post.color-mesg']=7,
@@ -255,11 +283,11 @@ if test -t 1; then
        CONFIG['network.follower.color']=240,
        CONFIG['prompt.color']=69,
        ;;
-    *) export COLOR=false;;
    esac
-else
-   export COLOR=false
 fi
+
+declare -xa AVAIL_COLORS
+IFS=',' read -ra AVAIL_COLORS <<<"${CONFIG[timeline.consistent-colors]}"
 
 # fun: config_load <filename>
 # txt: given a filename path as argument, read the content and save it in

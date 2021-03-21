@@ -27,7 +27,7 @@ filter_tag ()
 filter_view ()
 {
   local fpattern="$1" eid="$2"
-  local -a view=( $(config_get_empty "views.$fpattern") )
+  read -ra view < <( config_get_empty "views.$fpattern" )
 
   if [[ "${#view[@]}" -ne 0 ]]; then
     filter_eval_expr "$eid" "${view[@]}"
@@ -68,6 +68,7 @@ filter_text ()
 {
   local fpattern="$1" eid="$2"
 
+  # shellcheck disable=SC2254
   case "$(event_mesg "$eid")" in
     $fpattern) return 0;;
   esac

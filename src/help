@@ -40,26 +40,34 @@ help_commands ()
 
   [[ "$hide_help_banner" = "true" ]] || echo "$help_prefix"
 
-  while read -r line; do
-    case "$line" in
+  _i(){
+    case "$2" in
       "# help:fun: "*) 
-        printf "\n    %s\n"  "${line#\# help:fun: }";;
+        printf "\n    %s"  "${2#\# help:fun: }";;
       "# help:txt: "*)
-        printf "\n        %s\n" "${line#\# help:txt: }";;
+        printf "        %s" "${2#\# help:txt: }";;
     esac
-  done < "$0"
+  }
+
+  # shellcheck disable=SC2034
+  mapfile -c 1 -C _i < "$0"
 
   [[ "$hide_help_banner" = "true" ]] || echo "$help_suffix"
 }
 
 help_subcommand ()
 {
-  while read -r line; do
-    case "$line" in
-      "# help:$1:fun: "*) 
-        echo; echo "${line#\# help:$1:fun: }"; echo;;
-      "# help:$1:txt: "*)
-        echo "    ${line#\# help:$1:txt: }";;
+  local cmd="$1"
+
+  _j() {
+    case "$2" in
+      "# help:$cmd:fun: "*) 
+        echo -n "${2#\# help:$cmd:fun: }";;
+      "# help:$cmd:txt: "*)
+        echo -n "    ${2#\# help:$cmd:txt: }";;
     esac
-  done < "$0"
+  }
+
+  # shellcheck disable=SC2034
+  mapfile -c 1 -C _j < "$0"
 }

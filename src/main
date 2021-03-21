@@ -50,7 +50,7 @@ main_interactive ()
     read -a args -e -r -p "$(T=true prompt)"
     [ $? -eq 1 ] && break
     cmd="${args[0]}"
-    local -a args=( ${args[@]:1} )
+    local -a args=( "${args[@]:1}" )
 
     [ "$cmd" ] || continue
     history_append "$cmd ${args[*]}"
@@ -68,9 +68,9 @@ main_standalone ()
   if fun "command_$cmd"; then
     "command_$cmd" "$@"
   else
-    local -a alias=( $(config_get_empty "alias.$cmd") )
+    read -ra alias < <( config_get_empty "alias.$cmd" )
 
-    if [[ "${alias[@]}" ]]; then
+    if [[ "${alias[*]}" ]]; then
       main_standalone "${alias[@]}" "$@"
     else
       E=2 fatal $"Invalid command '%s'." "$cmd"

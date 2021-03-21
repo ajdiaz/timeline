@@ -90,8 +90,8 @@ username ()
   uname="${uname%:*}" # remove timestamp if present
   uname="${uname#@}"  # remove trail @ if present
 
-  alias_name="$(config_get_empty "user.alias-$uname")"
-  short_ids="$(config_get_empty timeline.use-short-ids)"
+  alias_name="${CONFIG["user.alias-$uname"]}"
+  short_ids="${CONFIG["timeline.use-short-ids"]}"
 
   if [[ "$alias_name" ]]; then
     uname="$alias_name"

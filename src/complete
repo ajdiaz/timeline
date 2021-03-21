@@ -27,15 +27,15 @@ complete_alternatives ()
 # txt: print list of available completion
 complete_item ()
 {
-  local -a words=( ${READLINE_LINE} )
+  read -ra words <<< "${READLINE_LINE}"
   local cur=$((${#words[@]}-1))
-  local -a alts=( $(complete_alternatives "$cur") )
+  read -ra alts <( complete_alternatives "$cur" )
   local -a values
 
   if [[ $cur -eq -1 ]]; then
     values=( "${alts[@]}" )
   else
-    values=( $(compgen -W "${alts[*]}" "${words[$cur]}") )
+    read -ra values < <( compgen -W "${alts[*]}" "${words[$cur]}" )
   fi
   
   if [[ ${#values[@]} -eq 0 ]]; then

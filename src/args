@@ -32,6 +32,9 @@ args_eval ()
       V)
         command_version; exit 0
       ;;
+    *)
+      usage; exit 2
+      ;;
     esac
   done
   return $((OPTIND-1))

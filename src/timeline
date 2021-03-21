@@ -25,14 +25,14 @@ timeline_load ()
   oid="$(account_active_oid)"
   content_path="$(account_active_path)/$TIMELINE_CONTENT"
   follow_path="$(account_active_path)/$TIMELINE_FOLLOW"
-  show_own="$(config_get_empty timeline.own-posts)"
+  show_own="${CONFIG["timeline.own-posts"]}"
 
   # Load our account timeline
   [[ "$show_own" = "false" ]] ||
     event_load "$oid" "${content_path}"
 
   local dir
-  for dir in ${follow_path}/*; do
+  for dir in "${follow_path}"/*; do
     [[ -d "$dir" ]] || continue  # ignore non-dir files
     [[ -r "$dir/$TIMELINE_CONTENT" ]] || continue # ignore non initialized
 
@@ -91,43 +91,43 @@ timeline_show_thread ()
 timeline_list_thread ()
 {
   local prefix indent date kind mesg tags link name eid="$1"
-  local flag show_tags show_replies
-  local -a flags=( ' ' )
+  local flag show_tags show_replies flags=''
 
   # item is already printed? then do nothing
   [[ "${TIMELINE_PRINTED["$eid"]}" ]] && return
 
-  date="$(event_date "$eid")"
-  kind="$(event_kind "$eid")"
+  date="${EVENTS_DATE["$eid"]}"
+  kind="${EVENTS_KIND["$eid"]}"
   name="$(username "$eid")"
-  sign="$(event_sign "$eid")"
+  sign="${EVENTS_SIGN["$eid"]}"
 
   case "$kind" in
     post)
-      mesg="$(event_mesg "$eid")"
+      mesg="${EVENTS_MESG["$eid"]}"
+      timeline_filter "$eid" && return
       ;;
     tag)
-      tags="$(event_tags "$eid")"
-      tags="${tags// /, }"
-      link="$(event_link "$eid")"
+      tags="${EVENTS_TAGS["$eid"]// /, }"
+      link="${EVENTS_LINK["$eid"]}"
       ;;
     reply)
-      mesg="$(event_mesg "$eid")"
-      link="$(event_link "$eid")"
+      mesg="${EVENTS_MESG["$eid"]}"
+      link="${EVENTS_LINK["$eid"]}"
       ;;
   esac
 
-  if [[ "$kind" = "post" ]]; then
-    timeline_filter "$eid" && return
-  fi
+  indent="${CONFIG["timeline.$kind.indent"]}"
+  prefix="${CONFIG["timeline.$kind.prefix"]}"
 
-  indent="$(config_get_empty "timeline.$kind.indent")"
-  prefix="$(config_get_empty "timeline.$kind.prefix")"
-
-  if [[ "$sign" -eq 0 ]]; then
-    flag="$(config_get_empty "timeline.$kind.flag-signed")"
-    flags[0]="${flag:-S}"
-  fi
+  case "${sign}" in
+    G) flags+="${CONFIG["timeline.$kind.flag-signed-good"]}";;
+    B) flags+="${CONFIG["timeline.$kind.flag-signed-bad"]}";;
+    U) flags+="${CONFIG["timeline.$kind.flag-signed-unknown"]}";;
+    X|Y) flags+="${CONFIG["timeline.$kind.flag-signed-expired"]}";;
+    R) flags+="${CONFIG["timeline.$kind.flag-signed-revoked"]}";;
+    E) flags+="${CONFIG["timeline.$kind.flag-signed-missing"]}";;
+    *) flags+="${CONFIG["timeline.$kind.flag-signed-none"]}";;
+  esac
 
   # composing the output
   format_compose "timeline.$kind" index "${#TIMELINE_INDEX[@]}"
@@ -135,34 +135,32 @@ timeline_list_thread ()
   format_compose "timeline.$kind" date "$date"
   format_compose "timeline.$kind" tags "${2}${indent}${prefix}${tags}"
   format_compose "timeline.$kind" link "$link"
-  format_compose "timeline.$kind" score "$(event_score "$eid")"
+  format_compose "timeline.$kind" score "${EVENTS_SCORE["$eid"]}"
   format_compose "timeline.$kind" mesg "${2}${indent}${prefix}${mesg}"
 
   TIMELINE_PRINTED["$eid"]=1
   TIMELINE_INDEX+=( "$eid" )
 
-  show_tags="$(config_get_empty "timeline.show-tags")"
-  show_replies="$(config_get_empty "timeline.show-replies")"
+  show_tags="${CONFIG["timeline.show-tags"]}"
+  show_replies="${CONFIG["timeline.show-replies"]}"
 
   if [[ "$show_tags" != "true" ]]; then
     if [[ "$(event_labels "$eid")" ]]; then
-      flag="$(config_get_empty "timeline.$kind.flag-tagged")"
-      flags[1]="${flag:-T}"
+      flags+="${CONFIG["timeline.$kind.flag-tagged"]}"
     else
-      flags[1]=" "
+      flags+=" "
     fi
   fi
 
   if [[ "$show_replies" != "true" ]]; then
     if [[ "$(event_replies "$eid")" ]]; then
-      flag="$(config_get_empty "timeline.$kind.flag-replied")"
-      flags[2]="${flag:-R}"
+      flags+="${CONFIG["timeline.$kind.flag-replied"]}"
     else
-      flags[2]=" "
+      flags+=" "
     fi
   fi
 
-  format_compose "timeline.$kind" flags "${flags[0]}${flags[1]}${flags[2]}"
+  format_compose "timeline.$kind" flags "${flags}"
   format_dumps "timeline.$kind"
 
   if [[ "$show_tags" = "true" ]]; then
@@ -188,8 +186,8 @@ timeline_list ()
   local -a filter_show
   local -a filter_hide
 
-  filter_show=( $(config_get_empty timeline.filter.show) )
-  filter_hide=( $(config_get_empty timeline.filter.hide) )
+  read -ra filter_show < <( config_get_empty timeline.filter.show )
+  read -ra filter_hide < <( config_get_empty timeline.filter.hide )
 
   [[ "${#filter_show[@]}" -gt 0 ]] &&
     filter_add show "${filter_show[@]}"
@@ -202,8 +200,8 @@ timeline_list ()
     filter_add show "$@"
   fi
 
-  for eid in $(event_iter); do
-    if [[ "$(event_kind "$eid")" = "post" ]]; then
+  for eid in "${EVENTS_SORTED[@]}"; do
+    if [[ "${EVENTS_KIND["$eid"]}" = "post" ]]; then
       timeline_list_thread "$eid" ''
     fi
   done
@@ -254,9 +252,7 @@ timeline_edit ()
 
   if [[ -w "$content" ]]; then
 
-    auto_push="$(
-      config_get_empty "account.$(account_active_name).auto-push"
-    )"
+    auto_push="${CONFIG["account.$(account_active_name).auto-push"]}"
 
     if ! [[ "$auto_push" ]]; then
       auto_push="$(config_get account.auto-push)"
