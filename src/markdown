@@ -1,0 +1,24 @@
+## vim:ft=sh
+
+# fun: markdown_generate
+# txt: this function will generate the CONTENT.md file in the repo and commit
+#      it.
+markdown_generate ()
+{
+  local account_path; account_path="$(account_active_path)"
+
+  if [[ ! -r "${account_path}/CONTENT.md}" ]]; then
+    echo -e "# CONTENT\n\n" > "${account_path}/CONTENT.md"
+    while read -r d k p; do
+      if [[ "$k" == 'P' ]]; then
+        {
+          printf "## %(%c)T\n\n" "$d"
+          echo "${p}" | fold -s | while read -r line; do
+            echo "> $line"
+          done
+          printf "\n\n"
+        } >> "${account_path}/CONTENT.md"
+      fi
+    done < "${account_path}/CONTENT"
+  fi
+}

@@ -218,7 +218,7 @@ event_mesg ()
 #      For tags:  date kind link tags
 event_create ()
 {
-  local path auto_push
+  local path auto_push content_markdown
   local -a content
 
   auto_push="$(
@@ -236,6 +236,18 @@ event_create ()
   for line in "${content[@]}"; do
     echo "$line" >> "${path}/$TIMELINE_CONTENT"
   done
+
+  content_markdown="$(
+    config_get_empty "account.$(account_active_name).content-markdown"
+  )"
+
+  if ! [[ "$content_markdown" ]]; then
+    content_markdown="$(config_get_empty "account.content-markdown")"
+  fi
+
+  if [[ "$content_markdown" = "true" ]]; then
+    markdown_generate
+  fi
 
   account_commit
 
