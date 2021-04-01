@@ -106,7 +106,7 @@ username ()
 # txt: return true if num is a decimal based number.
 is_decimal () {
   [[ "$1" = "0" ]] && return 0
-  mute let i="10#$1" 2>/dev/null
+  mute let i="10#${1#-}" 2>/dev/null
 }
 
 # fun: keyid <name>
