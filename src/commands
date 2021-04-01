@@ -922,7 +922,7 @@ command_timeline_edit ()
   timeline_edit
 }
 
-# help:fun: config {list|get|set|save} {args...}
+# help:fun: config {list|get|set|save|edit} {args...}
 # help:txt: Change configuration settings
 command_config ()
 {
@@ -977,6 +977,13 @@ command_config_set ()
 command_config_save ()
 {
   config_save "${CONFIG_FILE}"
+}
+
+# help:config:fun: config edit
+# help:config:txt: Edit the configuration file using `$EDITOR`
+command_config_edit ()
+{
+  "${EDITOR:-vi}" "${CONFIG_FILE}"
 }
 
 # help:fun: alias [name value]
