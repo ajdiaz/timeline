@@ -1,5 +1,5 @@
 #! /bin/bash -i
-TIMELINE_VERSION='1.6-8-g9e00103'
+TIMELINE_VERSION='1.7'
 ## vim:ft=sh
 
 # env: DAEMON_LOG_FILE: Internal variable where file redirections are saved.
