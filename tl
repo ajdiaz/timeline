@@ -1,5 +1,5 @@
 #! /bin/bash -i
-TIMELINE_VERSION='1.7'
+TIMELINE_VERSION='1.7-1-gf238adc'
 ## vim:ft=sh
 
 # env: DAEMON_LOG_FILE: Internal variable where file redirections are saved.
@@ -3317,6 +3317,302 @@ if ${DEBUG:-false}; then
 fi
 ## vim:ft=sh
 
+# env: TIMELINE_CONTENT: The path relative to the account root, where
+#      CONTENT file is stored.
+TIMELINE_CONTENT="CONTENT"
+
+# env: TIMELINE_FOLLOW The path relative to the account root, where
+#      FOLLOW dir is located.
+TIMELINE_FOLLOW="FOLLOW"
+
+# env: TIMELINE_PRINTED: Internal associative array which contains the EID
+#      of events alredy printed to avoid duplicates.
+declare -A TIMELINE_PRINTED=()
+
+# env: TIMELINE_INDEX: Internal array used to print an index in timeline to
+#      easy refer to an event
+declare -a TIMELINE_INDEX=()
+
+# fun: timeline_load 
+# txt: load the timeline from current active account into memory
+timeline_load ()
+{
+  local oid content_path follow_path show_own
+
+  oid="$(account_active_oid)"
+  content_path="$(account_active_path)/$TIMELINE_CONTENT"
+  follow_path="$(account_active_path)/$TIMELINE_FOLLOW"
+  show_own="${CONFIG["timeline.own-posts"]}"
+  pattern=("⣾" "⣽" "⣻" "⢿" "⡿" "⣟" "⣯" "⣷")
+
+  if ! [[ -r "$content_path" ]] || ! [[ -r "$follow_path" ]]; then
+    error $"Content or follow paths does not exists."
+    error $"Maybe you delete your account data?"
+    E=1 error $"Try $0 account rebuild $(account_active_name) to recreate it automatically"
+  fi
+
+  # Load our account timeline
+  [[ "$show_own" = "false" ]] ||
+    event_load "$oid" "${content_path}"
+
+  local dir i=0
+  for dir in "${follow_path}"/*; do
+    [[ -d "$dir" ]] || continue  # ignore non-dir files
+    [[ -r "$dir/$TIMELINE_CONTENT" ]] || continue # ignore non initialized
+
+    dir="${dir%/}"
+    echo -en "\r${pattern[$((i % ${#pattern[@]}))]}\r"
+    event_load "${dir##*/}" "${dir}/$TIMELINE_CONTENT"
+  done
+}
+
+# fun: timeline_filter <eid>
+# txt: return true if the item should be filtered and false if not.
+timeline_filter ()
+{
+  local eid="$1"
+  local ret=1
+
+  filter_eval hide "$eid" &&
+    timeline_hide_thread "$eid" && ret=0
+
+  filter_eval show "$eid" &&
+    timeline_show_thread "$eid" && ret=1
+
+  return "$ret"
+}
+
+
+# fun: timeline_hide_thread <eid>
+# txt: hide the thread of the specific EID
+timeline_hide_thread ()
+{
+  TIMELINE_PRINTED["$1"]=1
+  for event in $(event_labels "$1"); do
+    timeline_hide_thread "$event"
+  done
+  for event in $(event_replies "$1"); do
+    timeline_hide_thread "$event"
+  done
+  return 0
+}
+
+# fun: timeline_show_thread <eid>
+# txt: show the thread of the specific EID
+timeline_show_thread ()
+{
+  unset TIMELINE_PRINTED["$1"]
+  for event in $(event_labels "$1"); do
+    timeline_show_thread "$event"
+  done
+  for event in $(event_replies "$1"); do
+    timeline_show_thread "$event"
+  done
+  return 0
+}
+
+# fun: timeline_list_thread <eid>
+# txt: print thread for specific eid passed as argument
+timeline_list_thread ()
+{
+  local prefix indent date kind mesg tags link name eid="$1"
+  local flag show_tags show_replies flags=''
+
+  # item is already printed? then do nothing
+  [[ "${TIMELINE_PRINTED["$eid"]}" ]] && return
+
+  date="${EVENTS_DATE["$eid"]}"
+  kind="${EVENTS_KIND["$eid"]}"
+  name="$(username "$eid")"
+  sign="${EVENTS_SIGN["$eid"]}"
+
+  case "$kind" in
+    post)
+      mesg="${EVENTS_MESG["$eid"]}"
+      timeline_filter "$eid" && return
+      ;;
+    tag)
+      tags="${EVENTS_TAGS["$eid"]// /, }"
+      link="${EVENTS_LINK["$eid"]}"
+      ;;
+    reply)
+      mesg="${EVENTS_MESG["$eid"]}"
+      link="${EVENTS_LINK["$eid"]}"
+      ;;
+  esac
+
+  indent="${CONFIG["timeline.$kind.indent"]}"
+  prefix="${CONFIG["timeline.$kind.prefix"]}"
+
+  case "${sign}" in
+    G) flags+="${CONFIG["timeline.$kind.flag-signed-good"]}";;
+    B) flags+="${CONFIG["timeline.$kind.flag-signed-bad"]}";;
+    U) flags+="${CONFIG["timeline.$kind.flag-signed-unknown"]}";;
+    X|Y) flags+="${CONFIG["timeline.$kind.flag-signed-expired"]}";;
+    R) flags+="${CONFIG["timeline.$kind.flag-signed-revoked"]}";;
+    E) flags+="${CONFIG["timeline.$kind.flag-signed-missing"]}";;
+    *) flags+="${CONFIG["timeline.$kind.flag-signed-none"]}";;
+  esac
+
+  # composing the output
+  format_compose "timeline.$kind" index "${#TIMELINE_INDEX[@]}"
+  format_compose "timeline.$kind" name "$name"
+  format_compose "timeline.$kind" date "$date"
+  format_compose "timeline.$kind" tags "${2}${indent}${prefix}${tags}"
+  format_compose "timeline.$kind" link "$link"
+  format_compose "timeline.$kind" score "${EVENTS_SCORE["$eid"]}"
+  format_compose "timeline.$kind" mesg "${2}${indent}${prefix}${mesg}"
+
+  TIMELINE_PRINTED["$eid"]=1
+  TIMELINE_INDEX+=( "$eid" )
+
+  show_tags="${CONFIG["timeline.show-tags"]}"
+  show_replies="${CONFIG["timeline.show-replies"]}"
+
+  if [[ "$show_tags" != "true" ]]; then
+    if [[ "$(event_labels "$eid")" ]]; then
+      flags+="${CONFIG["timeline.$kind.flag-tagged"]}"
+    else
+      flags+=" "
+    fi
+  fi
+
+  if [[ "$show_replies" != "true" ]]; then
+    if [[ "$(event_replies "$eid")" ]]; then
+      flags+="${CONFIG["timeline.$kind.flag-replied"]}"
+    else
+      flags+=" "
+    fi
+  fi
+
+  format_compose "timeline.$kind" flags "${flags}"
+  format_dumps "timeline.$kind"
+
+  if [[ "$show_tags" = "true" ]]; then
+    for tags in $(event_labels "$eid"); do
+      timeline_list_thread "$tags" "$2${indent}"
+    done
+  fi
+
+  if [[ "$show_replies" = "true" ]]; then
+    for reply in $(event_replies "$eid"); do
+      timeline_list_thread "$reply" "$2${indent}"
+    done
+  fi
+}
+
+# fun: timeline_list [filter]
+# txt: print the entire timelist
+timeline_list ()
+{
+  TIMELINE_PRINTED=()
+  TIMELINE_INDEX=()
+
+  local -a filter_show
+  local -a filter_hide
+
+  read -ra filter_show < <( config_get_empty timeline.filter.show )
+  read -ra filter_hide < <( config_get_empty timeline.filter.hide )
+
+  [[ "${#filter_show[@]}" -gt 0 ]] &&
+    filter_add show "${filter_show[@]}"
+
+  [[ "${#filter_hide[@]}" -gt 0 ]] &&
+    filter_add hide "${filter_hide[@]}"
+
+  if [[ "$1" ]]; then
+    filter_add hide "tag:*"
+    filter_add show "$@"
+  fi
+
+  for eid in "${EVENTS_SORTED[@]}"; do
+    if [[ "${EVENTS_KIND["$eid"]}" = "post" ]]; then
+      timeline_list_thread "$eid" ''
+    fi
+  done
+
+  timeline_index_save
+}
+
+# fun: timeline_index_save
+# txt: dumps TIMELINE_INDEX to a sourceable file to be loaded before any
+#      input to identify an event easily.
+timeline_index_save ()
+{
+  {
+    echo "declare -ag TIMELINE_INDEX=("
+    for var in "${TIMELINE_INDEX[@]}"; do
+      echo "'$var'"
+    done
+    echo ")"
+  } > "${CACHE_DIR}/.timeline-index"
+}
+
+# fun: timeline_index_load
+# txt: source index saved file with timeline_index_save
+timeline_index_load ()
+{
+  # shellcheck source=/dev/null
+  [[ -r "${CACHE_DIR}/.timeline-index" ]] &&
+    source "${CACHE_DIR}/.timeline-index" 
+}
+
+# fun: timeline_index_get <num>
+# txt: return the EID of the event indexed by number passed as argument
+timeline_index_get ()
+{
+  if [[ "$1" -ge ${#TIMELINE_INDEX[@]} ]]; then
+    E=1 error $"Index out of bounds: %s in %s" "$1" "TIMELINE_INDEX"
+  else
+    echo "${TIMELINE_INDEX[$1]}"
+  fi
+}
+
+# fun: timeline_edit
+# txt: interactively edit your timeline
+timeline_edit ()
+{
+  local content auto_push
+  content="$(account_active_path)/CONTENT"
+
+  if [[ -w "$content" ]]; then
+
+    auto_push="${CONFIG["account.$(account_active_name).auto-push"]}"
+
+    if ! [[ "$auto_push" ]]; then
+      auto_push="$(config_get account.auto-push)"
+    fi
+
+    ${EDITOR:-nano} "$content"
+
+    account_commit | info_multi
+
+    if [[ "$auto_push" = "true" ]]; then
+      account_push | info_multi
+    fi
+
+  else
+    fatal $"Unable to edit CONTENT file"
+  fi
+}
+
+# fun: timeline_orphans
+# txt: show orphan events in the timeline
+timeline_orphans ()
+{
+  for eid in ${EVENTS_CROSS_REPLY[@]}; do
+    timeline_list_thread "$eid"
+  done
+  for eid in ${EVENTS_CROSS_TAGS[@]}; do
+    timeline_list_thread "$eid"
+  done
+  for eid in ${EVENTS_CROSS_SCORE[@]}; do
+    timeline_list_thread "$eid"
+  done
+  timeline_index_save
+}
+## vim:ft=sh
+
 # env: CONFIG: associative array contains the configuration values. This
 #      array should be loaded from file with `config_load` function, and
 #      accessed by `config_get` and `config_set` to read and write,
@@ -3338,7 +3634,7 @@ declare -xA CONFIG=(
   [prompt.color-name]='7,'
   [history.enabled]=true
   [history.file]="$HOME/.local/share/tl/history"
-  [timeline.show-untrusted-items]=false
+  [timeline.show-untrusted-items]=true
   [timeline.show-replies]=true
   [timeline.show-tags]=false
   [timeline.react-on-all]=true
@@ -3696,301 +3992,5 @@ config_list ()
   for var in "${!CONFIG[@]}"; do
     echo "${var}=${CONFIG[$var]}"
   done
-}
-## vim:ft=sh
-
-# env: TIMELINE_CONTENT: The path relative to the account root, where
-#      CONTENT file is stored.
-TIMELINE_CONTENT="CONTENT"
-
-# env: TIMELINE_FOLLOW The path relative to the account root, where
-#      FOLLOW dir is located.
-TIMELINE_FOLLOW="FOLLOW"
-
-# env: TIMELINE_PRINTED: Internal associative array which contains the EID
-#      of events alredy printed to avoid duplicates.
-declare -A TIMELINE_PRINTED=()
-
-# env: TIMELINE_INDEX: Internal array used to print an index in timeline to
-#      easy refer to an event
-declare -a TIMELINE_INDEX=()
-
-# fun: timeline_load 
-# txt: load the timeline from current active account into memory
-timeline_load ()
-{
-  local oid content_path follow_path show_own
-
-  oid="$(account_active_oid)"
-  content_path="$(account_active_path)/$TIMELINE_CONTENT"
-  follow_path="$(account_active_path)/$TIMELINE_FOLLOW"
-  show_own="${CONFIG["timeline.own-posts"]}"
-  pattern=("⣾" "⣽" "⣻" "⢿" "⡿" "⣟" "⣯" "⣷")
-
-  if ! [[ -r "$content_path" ]] || ! [[ -r "$follow_path" ]]; then
-    error $"Content or follow paths does not exists."
-    error $"Maybe you delete your account data?"
-    E=1 error $"Try $0 account rebuild $(account_active_name) to recreate it automatically"
-  fi
-
-  # Load our account timeline
-  [[ "$show_own" = "false" ]] ||
-    event_load "$oid" "${content_path}"
-
-  local dir i=0
-  for dir in "${follow_path}"/*; do
-    [[ -d "$dir" ]] || continue  # ignore non-dir files
-    [[ -r "$dir/$TIMELINE_CONTENT" ]] || continue # ignore non initialized
-
-    dir="${dir%/}"
-    echo -en "\r${pattern[$((i % ${#pattern[@]}))]}\r"
-    event_load "${dir##*/}" "${dir}/$TIMELINE_CONTENT"
-  done
-}
-
-# fun: timeline_filter <eid>
-# txt: return true if the item should be filtered and false if not.
-timeline_filter ()
-{
-  local eid="$1"
-  local ret=1
-
-  filter_eval hide "$eid" &&
-    timeline_hide_thread "$eid" && ret=0
-
-  filter_eval show "$eid" &&
-    timeline_show_thread "$eid" && ret=1
-
-  return "$ret"
-}
-
-
-# fun: timeline_hide_thread <eid>
-# txt: hide the thread of the specific EID
-timeline_hide_thread ()
-{
-  TIMELINE_PRINTED["$1"]=1
-  for event in $(event_labels "$1"); do
-    timeline_hide_thread "$event"
-  done
-  for event in $(event_replies "$1"); do
-    timeline_hide_thread "$event"
-  done
-  return 0
-}
-
-# fun: timeline_show_thread <eid>
-# txt: show the thread of the specific EID
-timeline_show_thread ()
-{
-  unset TIMELINE_PRINTED["$1"]
-  for event in $(event_labels "$1"); do
-    timeline_show_thread "$event"
-  done
-  for event in $(event_replies "$1"); do
-    timeline_show_thread "$event"
-  done
-  return 0
-}
-
-# fun: timeline_list_thread <eid>
-# txt: print thread for specific eid passed as argument
-timeline_list_thread ()
-{
-  local prefix indent date kind mesg tags link name eid="$1"
-  local flag show_tags show_replies flags=''
-
-  # item is already printed? then do nothing
-  [[ "${TIMELINE_PRINTED["$eid"]}" ]] && return
-
-  date="${EVENTS_DATE["$eid"]}"
-  kind="${EVENTS_KIND["$eid"]}"
-  name="$(username "$eid")"
-  sign="${EVENTS_SIGN["$eid"]}"
-
-  case "$kind" in
-    post)
-      mesg="${EVENTS_MESG["$eid"]}"
-      timeline_filter "$eid" && return
-      ;;
-    tag)
-      tags="${EVENTS_TAGS["$eid"]// /, }"
-      link="${EVENTS_LINK["$eid"]}"
-      ;;
-    reply)
-      mesg="${EVENTS_MESG["$eid"]}"
-      link="${EVENTS_LINK["$eid"]}"
-      ;;
-  esac
-
-  indent="${CONFIG["timeline.$kind.indent"]}"
-  prefix="${CONFIG["timeline.$kind.prefix"]}"
-
-  case "${sign}" in
-    G) flags+="${CONFIG["timeline.$kind.flag-signed-good"]}";;
-    B) flags+="${CONFIG["timeline.$kind.flag-signed-bad"]}";;
-    U) flags+="${CONFIG["timeline.$kind.flag-signed-unknown"]}";;
-    X|Y) flags+="${CONFIG["timeline.$kind.flag-signed-expired"]}";;
-    R) flags+="${CONFIG["timeline.$kind.flag-signed-revoked"]}";;
-    E) flags+="${CONFIG["timeline.$kind.flag-signed-missing"]}";;
-    *) flags+="${CONFIG["timeline.$kind.flag-signed-none"]}";;
-  esac
-
-  # composing the output
-  format_compose "timeline.$kind" index "${#TIMELINE_INDEX[@]}"
-  format_compose "timeline.$kind" name "$name"
-  format_compose "timeline.$kind" date "$date"
-  format_compose "timeline.$kind" tags "${2}${indent}${prefix}${tags}"
-  format_compose "timeline.$kind" link "$link"
-  format_compose "timeline.$kind" score "${EVENTS_SCORE["$eid"]}"
-  format_compose "timeline.$kind" mesg "${2}${indent}${prefix}${mesg}"
-
-  TIMELINE_PRINTED["$eid"]=1
-  TIMELINE_INDEX+=( "$eid" )
-
-  show_tags="${CONFIG["timeline.show-tags"]}"
-  show_replies="${CONFIG["timeline.show-replies"]}"
-
-  if [[ "$show_tags" != "true" ]]; then
-    if [[ "$(event_labels "$eid")" ]]; then
-      flags+="${CONFIG["timeline.$kind.flag-tagged"]}"
-    else
-      flags+=" "
-    fi
-  fi
-
-  if [[ "$show_replies" != "true" ]]; then
-    if [[ "$(event_replies "$eid")" ]]; then
-      flags+="${CONFIG["timeline.$kind.flag-replied"]}"
-    else
-      flags+=" "
-    fi
-  fi
-
-  format_compose "timeline.$kind" flags "${flags}"
-  format_dumps "timeline.$kind"
-
-  if [[ "$show_tags" = "true" ]]; then
-    for tags in $(event_labels "$eid"); do
-      timeline_list_thread "$tags" "$2${indent}"
-    done
-  fi
-
-  if [[ "$show_replies" = "true" ]]; then
-    for reply in $(event_replies "$eid"); do
-      timeline_list_thread "$reply" "$2${indent}"
-    done
-  fi
-}
-
-# fun: timeline_list [filter]
-# txt: print the entire timelist
-timeline_list ()
-{
-  TIMELINE_PRINTED=()
-  TIMELINE_INDEX=()
-
-  local -a filter_show
-  local -a filter_hide
-
-  read -ra filter_show < <( config_get_empty timeline.filter.show )
-  read -ra filter_hide < <( config_get_empty timeline.filter.hide )
-
-  [[ "${#filter_show[@]}" -gt 0 ]] &&
-    filter_add show "${filter_show[@]}"
-
-  [[ "${#filter_hide[@]}" -gt 0 ]] &&
-    filter_add hide "${filter_hide[@]}"
-
-  if [[ "$1" ]]; then
-    filter_add hide "tag:*"
-    filter_add show "$@"
-  fi
-
-  for eid in "${EVENTS_SORTED[@]}"; do
-    if [[ "${EVENTS_KIND["$eid"]}" = "post" ]]; then
-      timeline_list_thread "$eid" ''
-    fi
-  done
-
-  timeline_index_save
-}
-
-# fun: timeline_index_save
-# txt: dumps TIMELINE_INDEX to a sourceable file to be loaded before any
-#      input to identify an event easily.
-timeline_index_save ()
-{
-  {
-    echo "declare -ag TIMELINE_INDEX=("
-    for var in "${TIMELINE_INDEX[@]}"; do
-      echo "'$var'"
-    done
-    echo ")"
-  } > "${CACHE_DIR}/.timeline-index"
-}
-
-# fun: timeline_index_load
-# txt: source index saved file with timeline_index_save
-timeline_index_load ()
-{
-  # shellcheck source=/dev/null
-  [[ -r "${CACHE_DIR}/.timeline-index" ]] &&
-    source "${CACHE_DIR}/.timeline-index" 
-}
-
-# fun: timeline_index_get <num>
-# txt: return the EID of the event indexed by number passed as argument
-timeline_index_get ()
-{
-  if [[ "$1" -ge ${#TIMELINE_INDEX[@]} ]]; then
-    E=1 error $"Index out of bounds: %s in %s" "$1" "TIMELINE_INDEX"
-  else
-    echo "${TIMELINE_INDEX[$1]}"
-  fi
-}
-
-# fun: timeline_edit
-# txt: interactively edit your timeline
-timeline_edit ()
-{
-  local content auto_push
-  content="$(account_active_path)/CONTENT"
-
-  if [[ -w "$content" ]]; then
-
-    auto_push="${CONFIG["account.$(account_active_name).auto-push"]}"
-
-    if ! [[ "$auto_push" ]]; then
-      auto_push="$(config_get account.auto-push)"
-    fi
-
-    ${EDITOR:-nano} "$content"
-
-    account_commit | info_multi
-
-    if [[ "$auto_push" = "true" ]]; then
-      account_push | info_multi
-    fi
-
-  else
-    fatal $"Unable to edit CONTENT file"
-  fi
-}
-
-# fun: timeline_orphans
-# txt: show orphan events in the timeline
-timeline_orphans ()
-{
-  for eid in ${EVENTS_CROSS_REPLY[@]}; do
-    timeline_list_thread "$eid"
-  done
-  for eid in ${EVENTS_CROSS_TAGS[@]}; do
-    timeline_list_thread "$eid"
-  done
-  for eid in ${EVENTS_CROSS_SCORE[@]}; do
-    timeline_list_thread "$eid"
-  done
-  timeline_index_save
 }
 main "$@"
