@@ -21,6 +21,7 @@ declare -xA CONFIG=(
   [prompt.color-name]='7,'
   [history.enabled]=true
   [history.file]="$HOME/.local/share/tl/history"
+  [timeline.show-untrusted-items]=false
   [timeline.show-replies]=true
   [timeline.show-tags]=false
   [timeline.react-on-all]=true

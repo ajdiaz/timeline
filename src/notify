@@ -4,7 +4,8 @@
 # txt: send notification for specified eid if match the notification filter.
 notify ()
 {
-  local user uid="${1%%:*}" date="${1##*:}" last_date=0
+  local user uid="${1%%:*}" date="${1#*:}"
+  local date="${date%%:*}" last_date=0
   local fexpr ncommand
 
   ncommand="$(config_get_empty notify.command)"

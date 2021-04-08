@@ -1061,8 +1061,6 @@ command_event_post ()
 # help:event:txt: argument.
 command_event_reply ()
 {
-  local eid
-
   if [[ $# -eq 0 ]]; then
     E=2 error $"Event reply requires almost two parameters: num/eid, message"
     return 1
@@ -1091,7 +1089,6 @@ command_event_reply ()
   if [[ $# -eq 0 ]]; then
     E=2 error $"Event reply required an argument: message"
   else
-
     command_account_refresh
     event_create "$(timestamp)" R "$eid" "$*" 2>&1 | info_multi
   fi

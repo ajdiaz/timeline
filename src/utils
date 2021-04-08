@@ -80,6 +80,14 @@ valid_url ()
   return 1
 }
 
+# fun: has_hmac <eid>
+# txt: return true if the eid has an hmac
+has_hmac ()
+{
+  local hmac; hmac="${1#*:}"
+  [[ "${hmac}" != "${hmac#*:}" ]]
+}
+
 # fun: username <eid|account_id>
 # txt: return username from a event_id or account_id using alias defined in
 #      configuration and short form if 'timeline.use-short-ids' is true.
@@ -87,7 +95,7 @@ username ()
 {
   local uname="$1"
   
-  uname="${uname%:*}" # remove timestamp if present
+  uname="${uname%%:*}" # remove timestamp if present
   uname="${uname#@}"  # remove trail @ if present
 
   alias_name="${CONFIG["user.alias-$uname"]}"

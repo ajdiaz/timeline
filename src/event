@@ -49,8 +49,6 @@ event_load ()
     git -C "${fname%/*}" log -s --pretty=format:"%H %G? %s" \
       --no-color "$fname"
   )
-
-  ## shellcheck disable=SC2034
 }
 
 # fun: event_load_line <account_id> <commit> <flags> <content>
@@ -61,37 +59,47 @@ event_load ()
 #      The POST kind has the fields: timestamp,kind,message
 #      The REPLY kind has the fields: timestamp,kind,ref,message
 #      The TAG kind has the fields: timestamp,kind,ref,tags
+#      The SCORE kind has the fields: timestamp,kind,ref,score
 event_load_line ()
 {
   local aid="$1" fname="$2" commit="$3" flags="$4" line="${5%$'\n'}"
   local datet="${line%% *}"
   local kind="${line#$datet }"; kind="${kind%% *}"
   local rest="${line#$datet $kind }"
-  local link mesg tags score
+  local link mesg tags score hmac='' eid show_trusted
+
+  show_untrusted="${CONFIG["timeline.show-untrusted-items"]}"
 
   case "$kind" in
     P|POST)
       mesg="$rest"
       kind='post'
+      hmac="$(oid "$mesg")"
       ;;
     R|REPLY)
       link="${rest%% *}"
       mesg="${rest#$link }"
+      [[ "$show_untrusted" == "true" ]] && has_hmac "$link" && link="${link%:*}"
       kind='reply'
+      hmac="$(oid "$mesg")"
       ;;
     T|TAG)
       link="${rest%% *}"
       tags="${rest#$link }"
+      [[ "$show_untrusted" == "true" ]] && has_hmac "$link" && link="${link%:*}"
       kind='tag'
+      hmac="$(oid "$link $tags")"
       ;;
     S|SCORE)
       kind='score'
       link="${rest%% *}"
       score="${rest#$link }"
+      [[ "$show_untrusted" == "true" ]] && has_hmac "$link" && link="${link%:*}"
       case "$score" in
         -1) score="-1";;
         *) score="1";;
       esac
+      hmac="$(oid "$link $score")"
       ;;
     *)
       error $"Ignored malformed event: '$line'"
@@ -99,23 +107,27 @@ event_load_line ()
       ;;
   esac
 
-  EVENTS_KIND["$aid:$datet"]="$kind"
-  EVENTS_DATE["$aid:$datet"]="$datet"
-  EVENTS_LINK["$aid:$datet"]="$link"
-  EVENTS_TAGS["$aid:$datet"]="$tags"
-  EVENTS_MESG["$aid:$datet"]="$mesg"
-  EVENTS_SIGN["$aid:$datet"]="$flags"
-  EVENTS_COMMIT["$aid:$datet"]="$fname $commit"
+  [[ "$show_untrusted" != "true" ]] &&
+    eid="$aid:$datet:$hmac" ||
+    eid="$aid:$datet"
+
+  EVENTS_KIND["$eid"]="$kind"
+  EVENTS_DATE["$eid"]="$datet"
+  EVENTS_LINK["$eid"]="$link"
+  EVENTS_TAGS["$eid"]="$tags"
+  EVENTS_MESG["$eid"]="$mesg"
+  EVENTS_SIGN["$eid"]="$flags"
+  EVENTS_COMMIT["$eid"]="$fname $commit"
 
   # XXX some array abused. Because arrays allows any index number, and are
   # sorted by definition, we do not need to sort anything. To avoid
   # collision between accounts, add a RANDOM prefix.
-  EVENTS_SORTED["$datet$(printf %03d "$((RANDOM % 100))")"]="$aid:$datet"
+  EVENTS_SORTED["$datet$(printf %03d "$((RANDOM % 100))")"]="$eid"
 
   if [[ "$kind" = 'reply' ]]; then
-    EVENTS_CROSS_REPLY[$link]+=" $aid:$datet "
+    EVENTS_CROSS_REPLY[$link]+=" $eid "
   elif [[ "$kind" = 'tag' ]]; then
-    EVENTS_CROSS_TAGS[$link]+=" $aid:$datet "
+    EVENTS_CROSS_TAGS[$link]+=" $eid "
   elif [[ "$kind" = 'score' ]]; then
     if ! [[ "${EVENTS_CROSS_SCORE[$aid:$link]}" ]]; then
       EVENTS_CROSS_SCORE["$aid:$link"]=1
@@ -123,7 +135,7 @@ event_load_line ()
     fi
   fi
 
-  notify "$aid:$datet"
+  notify "$eid"
 }
 
 # fun: event_sign <eid>
@@ -138,9 +150,11 @@ event_sign ()
 event_replies ()
 {
   local -a sorted_replies=()
+  local idx
 
   for reply in ${EVENTS_CROSS_REPLY["$1"]}; do
-    sorted_replies[${reply#*:}]="$reply"
+    idx="${reply#*:}"; idx="${idx%%:*}$(printf %03d "$((RANDOM % 100))")"
+    sorted_replies[$idx]="$reply"
   done
 
   echo "${sorted_replies[@]}"
@@ -151,9 +165,11 @@ event_replies ()
 event_labels ()
 {
   local -a sorted_labels=()
+  local idx
 
   for label in ${EVENTS_CROSS_TAGS["$1"]}; do
-    sorted_labels[${label#*:}]="$label"
+    idx="${label#*:}"; idx="${idx%%:*}$(printf %03d "$((RANDOM % 100))")"
+    sorted_labels[$idx]="$label"
   done
 
   echo "${sorted_labels[@]}"
@@ -275,7 +291,7 @@ event_info ()
   link="${EVENTS_LINK["$eid"]}"
   
   printf $"%-10s %s\n" "EID:"   "$eid"
-  printf $"%-10s %s (%s)\n" "UID:"   "${eid%:*}" "$(username "$eid")"
+  printf $"%-10s %s (%s)\n" "UID:"   "${eid%%:*}" "$(username "$eid")"
   # shellcheck disable=SC2183
   printf $"%-10s %s (%(%Y-%m-%d %H:%M:%S)T)\n" "Date:"  "$date" "$date"
   printf $"%-10s %s\n" "Kind:"   "${kind^^}"
