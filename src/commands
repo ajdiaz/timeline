@@ -949,6 +949,17 @@ command_timeline_edit ()
   timeline_edit
 }
 
+# help:timeline:fun: timeline orphans
+# help:timeline:txt: show the events in the timeline which are marked as
+# help:timeline:txt: orphans, usually these are events that hmac does not
+# help:timeline:txt: match.
+command_timeline_orphans ()
+{
+  command_account_active "$(account_active_name)"
+  timeline_load
+  timeline_orphans
+}
+
 # help:fun: config {list|get|set|save|edit} {args...}
 # help:txt: Change configuration settings
 command_config ()

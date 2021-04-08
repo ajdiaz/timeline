@@ -278,3 +278,19 @@ timeline_edit ()
     fatal $"Unable to edit CONTENT file"
   fi
 }
+
+# fun: timeline_orphans
+# txt: show orphan events in the timeline
+timeline_orphans ()
+{
+  for eid in ${EVENTS_CROSS_REPLY[@]}; do
+    timeline_list_thread "$eid"
+  done
+  for eid in ${EVENTS_CROSS_TAGS[@]}; do
+    timeline_list_thread "$eid"
+  done
+  for eid in ${EVENTS_CROSS_SCORE[@]}; do
+    timeline_list_thread "$eid"
+  done
+  timeline_index_save
+}
