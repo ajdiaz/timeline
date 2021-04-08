@@ -21,7 +21,7 @@ reqs_eval ()
     mute type -P "$req" ||
       case "$kind" in
         "+") E=1 fatal $"Binary '%s' is a mandatory dependency" "$req";;
-        "?") E=1 error $"Binary '%s' is recommended, but not found" "$req";;
+        "?") error $"Binary '%s' is recommended, but not found" "$req";;
         *) E=1 fatal $"Unknown depedency kind '%s'" "$kind";;
       esac
   done
