@@ -28,6 +28,12 @@ timeline_load ()
   show_own="${CONFIG["timeline.own-posts"]}"
   pattern=("⣾" "⣽" "⣻" "⢿" "⡿" "⣟" "⣯" "⣷")
 
+  if ! [[ -r "$content_path" ]] || ! [[ -r "$follow_path" ]]; then
+    error $"Content or follow paths does not exists."
+    error $"Maybe you delete your account data?"
+    E=1 error $"Try $0 account rebuild $(account_active_name) to recreate it automatically"
+  fi
+
   # Load our account timeline
   [[ "$show_own" = "false" ]] ||
     event_load "$oid" "${content_path}"

@@ -763,6 +763,33 @@ command_account_delete ()
   fi
 }
 
+# help:account:fun: account rebuild <name>
+# help:account:txt: Recreate an account previously created. This command will
+# help:account:txt: use config data to regenerate the account.
+command_account_rebuild ()
+{
+  local name="$1" keyid push_url pull_url path
+
+  if [[ -z "$1" ]]; then
+    E=1 error $"Account command rebuild requires 'name'."
+  else
+    keyid="${CONFIG["account.$name.keyid"]}"
+    push_url="${CONFIG["account.$name.push-url"]}"
+    pull_url="${CONFIG["account.$name.pull-url"]}"
+    path="${CONFIG["account.$name.path"]}"
+
+    if [[ -z "$path" ]] || [[ -z "$push_url" ]] || [[ -z "$pull_url" ]]; then
+      E=1 error $"Unable to rebuild. Account '$name' was not configured yet."
+    fi
+
+    account_clone --force "$name" "$push_url" "$pull_url" "$keyid" "$path" |
+        info_multi
+      config_load "${CONFIG_FILE}"
+      command_account_active "$name"
+    command_timeline_refresh
+  fi
+}
+
 # help:account:fun: account clone [--keyid <keyid>] <name> <push_url> <pull_url> [path]
 # help:account:txt: Clone an account (aka git repository) from specified
 # help:account:txt: push_url passed as argument, and also configure the
