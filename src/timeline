@@ -26,17 +26,19 @@ timeline_load ()
   content_path="$(account_active_path)/$TIMELINE_CONTENT"
   follow_path="$(account_active_path)/$TIMELINE_FOLLOW"
   show_own="${CONFIG["timeline.own-posts"]}"
+  pattern=("⣾" "⣽" "⣻" "⢿" "⡿" "⣟" "⣯" "⣷")
 
   # Load our account timeline
   [[ "$show_own" = "false" ]] ||
     event_load "$oid" "${content_path}"
 
-  local dir
+  local dir i=0
   for dir in "${follow_path}"/*; do
     [[ -d "$dir" ]] || continue  # ignore non-dir files
     [[ -r "$dir/$TIMELINE_CONTENT" ]] || continue # ignore non initialized
 
     dir="${dir%/}"
+    echo -en "\r${pattern[$((i % ${#pattern[@]}))]}\r"
     event_load "${dir##*/}" "${dir}/$TIMELINE_CONTENT"
   done
 }
