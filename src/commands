@@ -687,7 +687,7 @@ EOF
 
 
 
-# help:fun: account {create|delete|clone|list|refresh|active} {args...}
+# help:fun: account {create|delete|clone|list|refresh|active|preview} {args...}
 # help:txt: Manage timeline local and remote accounts.
 command_account ()
 {

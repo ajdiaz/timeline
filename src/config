@@ -190,6 +190,7 @@ declare -xA CONFIG=(
   [alias.nr]='network refresh'
   [alias.dir]='directory'
   [alias.ds]='directory search'
+  [alias.pre]='account preview'
 )
 
 export NO_COLORS=0
