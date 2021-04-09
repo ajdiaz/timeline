@@ -41,7 +41,9 @@ event_load ()
     flags="${2#$commit }"; flags="${flags%% *}"
 
     event_load_line "$account" "${fname%/*}" "$commit" \
-      "$flags" "${content[((i++))]}"
+      "$flags" "${content[i]}" "$i"
+
+    ((i++))
   }
 
   # shellcheck disable=SC2034
@@ -63,10 +65,12 @@ event_load ()
 event_load_line ()
 {
   local aid="$1" fname="$2" commit="$3" flags="$4" line="${5%$'\n'}"
-  local datet="${line%% *}"
+  local datet="${line%% *}" idx
   local kind="${line#$datet }"; kind="${kind%% *}"
   local rest="${line#$datet $kind }"
-  local link mesg tags score hmac='' eid show_trusted
+  local link mesg tags score hmac='' eid show_untrusted
+
+  idx="$(( ${datet}000 + $6 ))"
 
   show_untrusted="${CONFIG["timeline.show-untrusted-items"]}"
 
@@ -120,9 +124,8 @@ event_load_line ()
   EVENTS_COMMIT["$eid"]="$fname $commit"
 
   # XXX some array abused. Because arrays allows any index number, and are
-  # sorted by definition, we do not need to sort anything. To avoid
-  # collision between accounts, add a RANDOM prefix.
-  EVENTS_SORTED["$datet$(printf %03d "$((RANDOM % 100))")"]="$eid"
+  # sorted by definition, we do not need to sort anything.
+  EVENTS_SORTED["$idx"]="$eid"
 
   if [[ "$kind" = 'reply' ]]; then
     EVENTS_CROSS_REPLY[$link]+=" $eid "
