@@ -68,7 +68,7 @@ main_standalone ()
   if fun "command_$cmd"; then
     "command_$cmd" "$@"
   else
-    read -ra alias < <( config_get_empty "alias.$cmd" )
+    read -ra alias <<< "${CONFIG["alias.$cmd"]}"
 
     if [[ "${alias[*]}" ]]; then
       main_standalone "${alias[@]}" "$@"
@@ -114,7 +114,7 @@ main ()
   timeline_index_load
 
   if [ $# -eq 0 ]; then
-    if [[ "$(config_get_empty interactive.show-banner)" = "true" ]]; then
+    if [[ "${CONFIG[interactive.show-banner]}" = "true" ]]; then
       info "timeline  Copyright (C) %(%Y)T Andrés J. Díaz" "$(timestamp)"
       info "This program comes with ABSOLUTELY NO WARRANTY; for details"
       info "type 'license'. This is free software, and you are welcome to"

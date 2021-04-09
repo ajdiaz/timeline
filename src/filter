@@ -27,7 +27,7 @@ filter_tag ()
 filter_view ()
 {
   local fpattern="$1" eid="$2"
-  read -ra view < <( config_get_empty "views.$fpattern" )
+  read -ra view <<< "${CONFIG["views.$fpattern"]}"
 
   if [[ "${#view[@]}" -ne 0 ]]; then
     filter_eval_expr "$eid" "${view[@]}"
@@ -88,7 +88,7 @@ filter_mention ()
 
   reat=( "@$uid" "@${uid:0:8}" "$(username "$uid")" )
 
-  if [[ "$(config_get_empty timeline.react-on-all)" = "true" ]]; then
+  if [[ "${CONFIG[timeline.react-on-all]}" = "true" ]]; then
     reat+=( "@all" "@here" )
   fi
 
@@ -152,7 +152,7 @@ filter_eval_expr ()
         filter_mention "$eid" && return 0
         ;;
       *)
-        E=3 error $"This kind of filtering is not implemented yet"
+        E=3 error $"This kind of filtering ($xpr) is not implemented yet"
         ;;
     esac
   done

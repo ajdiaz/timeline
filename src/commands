@@ -999,7 +999,7 @@ command_config_get ()
     E=1 error $"Config get requires an arguments: key"
   else
     local var
-    var="$(config_get_empty "$*")"
+    var="${CONFIG["$*"]}"
     if [[ "$var" ]]; then
       info "%s=%s" "$*" "$var"
     else

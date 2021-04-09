@@ -169,7 +169,7 @@ declare -xA CONFIG=(
   [daemon.log.file]="${HOME}/.local/share/tl/daemon.log"
   [daemon.log.level]=info
   [notify.command]="notify-send"
-  [notify.format]='Knock knock from %s'
+  [notify.format]='Knock knock from %s:\n%s'
   [notify.filter]="mention"
   [notify.cache-file]="${HOME}/.cache/tl/notify.cache"
   [directory.default]="https://tldir.ajdiaz.me/index.txt"
@@ -318,14 +318,6 @@ config_get ()
     E=1 error $"Unknown configuration variable '%s'" "$1"
 
   echo "$val"
-}
-
-# fun: config_get_empty <key>
-# txt: similar to `config_get`, but if key is not defined an empty value is
-#      returned instead of failing.
-config_get_empty ()
-{
-  echo "${CONFIG["$1"]}"
 }
 
 # fun: config_set <key> <val>

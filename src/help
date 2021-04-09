@@ -36,7 +36,7 @@ Type help <command> for more information about the command
 help_commands ()
 {
   local hide_help_banner
-  hide_help_banner="$(config_get_empty general.hide-help-banner)"
+  hide_help_banner="${CONFIG[general.hide-help-banner]}"
 
   [[ "$hide_help_banner" = "true" ]] || echo "$help_prefix"
 

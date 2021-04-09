@@ -237,9 +237,7 @@ event_create ()
   local path auto_push content_markdown
   local -a content
 
-  auto_push="$(
-    config_get_empty "account.$(account_active_name).auto-push"
-  )"
+  auto_push="${CONFIG["account.$(account_active_name).auto-push"]}"
 
   if ! [[ "$auto_push" ]]; then
     auto_push="$(config_get account.auto-push)"
@@ -253,12 +251,10 @@ event_create ()
     echo "$line" >> "${path}/$TIMELINE_CONTENT"
   done
 
-  content_markdown="$(
-    config_get_empty "account.$(account_active_name).content-markdown"
-  )"
+  content_markdown="${CONFIG["account.$(account_active_name).content-markdown"]}"
 
   if ! [[ "$content_markdown" ]]; then
-    content_markdown="$(config_get_empty "account.content-markdown")"
+    content_markdown="${CONFIG[account.content-markdown]}"
   fi
 
   if [[ "$content_markdown" = "true" ]]; then

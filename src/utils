@@ -121,14 +121,7 @@ is_decimal () {
 # txt: get the keyid configured for account name passed as argument
 keyid ()
 {
-  local keyid
-
-  keyid="$(config_get_empty "account.$1.keyid")"
-  
-  [[ "$keyid" ]] ||
-    keyid="$(config_get_empty "account.keyid")"
-
-  echo "$keyid"
+  echo "${CONFIG[account.$1.keyid]:-${CONFIG[account.keyid]}}"
 }
 
 # fun: any <list> <list>

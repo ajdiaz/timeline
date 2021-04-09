@@ -19,19 +19,19 @@ PIDFILE=
 daemon_reload_config ()
 {
   PIDFILE="$(config_get daemon.pidfile)"
-  DAEMON_LOG_FILE="$(config_get_empty daemon.log.file)"
+  DAEMON_LOG_FILE="${CONFIG[daemon.log.file]}"
   case "$DAEMON_LOG_FILE" in
     none) NOLOG=true;;
     stdout|STDOUT|stderr|STDERR) DAEMON_LOG_FILE="";;
     *) DAEMON_LOG_FILE=">> ${DAEMON_LOG_FILE}";;
   esac
-  DAEMON_LOG_LEVEL="$(config_get_empty daemon.log.level)"
+  DAEMON_LOG_LEVEL="${CONFIG[daemon.log.level]}"
   case "${DAEMON_LOG_LEVEL}" in
     error) DAEMON_LOG_FILE+=" 2>&1 >/dev/null";;
     info) DAEMON_LOG_FILE+=" 2>&1";;
   esac
-  DAEMON_INTERVAL="$(config_get_empty daemon.interval)"
-  DAEMON_COMMANDS="$(config_get_empty daemon.commands)"
+  DAEMON_INTERVAL="${CONFIG[daemon.interval]}"
+  DAEMON_COMMANDS="${CONFIG[daemon.commands]}"
 }
 
 # fun: daemon_run <pidfile>

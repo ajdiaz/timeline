@@ -1,109 +1,5 @@
 #! /bin/bash -i
-TIMELINE_VERSION='1.7-5-g49352a9'
-## vim:ft=sh
-
-# env: DAEMON_LOG_FILE: Internal variable where file redirections are saved.
-DAEMON_LOG_FILE=
-# env: DAEMON_LOG_LEVEL: Internal variable to store daemon log level.
-DAEMON_LOG_LEVEL=
-# env: DAEMON_INTERVAL: Internal variable to store daemon interval time.
-DAEMON_INTERVAL=
-# env: DAEMON_COMMANDS: Internal variable to store commands to run in bg.
-DAEMON_COMMANDS=
-
-# env: NOLOG: if true do not log anything
-NOLOG=false
-# env: PIDFILE: Internal variable where pidfile path is saved.
-PIDFILE=
-
-# fun: daemon_reload_config
-# txt: reload daemon config from config file
-daemon_reload_config ()
-{
-  PIDFILE="$(config_get daemon.pidfile)"
-  DAEMON_LOG_FILE="$(config_get_empty daemon.log.file)"
-  case "$DAEMON_LOG_FILE" in
-    none) NOLOG=true;;
-    stdout|STDOUT|stderr|STDERR) DAEMON_LOG_FILE="";;
-    *) DAEMON_LOG_FILE=">> ${DAEMON_LOG_FILE}";;
-  esac
-  DAEMON_LOG_LEVEL="$(config_get_empty daemon.log.level)"
-  case "${DAEMON_LOG_LEVEL}" in
-    error) DAEMON_LOG_FILE+=" 2>&1 >/dev/null";;
-    info) DAEMON_LOG_FILE+=" 2>&1";;
-  esac
-  DAEMON_INTERVAL="$(config_get_empty daemon.interval)"
-  DAEMON_COMMANDS="$(config_get_empty daemon.commands)"
-}
-
-# fun: daemon_run <pidfile>
-# txt: Run the commands configured for the daemon every interval.
-daemon_run ()
-{
-  daemon_reload_config
-
-  PIDFILE="$1"
-
-  trap daemon_reload_config HUP
-  trap daemon_remove_pid TERM
-
-  # while sleep ...
-  while sleep "${DAEMON_INTERVAL:-300}"
-  do
-    if ! ${NOLOG:-false}; then
-      eval "main_standalone ${DAEMON_COMMANDS} ${DAEMON_LOG_FILE}"
-    fi
-  done
-}
-
-# fun: daemon_start
-# txt: Start daemon in background.
-daemon_start ()
-{
-  local pid
-  daemon_reload_config
-
-  [ -r "${PIDFILE}" ] && pid="$(<"${PIDFILE}")"
-
-  if [[ "$pid" ]]; then
-    fatal $"There are another daemon running. Force quit with daemon kill"
-  else
-    daemon_run "${PIDFILE}" &
-    echo "$!" > "${PIDFILE}"
-    disown
-    info $"Starting daemon at pid %d" "$!"
-  fi
-}
-
-# fun: daemon_stop <signal>
-# txt: Stop daemon running in background with signal passed as argument.
-daemon_stop ()
-{
-  local pid
-  daemon_reload_config
-
-  [ -r "${PIDFILE}" ] && pid="$(<"${PIDFILE}")"
-
-  if [[ "$pid" ]]; then
-    pkill "-$1" -P "$pid" && rm "${PIDFILE}"
-  fi
-}
-
-# fun: daemon_list
-# txt: print if the daemon is currently running.
-daemon_list ()
-{
-  local pid
-  daemon_reload_config
-
-  [ -r "${PIDFILE}" ] && pid="$(<"${PIDFILE}")"
-
-  if [[ "$pid" ]]; then
-    info $"Daemon running at pid: %d" "$pid"
-  else
-    info $"There is no daemon running"
-  fi
-}
+TIMELINE_VERSION='1.7-6-g06a1a1b'
 ## vim:ft=sh
 
 # fun: [E=code] fatal <message>
@@ -135,44 +31,6 @@ error ()
   if [ "$E" ]; then
     exit "$E"
   fi
-}
-## vim:ft=sh
-
-# fun: history_load
-# txt: if is defined prompt_history and prompt_history_file configuration
-#      file, load from there the history of the commands.
-history_load ()
-{
-  hist_enabled="$(config_get history.enabled)"
-  hist_file="$(config_get_empty history.file)"
-
-  history -c
-
-  if [ "${hist_enabled}" = "true" ] &&
-     [ "${hist_file}" ] && 
-     [ -r "${hist_file}" ]; then
-    history -r "${hist_file}"
-  fi
-}
-
-# fun: history_save
-# txt: if defined history_file configuration file, save history to that
-#      file.
-history_save ()
-{
-  hist_enabled="$(config_get history.enabled)"
-  hist_file="$(config_get_empty history.file)"
-
-  [ "${hist_enabled}" = "true" ] && [ "${hist_file}" ] &&
-    history -w "${hist_file}"
-}
-
-# fun: history_append <command>
-# txt: append command into history line if history is enabled
-history_append ()
-{
-  hist_enabled="$(config_get history.enabled)"
-  [ "${hist_enabled}" = "true" ] && history -s "$1"
 }
 ## vim:ft=sh
 
@@ -468,166 +326,6 @@ complete_load ()
 }
 ## vim:ft=sh
 
-FILTER_HIDE=()
-FILTER_SHOW=()
-
-# fun: filter <tags_to_filter> <eid>
-# txt: return true if EID need to be filtered
-filter_tag ()
-{
-  local fpattern="$1" eid="$2"
-  local event tag
-
-  [[ "$fpattern" = "*" ]] && return 0
-
-  for event in $(event_labels "$eid"); do
-    for tag in $(event_tags "$event"); do
-      if any "$fpattern" "$tag"; then
-        return 0
-      fi
-    done
-  done
-  return 1
-}
-
-# fun: filter <view> <eid>
-# txt: return true if EID need to be filtered
-filter_view ()
-{
-  local fpattern="$1" eid="$2"
-  read -ra view < <( config_get_empty "views.$fpattern" )
-
-  if [[ "${#view[@]}" -ne 0 ]]; then
-    filter_eval_expr "$eid" "${view[@]}"
-  else
-    E=1 fatal $"No view named: %s" "$fpattern"
-  fi
-}
-
-# fun: filter {score-min|score-max} <value> <eid>
-# txt: return true if EID need to be filtered according to score values
-#      passsed as argument.
-filter_score ()
-{
-  local kind="$1" value="$2" eid="$3"
-  local score
-
-  score="$(event_score "$eid")"
-
-  case "$kind" in
-    score-min)
-      [[ "${score:-0}" -lt "${value}" ]] && return 0
-    ;;
-    score-max)
-      [[ "${score:-0}" -gt "${value}" ]] && return 0
-    ;;
-    *)
-      E=1 fatal $"Invalid score filter: %s" "$kind"
-    ;;
-  esac
-
-  return 1
-}
-
-# fun: filter_text <pattern> <eid>
-# txt: return true if especified eid contains text which match with pattern
-#      passed as argument (glob pattern supported only).
-filter_text ()
-{
-  local fpattern="$1" eid="$2"
-
-  # shellcheck disable=SC2254
-  case "$(event_mesg "$eid")" in
-    $fpattern) return 0;;
-  esac
-  return 1
-}
-
-# fun: filter_mention <eid>
-# txt: return true if myself is mentioned in eid
-filter_mention ()
-{
-  local eid="$1" uid pattern
-  uid="$(account_active_oid)"
-  local -a reat=()
-
-  # no acctive account
-  [[ "$uid" ]] || return 1
-
-  reat=( "@$uid" "@${uid:0:8}" "$(username "$uid")" )
-
-  if [[ "$(config_get_empty timeline.react-on-all)" = "true" ]]; then
-    reat+=( "@all" "@here" )
-  fi
-
-  for pattern in "${reat[@]}"; do
-    filter_text "*${pattern}*" "$eid" && return 0
-  done
-
-  return 1
-}
-
-# fun: filter_add {hide|show} <expr>
-# txt: Add an expression filter
-filter_add ()
-{
-  local mode="$1"; shift
-
-  case "$mode" in
-    hide) FILTER_HIDE+=( "$@" );;
-    show) FILTER_SHOW+=( "$@" );;
-  esac
-}
-
-# fun: filter_eval {hide|show} <eid>
-# txt: evaluate filtering of the eid for the specified mode. If this funcion
-#      return 0, means that the item is filtered, otherwise is not filtered.
-filter_eval ()
-{
-  local mode="$1" eid="$2"
-  local -a expr_array=()
-
-  case "$mode" in
-    hide) expr_array+=( "${FILTER_HIDE[@]}" );;
-    show) expr_array+=( "${FILTER_SHOW[@]}" );;
-  esac
-
-  filter_eval_expr "$eid" "${expr_array[@]}"
-}
-
-# fun: filter_eval_expr <eid> <expr>...
-# txt: eval an expression and return true if filtered or false if not
-filter_eval_expr ()
-{
-  local eid="$1" expr=; shift
-
-  for expr in "${@}"; do
-    case "$expr" in
-      '') ;;
-      tag:*)
-        filter_tag "${expr#tag:}" "$eid" && return 0
-        ;;
-      score-min:*|score-max:*)
-        filter_score "${expr%%:*}" "${expr#*:}" "$eid" && return 0
-        ;;
-      view:*)
-        filter_view "${expr#view:}" "$eid" && return 0
-        ;;
-      text:*)
-        filter_text "${expr#text:}" "$eid" && return 0
-        ;;
-      mention)
-        filter_mention "$eid" && return 0
-        ;;
-      *)
-        E=3 error $"This kind of filtering is not implemented yet"
-        ;;
-    esac
-  done
-  return 1
-}
-## vim:ft=sh
-
 if [[ "${COLORS}" ]]; then
   smso="$(tput smso)"
   rmso="$(tput rmso)"
@@ -707,79 +405,6 @@ format_dumps ()
 }
 ## vim:ft=sh
 
-
-help_prefix=$"
-
-
-████████╗██╗███╗   ███╗███████╗██╗     ██╗███╗   ██╗███████╗
-╚══██╔══╝██║████╗ ████║██╔════╝██║     ██║████╗  ██║██╔════╝
-   ██║   ██║██╔████╔██║█████╗  ██║     ██║██╔██╗ ██║█████╗
-   ██║   ██║██║╚██╔╝██║██╔══╝  ██║     ██║██║╚██╗██║██╔══╝
-   ██║   ██║██║ ╚═╝ ██║███████╗███████╗██║██║ ╚████║███████╗
-   ╚═╝   ╚═╝╚═╝     ╚═╝╚══════╝╚══════╝╚═╝╚═╝  ╚═══╝╚══════╝
-
-
-
-Timeline is a plain-text based distributed social network build on top of
-git configuration manager. Timeline is:
-
-
-- Distributed / Descentralized
-- Secure / Solid / Spam aware
-- GPL3 licensed
-- Fun!
-
-
------ Commands ----------------------------------------------------------------
-"
-
-help_suffix=$"
-
-Type help <command> for more information about the command
-
--------------------------------------------------------------------------------
-"
-
-help_commands ()
-{
-  local hide_help_banner
-  hide_help_banner="$(config_get_empty general.hide-help-banner)"
-
-  [[ "$hide_help_banner" = "true" ]] || echo "$help_prefix"
-
-  _i(){
-    case "$2" in
-      "# help:fun: "*) 
-        printf "\n    %s"  "${2#\# help:fun: }";;
-      "# help:txt: "*)
-        printf "        %s" "${2#\# help:txt: }";;
-    esac
-  }
-
-  # shellcheck disable=SC2034
-  mapfile -c 1 -C _i < "$0"
-
-  [[ "$hide_help_banner" = "true" ]] || echo "$help_suffix"
-}
-
-help_subcommand ()
-{
-  local cmd="$1"
-
-  _j() {
-    case "$2" in
-      "# help:$cmd:fun: "*) 
-        echo -n "${2#\# help:$cmd:fun: }";;
-      "# help:$cmd:txt: "*)
-        echo -n "    ${2#\# help:$cmd:txt: }";;
-    esac
-  }
-
-  # shellcheck disable=SC2034
-  mapfile -c 1 -C _j < "$0"
-}
-## vim:ft=sh
-
 # fun: info <message>
 # txt: print informational message on stdout
 info ()
@@ -826,41 +451,6 @@ markdown_generate ()
         } >> "${account_path}/CONTENT.md"
       fi
     done < "${account_path}/CONTENT"
-  fi
-}
-## vim:ft=sh
-
-# fun: notify <eid>
-# txt: send notification for specified eid if match the notification filter.
-notify ()
-{
-  local user uid="${1%%:*}" date="${1#*:}"
-  local date="${date%%:*}" last_date=0
-  local fexpr ncommand
-
-  ncommand="$(config_get_empty notify.command)"
-
-  [[ "$ncommand" ]] || return 0
-
-  last_date_file="$(config_get notify.cache-file)"
-  [[ -r "${last_date_file}" ]] && 
-    last_date="$(< "$last_date_file")"
-
-  # discard old events
-  [[ "$date" -le "${last_date}" ]] &&
-    return
-
-  # discard own events
-  user="$(account_active_oid)"
-  [[ "$uid" = "$user" ]] &&
-    return
-
-  fexpr="$(config_get_empty notify.filter)"
-
-  if [[ "$fexpr" ]] && filter_eval_expr "$1" "$fexpr"; then
-    # shellcheck disable=SC2059
-    "$ncommand" "$(printf "$(config_get notify.format)" "$(username "$uid")")"
-    echo "$date" > "${last_date_file}"
   fi
 }
 ## vim:ft=sh
@@ -1042,135 +632,771 @@ directory_search ()
     grep -v -e '^#' -e '^[ ]*$' "$dir" | grep -w "$1"
   done
 }
-#! /usr/bin/env bash
-# 
-# Copyright (C) 2016  Andrés J. Díaz <ajdiaz@ajdiaz.me>
-# 
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-# 
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-# 
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+## vim: ft=sh
 
-# env: INTERACTIVE: if true, then interactive mode is enabled
-export INTERACTIVE=
-
-# env: CONFIG_FILE: should contain the path to the config file
-export CONFIG_FILE=
-
-# env: CACHE_DIR: should contain the path to the cache directory
-export CACHE_DIR=
-
-# fun: prompt
-# txt: print prompt in interactive mode
-prompt ()
+# fun: fun <function_name>
+# txt: return true if function is defined
+fun ()
 {
-  local name
-  name="$(account_active_name)"
-
-  format_compose prompt account "${name:-<none>}"
-  format_dumps prompt
+  declare -f "$1" >/dev/null 2>&1
 }
 
-# fun: main_interactive
-# txt: evaluate commands in interactive mode
-main_interactive ()
+# fun: mute <command> [args]
+# txt: run command quietly
+mute ()
 {
-  local cmd
-  local -a args
+  "$@" >/dev/null 2>&1
+}
 
-  history_load
-  complete_load
-  command_account_active "$(account_active_name)"
+# fun: timestamp
+# txt: print current timestamp in UTC
+timestamp ()
+{
+  # shellcheck disable=SC2183
+  printf "%(%s)T"
+}
 
-  while true; do
-    read -a args -e -r -p "$(T=true prompt)"
-    [ $? -eq 1 ] && break
-    cmd="${args[0]}"
-    local -a args=( "${args[@]:1}" )
+# fun: split <str>
+# txt: split a comma separated list
+split ()
+{
+  echo "${1//,/ }"
+}
 
-    [ "$cmd" ] || continue
-    history_append "$cmd ${args[*]}"
-    main_standalone "$cmd" "${args[@]}"
+# fun: join <delim> <array_items>
+# txt: return a delim separated list of array_items
+join ()
+{
+  local delim="$1"; shift
+  for x in "$@"; do
+    printf "%s%s" "$x" "$delim"
   done
-  history_save
 }
 
-# fun: main_standalone <cmd> [args]...
-# txt: evaluate command passed as argument
-main_standalone ()
+# fun: oid <string>
+# txt: create a unique object id for the string passed as argument
+oid ()
 {
-  local cmd="$1"; shift
+  command git hash-object --stdin <<<"${1%.git}"
+}
 
-  if fun "command_$cmd"; then
-    "command_$cmd" "$@"
-  else
-    read -ra alias < <( config_get_empty "alias.$cmd" )
-
-    if [[ "${alias[*]}" ]]; then
-      main_standalone "${alias[@]}" "$@"
-    else
-      E=2 fatal $"Invalid command '%s'." "$cmd"
+# fun: try_path <path_list>
+# txt: given a path list, return the first existant item in the list, or, if
+#      none exists, the first one. NOTE: this function does not allow colons
+#      in path items.
+try_path ()
+{
+  local IFS=':'
+  for path in $1; do
+    if [ -d "$path" ]; then
+      echo "$path"
+      return
     fi
-  fi
+  done
+  echo "${1%%:*}"
 }
 
-# fun: main [args]...
-# txt: entry point :D
-main ()
+# fun: workon <path> <command>...
+# txt: run command inside path passed as argument
+workon ()
 {
-  local config_path="$HOME/.config/tl/config:$HOME/.tl/config:$HOME/.tlrc"
-  local major minor ver
+  local dir="$1"; shift
+  ( cd "$dir" && "$@"; )
+}
 
-  # check BASH
-  if [[ "${BASH_VERSINFO[0]}" -lt 5 ]]; then
-    E=1 error $"bash >= 5 is required"
-  fi
+# fun: valid_url <url>
+# txt: return true if url is valid, otherwise return false
+valid_url ()
+{
+  case "$1" in
+    ssh://*|http://*|https://*) return 0
+  esac
+  return 1
+}
+
+# fun: has_hmac <eid>
+# txt: return true if the eid has an hmac
+has_hmac ()
+{
+  local hmac; hmac="${1#*:}"
+  [[ "${hmac}" != "${hmac#*:}" ]]
+}
+
+# fun: username <eid|account_id>
+# txt: return username from a event_id or account_id using alias defined in
+#      configuration and short form if 'timeline.use-short-ids' is true.
+username ()
+{
+  local uname="$1"
   
-  CONFIG_FILE="$(try_path "$config_path")"
-  INTERACTIVE=false
+  uname="${uname%%:*}" # remove timestamp if present
+  uname="${uname#@}"  # remove trail @ if present
 
-  reqs_eval
+  alias_name="${CONFIG["user.alias-$uname"]}"
+  short_ids="${CONFIG["timeline.use-short-ids"]}"
 
-  # check git version since it's a core requirement
-  read -r _ _ ver < <(git --version)
-  IFS=. read -r major minor _ <<<"$ver"
-
-  if [[ "$major" -lt "2" ]] || [[ "$minor" -lt 30 ]]; then
-    E=1 error $"git version >= 2.30 is required"
+  if [[ "$alias_name" ]]; then
+    uname="$alias_name"
+  elif [[ "$short_ids" = "true" ]]; then
+    uname="${uname:0:8}"
   fi
 
-  args_eval "$@" || shift $?
+  echo "@${uname}"
+}
 
-  [ -r "${CONFIG_FILE}" ] && config_load "${CONFIG_FILE}"
+# fun: is_decimal <num>
+# txt: return true if num is a decimal based number.
+is_decimal () {
+  [[ "$1" = "0" ]] && return 0
+  mute let i="10#${1#-}" 2>/dev/null
+}
 
-  CACHE_DIR="$(try_path "$(config_get cache.path)")"
-  mkdir -p "${CACHE_DIR}"
+# fun: keyid <name>
+# txt: get the keyid configured for account name passed as argument
+keyid ()
+{
+  echo "${CONFIG[account.$1.keyid]:-${CONFIG[account.keyid]}}"
+}
 
-  # load the timeline index to operate with previous listed timeline
-  timeline_index_load
+# fun: any <list> <list>
+# txt: return true if any element of the first list is also in the second
+#      list.
+any ()
+{
+  case "$1" in
+    '*'|"$2") return 0;;
+    '') return 1;;
+  esac
 
-  if [ $# -eq 0 ]; then
-    if [[ "$(config_get_empty interactive.show-banner)" = "true" ]]; then
-      info "timeline  Copyright (C) %(%Y)T Andrés J. Díaz" "$(timestamp)"
-      info "This program comes with ABSOLUTELY NO WARRANTY; for details"
-      info "type 'license'. This is free software, and you are welcome to"
-      info "redistribute it under certain conditions; type 'license' for"
-      info "details."
+  local -A list
+
+  for item in $1; do
+    list["$item"]=1
+  done
+
+  for item in $2; do
+    [[ "${list["$item"]}" ]] && return 0
+  done
+  return 1
+}
+
+# fun: on_exit <callback>
+# txt: run callback on exit
+declare -a _on_exit=()
+trap _handler_on_exit EXIT
+_handler_on_exit ()
+{
+  local fun
+  for fun in "${_on_exit[@]}"; do
+    "$fun";
+  done
+}
+on_exit ()
+{
+  _on_exit+=( "$1" )
+}
+
+# fun: temp_file
+# txt: outputs a temporary file which will ensure that will be eliminated
+#      when exectution ends.
+temp_file ()
+{
+  local name="${TMPDIR:-/tmp}/temp_$$.$RANDOM"
+  : > "$name"
+  echo "$name"
+}
+_temp_file_exit ()
+{
+  rm -f "${TMPDIR:-/tmp}/temp_$$".*
+}
+on_exit _temp_file_exit
+
+# fun: temp_dir
+# txt: outputs a temporary directory which will be removed when tl dies
+temp_dir ()
+{
+  local name="${TMPDIR:-/tmp}/tempdir_$$.$RANDOM"
+  mkdir -p "$name"
+  echo "$name"
+}
+_temp_dir_exit ()
+{
+  rm -rf "${TMPDIR:-/tmp}/tempdir_$$".*
+}
+on_exit _temp_dir_exit
+## vim:ft=sh
+
+# env: TIMELINE_CONTENT: The path relative to the account root, where
+#      CONTENT file is stored.
+TIMELINE_CONTENT="CONTENT"
+
+# env: TIMELINE_FOLLOW The path relative to the account root, where
+#      FOLLOW dir is located.
+TIMELINE_FOLLOW="FOLLOW"
+
+# env: TIMELINE_PRINTED: Internal associative array which contains the EID
+#      of events alredy printed to avoid duplicates.
+declare -A TIMELINE_PRINTED=()
+
+# env: TIMELINE_INDEX: Internal array used to print an index in timeline to
+#      easy refer to an event
+declare -a TIMELINE_INDEX=()
+
+# fun: timeline_load [path] [oid]
+# txt: load the timeline from current active account into memory
+timeline_load ()
+{
+  local oid="$2" content_path follow_path show_own path="$1"
+
+  if [[ -z "$path" ]]; then
+    path="$(account_active_path)"
+    oid="$(account_active_oid)"
+  fi
+
+  content_path="$path/$TIMELINE_CONTENT"
+  follow_path="$path/$TIMELINE_FOLLOW"
+  show_own="${CONFIG["timeline.own-posts"]}"
+  pattern=("⣾" "⣽" "⣻" "⢿" "⡿" "⣟" "⣯" "⣷")
+
+  if ! [[ -r "$content_path" ]]; then
+    error $"Content path does not exists."
+    error $"Maybe you delete your account data?"
+    E=1 error $"Try $0 account rebuild $(account_active_name) to recreate it automatically"
+  fi
+
+  # Load our account timeline
+  [[ "$show_own" = "false" ]] ||
+    event_load "$oid" "${content_path}"
+
+  local dir i=0
+
+  if [[ -d "${follow_path}" ]]; then
+    for dir in "${follow_path}"/*; do
+      [[ -d "$dir" ]] || continue  # ignore non-dir files
+      [[ -r "$dir/$TIMELINE_CONTENT" ]] || continue # ignore non initialized
+
+      dir="${dir%/}"
+      echo -en "\r${pattern[$((i % ${#pattern[@]}))]}\r"
+      event_load "${dir##*/}" "${dir}/$TIMELINE_CONTENT"
+    done
+  fi
+}
+
+# fun: timeline_filter <eid>
+# txt: return true if the item should be filtered and false if not.
+timeline_filter ()
+{
+  local eid="$1"
+  local ret=1
+
+  filter_eval hide "$eid" &&
+    timeline_hide_thread "$eid" && ret=0
+
+  filter_eval show "$eid" &&
+    timeline_show_thread "$eid" && ret=1
+
+  return "$ret"
+}
+
+
+# fun: timeline_hide_thread <eid>
+# txt: hide the thread of the specific EID
+timeline_hide_thread ()
+{
+  TIMELINE_PRINTED["$1"]=1
+  for event in $(event_labels "$1"); do
+    timeline_hide_thread "$event"
+  done
+  for event in $(event_replies "$1"); do
+    timeline_hide_thread "$event"
+  done
+  return 0
+}
+
+# fun: timeline_show_thread <eid>
+# txt: show the thread of the specific EID
+timeline_show_thread ()
+{
+  unset TIMELINE_PRINTED["$1"]
+  for event in $(event_labels "$1"); do
+    timeline_show_thread "$event"
+  done
+  for event in $(event_replies "$1"); do
+    timeline_show_thread "$event"
+  done
+  return 0
+}
+
+# fun: timeline_list_thread <eid>
+# txt: print thread for specific eid passed as argument
+timeline_list_thread ()
+{
+  local prefix indent date kind mesg tags link name eid="$1"
+  local flag show_tags show_replies flags=''
+
+  # item is already printed? then do nothing
+  [[ "${TIMELINE_PRINTED["$eid"]}" ]] && return
+
+  date="${EVENTS_DATE["$eid"]}"
+  kind="${EVENTS_KIND["$eid"]}"
+  name="$(username "$eid")"
+  sign="${EVENTS_SIGN["$eid"]}"
+
+  case "$kind" in
+    post)
+      mesg="${EVENTS_MESG["$eid"]}"
+      timeline_filter "$eid" && return
+      ;;
+    tag)
+      tags="${EVENTS_TAGS["$eid"]// /, }"
+      link="${EVENTS_LINK["$eid"]}"
+      ;;
+    reply)
+      mesg="${EVENTS_MESG["$eid"]}"
+      link="${EVENTS_LINK["$eid"]}"
+      ;;
+  esac
+
+  indent="${CONFIG["timeline.$kind.indent"]}"
+  prefix="${CONFIG["timeline.$kind.prefix"]}"
+
+  case "${sign}" in
+    G) flags+="${CONFIG["timeline.$kind.flag-signed-good"]}";;
+    B) flags+="${CONFIG["timeline.$kind.flag-signed-bad"]}";;
+    U) flags+="${CONFIG["timeline.$kind.flag-signed-unknown"]}";;
+    X|Y) flags+="${CONFIG["timeline.$kind.flag-signed-expired"]}";;
+    R) flags+="${CONFIG["timeline.$kind.flag-signed-revoked"]}";;
+    E) flags+="${CONFIG["timeline.$kind.flag-signed-missing"]}";;
+    *) flags+="${CONFIG["timeline.$kind.flag-signed-none"]}";;
+  esac
+
+  # composing the output
+  format_compose "timeline.$kind" index "${#TIMELINE_INDEX[@]}"
+  format_compose "timeline.$kind" name "$name"
+  format_compose "timeline.$kind" date "$date"
+  format_compose "timeline.$kind" tags "${2}${indent}${prefix}${tags}"
+  format_compose "timeline.$kind" link "$link"
+  format_compose "timeline.$kind" score "${EVENTS_SCORE["$eid"]}"
+  format_compose "timeline.$kind" mesg "${2}${indent}${prefix}${mesg}"
+
+  TIMELINE_PRINTED["$eid"]=1
+  TIMELINE_INDEX+=( "$eid" )
+
+  show_tags="${CONFIG["timeline.show-tags"]}"
+  show_replies="${CONFIG["timeline.show-replies"]}"
+
+  if [[ "$show_tags" != "true" ]]; then
+    if [[ "$(event_labels "$eid")" ]]; then
+      flags+="${CONFIG["timeline.$kind.flag-tagged"]}"
+    else
+      flags+=" "
+    fi
+  fi
+
+  if [[ "$show_replies" != "true" ]]; then
+    if [[ "$(event_replies "$eid")" ]]; then
+      flags+="${CONFIG["timeline.$kind.flag-replied"]}"
+    else
+      flags+=" "
+    fi
+  fi
+
+  format_compose "timeline.$kind" flags "${flags}"
+  format_dumps "timeline.$kind"
+
+  if [[ "$show_tags" = "true" ]]; then
+    for tags in $(event_labels "$eid"); do
+      timeline_list_thread "$tags" "$2${indent}"
+    done
+  fi
+
+  if [[ "$show_replies" = "true" ]]; then
+    for reply in $(event_replies "$eid"); do
+      timeline_list_thread "$reply" "$2${indent}"
+    done
+  fi
+}
+
+# fun: timeline_list [filter]
+# txt: print the entire timelist
+timeline_list ()
+{
+  TIMELINE_PRINTED=()
+  TIMELINE_INDEX=()
+
+  local -a filter_show
+  local -a filter_hide
+
+  read -ra filter_show <<< "${CONFIG[timeline.filter.show]}"
+  read -ra filter_hide <<< "${CONFIG[timeline.filter.hide]}"
+
+  [[ "${#filter_show[@]}" -gt 0 ]] &&
+    filter_add show "${filter_show[@]}"
+
+  [[ "${#filter_hide[@]}" -gt 0 ]] &&
+    filter_add hide "${filter_hide[@]}"
+
+  if [[ "$1" ]]; then
+    filter_add hide "tag:*"
+    filter_add show "$@"
+  fi
+
+  for eid in "${EVENTS_SORTED[@]}"; do
+    if [[ "${EVENTS_KIND["$eid"]}" = "post" ]]; then
+      timeline_list_thread "$eid" ''
+    fi
+  done
+
+  timeline_index_save
+}
+
+# fun: timeline_index_save
+# txt: dumps TIMELINE_INDEX to a sourceable file to be loaded before any
+#      input to identify an event easily.
+timeline_index_save ()
+{
+  {
+    echo "declare -ag TIMELINE_INDEX=("
+    for var in "${TIMELINE_INDEX[@]}"; do
+      echo "'$var'"
+    done
+    echo ")"
+  } > "${CACHE_DIR}/.timeline-index"
+}
+
+# fun: timeline_index_load
+# txt: source index saved file with timeline_index_save
+timeline_index_load ()
+{
+  # shellcheck source=/dev/null
+  [[ -r "${CACHE_DIR}/.timeline-index" ]] &&
+    source "${CACHE_DIR}/.timeline-index" 
+}
+
+# fun: timeline_index_get <num>
+# txt: return the EID of the event indexed by number passed as argument
+timeline_index_get ()
+{
+  if [[ "$1" -ge ${#TIMELINE_INDEX[@]} ]]; then
+    E=1 error $"Index out of bounds: %s in %s" "$1" "TIMELINE_INDEX"
+  else
+    echo "${TIMELINE_INDEX[$1]}"
+  fi
+}
+
+# fun: timeline_edit
+# txt: interactively edit your timeline
+timeline_edit ()
+{
+  local content auto_push
+  content="$(account_active_path)/CONTENT"
+
+  if [[ -w "$content" ]]; then
+
+    auto_push="${CONFIG["account.$(account_active_name).auto-push"]}"
+
+    if ! [[ "$auto_push" ]]; then
+      auto_push="$(config_get account.auto-push)"
     fi
 
-    INTERACTIVE=true
-    main_interactive "$@"
+    ${EDITOR:-nano} "$content"
+
+    account_commit | info_multi
+
+    if [[ "$auto_push" = "true" ]]; then
+      account_push | info_multi
+    fi
+
   else
-    main_standalone "$@"
+    fatal $"Unable to edit CONTENT file"
   fi
+}
+
+# fun: timeline_orphans
+# txt: show orphan events in the timeline
+timeline_orphans ()
+{
+  for eid in ${EVENTS_CROSS_REPLY[@]}; do
+    timeline_list_thread "$eid"
+  done
+  for eid in ${EVENTS_CROSS_TAGS[@]}; do
+    timeline_list_thread "$eid"
+  done
+  for eid in ${EVENTS_CROSS_SCORE[@]}; do
+    timeline_list_thread "$eid"
+  done
+  timeline_index_save
+}
+## vim:ft=sh
+
+# fun: history_load
+# txt: if is defined prompt_history and prompt_history_file configuration
+#      file, load from there the history of the commands.
+history_load ()
+{
+  hist_enabled="$(config_get history.enabled)"
+  hist_file="${CONFIG[history.file]}"
+
+  history -c
+
+  if [ "${hist_enabled}" = "true" ] &&
+     [ "${hist_file}" ] && 
+     [ -r "${hist_file}" ]; then
+    history -r "${hist_file}"
+  fi
+}
+
+# fun: history_save
+# txt: if defined history_file configuration file, save history to that
+#      file.
+history_save ()
+{
+  hist_enabled="$(config_get history.enabled)"
+  hist_file="${CONFIG[history.file]}"
+
+  [ "${hist_enabled}" = "true" ] && [ "${hist_file}" ] &&
+    history -w "${hist_file}"
+}
+
+# fun: history_append <command>
+# txt: append command into history line if history is enabled
+history_append ()
+{
+  hist_enabled="$(config_get history.enabled)"
+  [ "${hist_enabled}" = "true" ] && history -s "$1"
+}
+## vim:ft=sh
+
+
+help_prefix=$"
+
+
+████████╗██╗███╗   ███╗███████╗██╗     ██╗███╗   ██╗███████╗
+╚══██╔══╝██║████╗ ████║██╔════╝██║     ██║████╗  ██║██╔════╝
+   ██║   ██║██╔████╔██║█████╗  ██║     ██║██╔██╗ ██║█████╗
+   ██║   ██║██║╚██╔╝██║██╔══╝  ██║     ██║██║╚██╗██║██╔══╝
+   ██║   ██║██║ ╚═╝ ██║███████╗███████╗██║██║ ╚████║███████╗
+   ╚═╝   ╚═╝╚═╝     ╚═╝╚══════╝╚══════╝╚═╝╚═╝  ╚═══╝╚══════╝
+
+
+
+Timeline is a plain-text based distributed social network build on top of
+git configuration manager. Timeline is:
+
+
+- Distributed / Descentralized
+- Secure / Solid / Spam aware
+- GPL3 licensed
+- Fun!
+
+
+----- Commands ----------------------------------------------------------------
+"
+
+help_suffix=$"
+
+Type help <command> for more information about the command
+
+-------------------------------------------------------------------------------
+"
+
+help_commands ()
+{
+  local hide_help_banner
+  hide_help_banner="${CONFIG[general.hide-help-banner]}"
+
+  [[ "$hide_help_banner" = "true" ]] || echo "$help_prefix"
+
+  _i(){
+    case "$2" in
+      "# help:fun: "*) 
+        printf "\n    %s"  "${2#\# help:fun: }";;
+      "# help:txt: "*)
+        printf "        %s" "${2#\# help:txt: }";;
+    esac
+  }
+
+  # shellcheck disable=SC2034
+  mapfile -c 1 -C _i < "$0"
+
+  [[ "$hide_help_banner" = "true" ]] || echo "$help_suffix"
+}
+
+help_subcommand ()
+{
+  local cmd="$1"
+
+  _j() {
+    case "$2" in
+      "# help:$cmd:fun: "*) 
+        echo -n "${2#\# help:$cmd:fun: }";;
+      "# help:$cmd:txt: "*)
+        echo -n "    ${2#\# help:$cmd:txt: }";;
+    esac
+  }
+
+  # shellcheck disable=SC2034
+  mapfile -c 1 -C _j < "$0"
+}
+## vim:ft=sh
+
+FILTER_HIDE=()
+FILTER_SHOW=()
+
+# fun: filter <tags_to_filter> <eid>
+# txt: return true if EID need to be filtered
+filter_tag ()
+{
+  local fpattern="$1" eid="$2"
+  local event tag
+
+  [[ "$fpattern" = "*" ]] && return 0
+
+  for event in $(event_labels "$eid"); do
+    for tag in $(event_tags "$event"); do
+      if any "$fpattern" "$tag"; then
+        return 0
+      fi
+    done
+  done
+  return 1
+}
+
+# fun: filter <view> <eid>
+# txt: return true if EID need to be filtered
+filter_view ()
+{
+  local fpattern="$1" eid="$2"
+  read -ra view <<< "${CONFIG["views.$fpattern"]}"
+
+  if [[ "${#view[@]}" -ne 0 ]]; then
+    filter_eval_expr "$eid" "${view[@]}"
+  else
+    E=1 fatal $"No view named: %s" "$fpattern"
+  fi
+}
+
+# fun: filter {score-min|score-max} <value> <eid>
+# txt: return true if EID need to be filtered according to score values
+#      passsed as argument.
+filter_score ()
+{
+  local kind="$1" value="$2" eid="$3"
+  local score
+
+  score="$(event_score "$eid")"
+
+  case "$kind" in
+    score-min)
+      [[ "${score:-0}" -lt "${value}" ]] && return 0
+    ;;
+    score-max)
+      [[ "${score:-0}" -gt "${value}" ]] && return 0
+    ;;
+    *)
+      E=1 fatal $"Invalid score filter: %s" "$kind"
+    ;;
+  esac
+
+  return 1
+}
+
+# fun: filter_text <pattern> <eid>
+# txt: return true if especified eid contains text which match with pattern
+#      passed as argument (glob pattern supported only).
+filter_text ()
+{
+  local fpattern="$1" eid="$2"
+
+  # shellcheck disable=SC2254
+  case "$(event_mesg "$eid")" in
+    $fpattern) return 0;;
+  esac
+  return 1
+}
+
+# fun: filter_mention <eid>
+# txt: return true if myself is mentioned in eid
+filter_mention ()
+{
+  local eid="$1" uid pattern
+  uid="$(account_active_oid)"
+  local -a reat=()
+
+  # no acctive account
+  [[ "$uid" ]] || return 1
+
+  reat=( "@$uid" "@${uid:0:8}" "$(username "$uid")" )
+
+  if [[ "${CONFIG[timeline.react-on-all]}" = "true" ]]; then
+    reat+=( "@all" "@here" )
+  fi
+
+  for pattern in "${reat[@]}"; do
+    filter_text "*${pattern}*" "$eid" && return 0
+  done
+
+  return 1
+}
+
+# fun: filter_add {hide|show} <expr>
+# txt: Add an expression filter
+filter_add ()
+{
+  local mode="$1"; shift
+
+  case "$mode" in
+    hide) FILTER_HIDE+=( "$@" );;
+    show) FILTER_SHOW+=( "$@" );;
+  esac
+}
+
+# fun: filter_eval {hide|show} <eid>
+# txt: evaluate filtering of the eid for the specified mode. If this funcion
+#      return 0, means that the item is filtered, otherwise is not filtered.
+filter_eval ()
+{
+  local mode="$1" eid="$2"
+  local -a expr_array=()
+
+  case "$mode" in
+    hide) expr_array+=( "${FILTER_HIDE[@]}" );;
+    show) expr_array+=( "${FILTER_SHOW[@]}" );;
+  esac
+
+  filter_eval_expr "$eid" "${expr_array[@]}"
+}
+
+# fun: filter_eval_expr <eid> <expr>...
+# txt: eval an expression and return true if filtered or false if not
+filter_eval_expr ()
+{
+  local eid="$1" expr=; shift
+
+  for expr in "${@}"; do
+    case "$expr" in
+      '') ;;
+      tag:*)
+        filter_tag "${expr#tag:}" "$eid" && return 0
+        ;;
+      score-min:*|score-max:*)
+        filter_score "${expr%%:*}" "${expr#*:}" "$eid" && return 0
+        ;;
+      view:*)
+        filter_view "${expr#view:}" "$eid" && return 0
+        ;;
+      text:*)
+        filter_text "${expr#text:}" "$eid" && return 0
+        ;;
+      mention)
+        filter_mention "$eid" && return 0
+        ;;
+      *)
+        E=3 error $"This kind of filtering ($xpr) is not implemented yet"
+        ;;
+    esac
+  done
+  return 1
 }
 ## vim:ft=sh
 
@@ -1411,9 +1637,7 @@ event_create ()
   local path auto_push content_markdown
   local -a content
 
-  auto_push="$(
-    config_get_empty "account.$(account_active_name).auto-push"
-  )"
+  auto_push="${CONFIG["account.$(account_active_name).auto-push"]}"
 
   if ! [[ "$auto_push" ]]; then
     auto_push="$(config_get account.auto-push)"
@@ -1427,12 +1651,10 @@ event_create ()
     echo "$line" >> "${path}/$TIMELINE_CONTENT"
   done
 
-  content_markdown="$(
-    config_get_empty "account.$(account_active_name).content-markdown"
-  )"
+  content_markdown="${CONFIG["account.$(account_active_name).content-markdown"]}"
 
   if ! [[ "$content_markdown" ]]; then
-    content_markdown="$(config_get_empty "account.content-markdown")"
+    content_markdown="${CONFIG[account.content-markdown]}"
   fi
 
   if [[ "$content_markdown" = "true" ]]; then
@@ -1503,481 +1725,109 @@ event_info ()
       ;;
   esac
 }
-## vim: ft=sh
-
-# fun: fun <function_name>
-# txt: return true if function is defined
-fun ()
-{
-  declare -f "$1" >/dev/null 2>&1
-}
-
-# fun: mute <command> [args]
-# txt: run command quietly
-mute ()
-{
-  "$@" >/dev/null 2>&1
-}
-
-# fun: timestamp
-# txt: print current timestamp in UTC
-timestamp ()
-{
-  # shellcheck disable=SC2183
-  printf "%(%s)T"
-}
-
-# fun: split <str>
-# txt: split a comma separated list
-split ()
-{
-  echo "${1//,/ }"
-}
-
-# fun: join <delim> <array_items>
-# txt: return a delim separated list of array_items
-join ()
-{
-  local delim="$1"; shift
-  for x in "$@"; do
-    printf "%s%s" "$x" "$delim"
-  done
-}
-
-# fun: oid <string>
-# txt: create a unique object id for the string passed as argument
-oid ()
-{
-  command git hash-object --stdin <<<"${1%.git}"
-}
-
-# fun: try_path <path_list>
-# txt: given a path list, return the first existant item in the list, or, if
-#      none exists, the first one. NOTE: this function does not allow colons
-#      in path items.
-try_path ()
-{
-  local IFS=':'
-  for path in $1; do
-    if [ -d "$path" ]; then
-      echo "$path"
-      return
-    fi
-  done
-  echo "${1%%:*}"
-}
-
-# fun: workon <path> <command>...
-# txt: run command inside path passed as argument
-workon ()
-{
-  local dir="$1"; shift
-  ( cd "$dir" && "$@"; )
-}
-
-# fun: valid_url <url>
-# txt: return true if url is valid, otherwise return false
-valid_url ()
-{
-  case "$1" in
-    ssh://*|http://*|https://*) return 0
-  esac
-  return 1
-}
-
-# fun: has_hmac <eid>
-# txt: return true if the eid has an hmac
-has_hmac ()
-{
-  local hmac; hmac="${1#*:}"
-  [[ "${hmac}" != "${hmac#*:}" ]]
-}
-
-# fun: username <eid|account_id>
-# txt: return username from a event_id or account_id using alias defined in
-#      configuration and short form if 'timeline.use-short-ids' is true.
-username ()
-{
-  local uname="$1"
-  
-  uname="${uname%%:*}" # remove timestamp if present
-  uname="${uname#@}"  # remove trail @ if present
-
-  alias_name="${CONFIG["user.alias-$uname"]}"
-  short_ids="${CONFIG["timeline.use-short-ids"]}"
-
-  if [[ "$alias_name" ]]; then
-    uname="$alias_name"
-  elif [[ "$short_ids" = "true" ]]; then
-    uname="${uname:0:8}"
-  fi
-
-  echo "@${uname}"
-}
-
-# fun: is_decimal <num>
-# txt: return true if num is a decimal based number.
-is_decimal () {
-  [[ "$1" = "0" ]] && return 0
-  mute let i="10#${1#-}" 2>/dev/null
-}
-
-# fun: keyid <name>
-# txt: get the keyid configured for account name passed as argument
-keyid ()
-{
-  local keyid
-
-  keyid="$(config_get_empty "account.$1.keyid")"
-  
-  [[ "$keyid" ]] ||
-    keyid="$(config_get_empty "account.keyid")"
-
-  echo "$keyid"
-}
-
-# fun: any <list> <list>
-# txt: return true if any element of the first list is also in the second
-#      list.
-any ()
-{
-  case "$1" in
-    '*'|"$2") return 0;;
-    '') return 1;;
-  esac
-
-  local -A list
-
-  for item in $1; do
-    list["$item"]=1
-  done
-
-  for item in $2; do
-    [[ "${list["$item"]}" ]] && return 0
-  done
-  return 1
-}
-
-# fun: on_exit <callback>
-# txt: run callback on exit
-declare -a _on_exit=()
-trap _handler_on_exit EXIT
-_handler_on_exit ()
-{
-  local fun
-  for fun in "${_on_exit[@]}"; do
-    "$fun";
-  done
-}
-on_exit ()
-{
-  _on_exit+=( "$1" )
-}
-
-# fun: temp_file
-# txt: outputs a temporary file which will ensure that will be eliminated
-#      when exectution ends.
-temp_file ()
-{
-  local name="${TMPDIR:-/tmp}/temp_$$.$RANDOM"
-  : > "$name"
-  echo "$name"
-}
-_temp_file_exit ()
-{
-  rm -f "${TMPDIR:-/tmp}/temp_$$".*
-}
-on_exit _temp_file_exit
-
-# fun: temp_dir
-# txt: outputs a temporary directory which will be removed when tl dies
-temp_dir ()
-{
-  local name="${TMPDIR:-/tmp}/tempdir_$$.$RANDOM"
-  mkdir -p "$name"
-  echo "$name"
-}
-_temp_dir_exit ()
-{
-  rm -rf "${TMPDIR:-/tmp}/tempdir_$$".*
-}
-on_exit _temp_dir_exit
 ## vim:ft=sh
 
-# env: ACCOUNT_NAME: A variable contains the name of the acctive account.
-ACCOUNT_NAME=
+# env: DAEMON_LOG_FILE: Internal variable where file redirections are saved.
+DAEMON_LOG_FILE=
+# env: DAEMON_LOG_LEVEL: Internal variable to store daemon log level.
+DAEMON_LOG_LEVEL=
+# env: DAEMON_INTERVAL: Internal variable to store daemon interval time.
+DAEMON_INTERVAL=
+# env: DAEMON_COMMANDS: Internal variable to store commands to run in bg.
+DAEMON_COMMANDS=
 
-# fun: account_list
-# txt: output a new-line separated list of defined accounts.
-account_list ()
+# env: NOLOG: if true do not log anything
+NOLOG=false
+# env: PIDFILE: Internal variable where pidfile path is saved.
+PIDFILE=
+
+# fun: daemon_reload_config
+# txt: reload daemon config from config file
+daemon_reload_config ()
 {
-  local account
+  PIDFILE="$(config_get daemon.pidfile)"
+  DAEMON_LOG_FILE="${CONFIG[daemon.log.file]}"
+  case "$DAEMON_LOG_FILE" in
+    none) NOLOG=true;;
+    stdout|STDOUT|stderr|STDERR) DAEMON_LOG_FILE="";;
+    *) DAEMON_LOG_FILE=">> ${DAEMON_LOG_FILE}";;
+  esac
+  DAEMON_LOG_LEVEL="${CONFIG[daemon.log.level]}"
+  case "${DAEMON_LOG_LEVEL}" in
+    error) DAEMON_LOG_FILE+=" 2>&1 >/dev/null";;
+    info) DAEMON_LOG_FILE+=" 2>&1";;
+  esac
+  DAEMON_INTERVAL="${CONFIG[daemon.interval]}"
+  DAEMON_COMMANDS="${CONFIG[daemon.commands]}"
+}
 
-  for account in $(config_iter account.); do
-    case "$account" in
-      account.*.path)
-        account="${account#account.}"
-        account="${account%.path}"
-        echo "$account"
-      ;;
-    esac
+# fun: daemon_run <pidfile>
+# txt: Run the commands configured for the daemon every interval.
+daemon_run ()
+{
+  daemon_reload_config
+
+  PIDFILE="$1"
+
+  trap daemon_reload_config HUP
+  trap daemon_remove_pid TERM
+
+  # while sleep ...
+  while sleep "${DAEMON_INTERVAL:-300}"
+  do
+    if ! ${NOLOG:-false}; then
+      eval "main_standalone ${DAEMON_COMMANDS} ${DAEMON_LOG_FILE}"
+    fi
   done
 }
 
-# fun: account_load [name]
-# txt: load the account named as argument, if argument is omit, then try to
-#      load the account using the `account.default` configuration value or,
-#      if missing and there is only one configured account this one.
-#      Otherwise failed.
-account_load ()
+# fun: daemon_start
+# txt: Start daemon in background.
+daemon_start ()
 {
-  local name="$1"
+  local pid
+  daemon_reload_config
 
-  name="${name:-$(config_get_empty account.default)}"
+  [ -r "${PIDFILE}" ] && pid="$(<"${PIDFILE}")"
 
-  if [[ -z "$name" ]]; then
-
-    # try to infer the account name if none is provided
-    
-    read -ra all_accounts < <( account_list)
-
-    case "${#all_accounts[@]}" in
-      0) return 1;;
-      1) name="${all_accounts[0]}";;
-      *) E=1 fatal $"There are may accounts.";;
-    esac
-
-  fi
-
-  ACCOUNT_NAME="$name"
-}
-
-NOACTIVE=$"There are no active accounts"
-
-# fun: account_active_name
-# txt: print the name of the current active account
-account_active_name ()
-{
-  echo "${ACCOUNT_NAME}"
-}
-
-# fun: account_active_oid
-# txt: print the OID of the current active account
-account_active_oid ()
-{
-  [[ "$ACCOUNT_NAME" ]] ||
-    E=1 fatal "$NOACTIVE"
-  oid "$(config_get "account.$ACCOUNT_NAME.pull-url")"
-}
-
-# fun: account_active_path
-# txt: print the path of the current active account
-account_active_path ()
-{
-  [[ "$ACCOUNT_NAME" ]] ||
-    E=1 fatal "$NOACTIVE"
-  config_get "account.$ACCOUNT_NAME.path"
-}
-
-# fun: account_exists [name]
-# txt: return true if the account name passed as argument is a initialized
-#      account. If name is omit, then use active account path.
-account_exists ()
-{
-  local path=
-  
-  [[ "$1" ]] && path="$(config_get "account.$1.path")"
-
-  if [[ -z "$path" ]]; then
-    path="$(account_active_path)"
-  fi
-  [ -d "${path%.git}/.git" ]
-}
-
-# fun: account_create <name> <push_url> <pull_url> [keyid] [path]
-# txt: create a new account named as name, with specific push and pull url,
-#      if path is provided then set the account path to this one, otherwise,
-#      use the default path for accounts as prefix
-account_create ()
-{
-  local name="$1" push_url="$2" pull_url="$3" keyid="$4" path="$5"
-
-  if [[ "$(config_get_empty "account.$name.path")" ]]; then
-    E=1 fatal $"Another account already exists with that name"
+  if [[ "$pid" ]]; then
+    fatal $"There are another daemon running. Force quit with daemon kill"
   else
-    path="${path:-$(try_path "$(config_get account.path)")/$name}"
-    config_set "account.$name.push-url" "$push_url"
-    config_set "account.$name.pull-url" "$pull_url"
-    config_set "account.$name.path" "$path"
-    config_set "account.$name.keyid" "$keyid"
-    config_set "user.alias-$(oid "$pull_url")" "$name"
-    account_init "$name"
-    config_save "${CONFIG_FILE}"
+    daemon_run "${PIDFILE}" &
+    echo "$!" > "${PIDFILE}"
+    disown
+    info $"Starting daemon at pid %d" "$!"
   fi
 }
 
-# fun: account_clone <name> <push_url> <pull_url> [keyid] [path]
-# txt: clone new account named as name, from the specific push url,
-#      if path is provided then set the account path to this one, otherwise,
-#      use the default path for accounts as prefix
-account_clone ()
+# fun: daemon_stop <signal>
+# txt: Stop daemon running in background with signal passed as argument.
+daemon_stop ()
 {
-  if [[ "$1" = "--force" ]]; then
-    local force=true; shift
+  local pid
+  daemon_reload_config
+
+  [ -r "${PIDFILE}" ] && pid="$(<"${PIDFILE}")"
+
+  if [[ "$pid" ]]; then
+    pkill "-$1" -P "$pid" && rm "${PIDFILE}"
+  fi
+}
+
+# fun: daemon_list
+# txt: print if the daemon is currently running.
+daemon_list ()
+{
+  local pid
+  daemon_reload_config
+
+  [ -r "${PIDFILE}" ] && pid="$(<"${PIDFILE}")"
+
+  if [[ "$pid" ]]; then
+    info $"Daemon running at pid: %d" "$pid"
   else
-    local force=false
+    info $"There is no daemon running"
   fi
-
-  local name="$1" push_url="$2" pull_url="$3" keyid="$4" path="$5"
-
-  if ! $force && [[ "$(config_get_empty "account.$name.path")" ]]; then
-    E=1 fatal $"Another account already exists with that name"
-  else
-    path="${path:-$(try_path "$(config_get account.path)")/$name}"
-    config_set "account.$name.push-url" "$push_url"
-    config_set "account.$name.pull-url" "$pull_url"
-    config_set "account.$name.keyid" "$keyid"
-    config_set "account.$name.path" "$path"
-    config_set "user.alias-$(oid "$pull_url")" "$name"
-    command git clone "$push_url" "$path"
-    workon "$path" command git submodule init
-    account_config "$path" "$pull_url" "$keyid"
-    config_save "${CONFIG_FILE}"
-  fi
-}
-
-# fun: account_init <name>
-# txt: initialized the accoutn passed as argument
-account_init ()
-{
-  if account_exists "$1"; then
-    E=1 fatal $"Trying to initializating an already initialized account"
-  else
-    local path push_url pull_url keyid
-
-    path="$(config_get "account.$1.path")"
-    pull_url="$(config_get "account.$1.pull-url")"
-    push_url="$(config_get "account.$1.push-url")"
-    keyid="$(keyid "$1")"
-
-    # create empty dir for init
-    mkdir -p "$path" ||
-      E=1 fatal $"Unable to create account directory: %s" "$path"
-
-    workon "$path" command git init
-    account_config "$path" "$pull_url" "$keyid"
-    workon "$path" command git add .
-    if [[ "$keyid" ]]; then
-      workon "$path" command git commit -S -m 'Initial commit'
-    else
-      workon "$path" command git commit -m 'Initial commit'
-    fi
-    workon "$path" command git remote add origin "$push_url"
-  fi
-}
-
-# fun: account_config <path> <pull_url> [keyid]
-# txt: configure user and other required things in the repo
-account_config ()
-{
-  local path="$1" pull_url="$2" keyid="$3"
-  workon "$path" command git config user.name "$(oid "$pull_url")"
-  workon "$path" command git config user.email "$(oid "$pull_url")@timeline"
-  [[ "$keyid" ]] &&
-    workon "$path" command git config user.signingkey "$keyid"
-  workon "$path" command touch CONTENT
-  workon "$path" command mkdir -p "FOLLOW"
-}
-
-# fun: account_commit
-# txt: set a commit point into current active account
-account_commit ()
-{
-  local path keyid
-
-  path="$(account_active_path)"
-  keyid="$(keyid "$(account_active_name)")"
-
-  [[ "$path" ]] || E=1 fatal $"No active account to commit"
-
-  workon "$path" command git add .
-  if [[ "$keyid" ]]; then
-    workon "$path" command git commit -S -m "Timeline Autosave: $(timestamp)"
-  else
-    workon "$path" command git commit -m "Timeline Autosave: $(timestamp)"
-  fi
-}
-
-# fun: account_push [remote]
-# txt: push active account content to remote passed as argument or, if
-#      missing, to `origin`.
-account_push ()
-{
-  # TODO Add support for multiple branches
-  workon "$(account_active_path)" command git push "${1:-origin}" master
-}
-
-# fun: account_refresh <path> [remote]
-# txt: rebase changes to current account from remote passed as argument or,
-#     if missing, `origin`.
-account_refresh ()
-{
-  local path="$1"; shift
-
-  workon "$path" command git fetch --all
-  # TODO Add support for multiple branches
-  workon "$path" command git rebase "${1:-origin}/master"
-  workon "$path" command git submodule update --remote \
-    --jobs "${CONFIG[git.jobs]}"
-}
-
-# fun: account_delete [name]
-# txt: delete account by name passed as argument or active account if none
-#      name is provided.
-account_delete ()
-{
-  local name="${1:-$ACCOUNT_NAME}" path oid
-
-  path="$(config_get "account.$name.path")"
-  oid="$(oid "$(config_get "account.$name.pull-url")")"
-
-  if [[ -d "$path" ]]; then
-    rm -rf "$path"
-  fi
-
-  config_unset "account.$name"
-  config_unset "user.alias-$oid"
-
-  config_save "${CONFIG_FILE}"
-}
-
-# fun: account_set_keyid <name> <keyid>
-# txt: set keyid for an existant account
-account_set_keyid ()
-{
-  workon "$(config_get "account.$1.path")" \
-    command git config user.signingkey "$2"
-  config_set "account.$1.keyid" "$2"
-}
-
-# fun: account_preview <url> [filter]
-# txt: preview the contents of the specified url repo filtered with the
-#      specific if present.
-account_preview ()
-{
-  local tmpdir depth
-  tmpdir="$(temp_dir)"
-  depth="${CONFIG[account.preview-depth]}"
-
-  [[ "$depth" = "-1" ]] && depth=""
-
-  command git clone ${depth:+--depth "${depth}"} "$1" "${tmpdir}" 2>&1 |
-    info_multi ||
-      E=1 error $"Unable to clone remote repo"
-
-  timeline_load "${tmpdir}" "$(oid "$1")"
-  shift
-  timeline_list "$@"
 }
 ## vim:ft=sh
 
@@ -2980,7 +2830,7 @@ command_config_get ()
     E=1 error $"Config get requires an arguments: key"
   else
     local var
-    var="$(config_get_empty "$*")"
+    var="${CONFIG["$*"]}"
     if [[ "$var" ]]; then
       info "%s=%s" "$*" "$var"
     else
@@ -3507,6 +3357,283 @@ if ${DEBUG:-false}; then
 fi
 ## vim:ft=sh
 
+# env: ACCOUNT_NAME: A variable contains the name of the acctive account.
+ACCOUNT_NAME=
+
+# fun: account_list
+# txt: output a new-line separated list of defined accounts.
+account_list ()
+{
+  local account
+
+  for account in $(config_iter account.); do
+    case "$account" in
+      account.*.path)
+        account="${account#account.}"
+        account="${account%.path}"
+        echo "$account"
+      ;;
+    esac
+  done
+}
+
+# fun: account_load [name]
+# txt: load the account named as argument, if argument is omit, then try to
+#      load the account using the `account.default` configuration value or,
+#      if missing and there is only one configured account this one.
+#      Otherwise failed.
+account_load ()
+{
+  local name="$1"
+
+  name="${name:-${CONFIG[account.default]}}"
+
+  if [[ -z "$name" ]]; then
+
+    # try to infer the account name if none is provided
+    
+    read -ra all_accounts < <( account_list)
+
+    case "${#all_accounts[@]}" in
+      0) return 1;;
+      1) name="${all_accounts[0]}";;
+      *) E=1 fatal $"There are may accounts.";;
+    esac
+
+  fi
+
+  ACCOUNT_NAME="$name"
+}
+
+NOACTIVE=$"There are no active accounts"
+
+# fun: account_active_name
+# txt: print the name of the current active account
+account_active_name ()
+{
+  echo "${ACCOUNT_NAME}"
+}
+
+# fun: account_active_oid
+# txt: print the OID of the current active account
+account_active_oid ()
+{
+  [[ "$ACCOUNT_NAME" ]] ||
+    E=1 fatal "$NOACTIVE"
+  oid "$(config_get "account.$ACCOUNT_NAME.pull-url")"
+}
+
+# fun: account_active_path
+# txt: print the path of the current active account
+account_active_path ()
+{
+  [[ "$ACCOUNT_NAME" ]] ||
+    E=1 fatal "$NOACTIVE"
+  config_get "account.$ACCOUNT_NAME.path"
+}
+
+# fun: account_exists [name]
+# txt: return true if the account name passed as argument is a initialized
+#      account. If name is omit, then use active account path.
+account_exists ()
+{
+  local path=
+  
+  [[ "$1" ]] && path="$(config_get "account.$1.path")"
+
+  if [[ -z "$path" ]]; then
+    path="$(account_active_path)"
+  fi
+  [ -d "${path%.git}/.git" ]
+}
+
+# fun: account_create <name> <push_url> <pull_url> [keyid] [path]
+# txt: create a new account named as name, with specific push and pull url,
+#      if path is provided then set the account path to this one, otherwise,
+#      use the default path for accounts as prefix
+account_create ()
+{
+  local name="$1" push_url="$2" pull_url="$3" keyid="$4" path="$5"
+
+  if [[ "${CONFIG["account.$name.path"]}" ]]; then
+    E=1 fatal $"Another account already exists with that name"
+  else
+    path="${path:-$(try_path "$(config_get account.path)")/$name}"
+    config_set "account.$name.push-url" "$push_url"
+    config_set "account.$name.pull-url" "$pull_url"
+    config_set "account.$name.path" "$path"
+    config_set "account.$name.keyid" "$keyid"
+    config_set "user.alias-$(oid "$pull_url")" "$name"
+    account_init "$name"
+    config_save "${CONFIG_FILE}"
+  fi
+}
+
+# fun: account_clone <name> <push_url> <pull_url> [keyid] [path]
+# txt: clone new account named as name, from the specific push url,
+#      if path is provided then set the account path to this one, otherwise,
+#      use the default path for accounts as prefix
+account_clone ()
+{
+  if [[ "$1" = "--force" ]]; then
+    local force=true; shift
+  else
+    local force=false
+  fi
+
+  local name="$1" push_url="$2" pull_url="$3" keyid="$4" path="$5"
+
+  if ! $force && [[ "${CONFIG["account.$name.path"]}" ]]; then
+    E=1 fatal $"Another account already exists with that name"
+  else
+    path="${path:-$(try_path "$(config_get account.path)")/$name}"
+    config_set "account.$name.push-url" "$push_url"
+    config_set "account.$name.pull-url" "$pull_url"
+    config_set "account.$name.keyid" "$keyid"
+    config_set "account.$name.path" "$path"
+    config_set "user.alias-$(oid "$pull_url")" "$name"
+    command git clone "$push_url" "$path"
+    workon "$path" command git submodule init
+    account_config "$path" "$pull_url" "$keyid"
+    config_save "${CONFIG_FILE}"
+  fi
+}
+
+# fun: account_init <name>
+# txt: initialized the accoutn passed as argument
+account_init ()
+{
+  if account_exists "$1"; then
+    E=1 fatal $"Trying to initializating an already initialized account"
+  else
+    local path push_url pull_url keyid
+
+    path="$(config_get "account.$1.path")"
+    pull_url="$(config_get "account.$1.pull-url")"
+    push_url="$(config_get "account.$1.push-url")"
+    keyid="$(keyid "$1")"
+
+    # create empty dir for init
+    mkdir -p "$path" ||
+      E=1 fatal $"Unable to create account directory: %s" "$path"
+
+    workon "$path" command git init
+    account_config "$path" "$pull_url" "$keyid"
+    workon "$path" command git add .
+    if [[ "$keyid" ]]; then
+      workon "$path" command git commit -S -m 'Initial commit'
+    else
+      workon "$path" command git commit -m 'Initial commit'
+    fi
+    workon "$path" command git remote add origin "$push_url"
+  fi
+}
+
+# fun: account_config <path> <pull_url> [keyid]
+# txt: configure user and other required things in the repo
+account_config ()
+{
+  local path="$1" pull_url="$2" keyid="$3"
+  workon "$path" command git config user.name "$(oid "$pull_url")"
+  workon "$path" command git config user.email "$(oid "$pull_url")@timeline"
+  [[ "$keyid" ]] &&
+    workon "$path" command git config user.signingkey "$keyid"
+  workon "$path" command touch CONTENT
+  workon "$path" command mkdir -p "FOLLOW"
+}
+
+# fun: account_commit
+# txt: set a commit point into current active account
+account_commit ()
+{
+  local path keyid
+
+  path="$(account_active_path)"
+  keyid="$(keyid "$(account_active_name)")"
+
+  [[ "$path" ]] || E=1 fatal $"No active account to commit"
+
+  workon "$path" command git add .
+  if [[ "$keyid" ]]; then
+    workon "$path" command git commit -S -m "Timeline Autosave: $(timestamp)"
+  else
+    workon "$path" command git commit -m "Timeline Autosave: $(timestamp)"
+  fi
+}
+
+# fun: account_push [remote]
+# txt: push active account content to remote passed as argument or, if
+#      missing, to `origin`.
+account_push ()
+{
+  # TODO Add support for multiple branches
+  workon "$(account_active_path)" command git push "${1:-origin}" master
+}
+
+# fun: account_refresh <path> [remote]
+# txt: rebase changes to current account from remote passed as argument or,
+#     if missing, `origin`.
+account_refresh ()
+{
+  local path="$1"; shift
+
+  workon "$path" command git fetch --all
+  # TODO Add support for multiple branches
+  workon "$path" command git rebase "${1:-origin}/master"
+  workon "$path" command git submodule update --remote \
+    --jobs "${CONFIG[git.jobs]}"
+}
+
+# fun: account_delete [name]
+# txt: delete account by name passed as argument or active account if none
+#      name is provided.
+account_delete ()
+{
+  local name="${1:-$ACCOUNT_NAME}" path oid
+
+  path="$(config_get "account.$name.path")"
+  oid="$(oid "$(config_get "account.$name.pull-url")")"
+
+  if [[ -d "$path" ]]; then
+    rm -rf "$path"
+  fi
+
+  config_unset "account.$name"
+  config_unset "user.alias-$oid"
+
+  config_save "${CONFIG_FILE}"
+}
+
+# fun: account_set_keyid <name> <keyid>
+# txt: set keyid for an existant account
+account_set_keyid ()
+{
+  workon "$(config_get "account.$1.path")" \
+    command git config user.signingkey "$2"
+  config_set "account.$1.keyid" "$2"
+}
+
+# fun: account_preview <url> [filter]
+# txt: preview the contents of the specified url repo filtered with the
+#      specific if present.
+account_preview ()
+{
+  local tmpdir depth
+  tmpdir="$(temp_dir)"
+  depth="${CONFIG[account.preview-depth]}"
+
+  [[ "$depth" = "-1" ]] && depth=""
+
+  command git clone ${depth:+--depth "${depth}"} "$1" "${tmpdir}" 2>&1 |
+    info_multi ||
+      E=1 error $"Unable to clone remote repo"
+
+  timeline_load "${tmpdir}" "$(oid "$1")"
+  shift
+  timeline_list "$@"
+}
+## vim:ft=sh
+
 # env: CONFIG: associative array contains the configuration values. This
 #      array should be loaded from file with `config_load` function, and
 #      accessed by `config_get` and `config_set` to read and write,
@@ -3676,7 +3803,7 @@ declare -xA CONFIG=(
   [daemon.log.file]="${HOME}/.local/share/tl/daemon.log"
   [daemon.log.level]=info
   [notify.command]="notify-send"
-  [notify.format]='Knock knock from %s'
+  [notify.format]='Knock knock from %s:\n%s'
   [notify.filter]="mention"
   [notify.cache-file]="${HOME}/.cache/tl/notify.cache"
   [directory.default]="https://tldir.ajdiaz.me/index.txt"
@@ -3827,14 +3954,6 @@ config_get ()
   echo "$val"
 }
 
-# fun: config_get_empty <key>
-# txt: similar to `config_get`, but if key is not defined an empty value is
-#      returned instead of failing.
-config_get_empty ()
-{
-  echo "${CONFIG["$1"]}"
-}
-
 # fun: config_set <key> <val>
 # txt: set the properly value of configuration key passed as argument using
 #      value provided.
@@ -3892,307 +4011,170 @@ config_list ()
     echo "${var}=${CONFIG[$var]}"
   done
 }
+#! /usr/bin/env bash
+# 
+# Copyright (C) 2016  Andrés J. Díaz <ajdiaz@ajdiaz.me>
+# 
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+# 
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+# 
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# env: INTERACTIVE: if true, then interactive mode is enabled
+export INTERACTIVE=
+
+# env: CONFIG_FILE: should contain the path to the config file
+export CONFIG_FILE=
+
+# env: CACHE_DIR: should contain the path to the cache directory
+export CACHE_DIR=
+
+# fun: prompt
+# txt: print prompt in interactive mode
+prompt ()
+{
+  local name
+  name="$(account_active_name)"
+
+  format_compose prompt account "${name:-<none>}"
+  format_dumps prompt
+}
+
+# fun: main_interactive
+# txt: evaluate commands in interactive mode
+main_interactive ()
+{
+  local cmd
+  local -a args
+
+  history_load
+  complete_load
+  command_account_active "$(account_active_name)"
+
+  while true; do
+    read -a args -e -r -p "$(T=true prompt)"
+    [ $? -eq 1 ] && break
+    cmd="${args[0]}"
+    local -a args=( "${args[@]:1}" )
+
+    [ "$cmd" ] || continue
+    history_append "$cmd ${args[*]}"
+    main_standalone "$cmd" "${args[@]}"
+  done
+  history_save
+}
+
+# fun: main_standalone <cmd> [args]...
+# txt: evaluate command passed as argument
+main_standalone ()
+{
+  local cmd="$1"; shift
+
+  if fun "command_$cmd"; then
+    "command_$cmd" "$@"
+  else
+    read -ra alias <<< "${CONFIG["alias.$cmd"]}"
+
+    if [[ "${alias[*]}" ]]; then
+      main_standalone "${alias[@]}" "$@"
+    else
+      E=2 fatal $"Invalid command '%s'." "$cmd"
+    fi
+  fi
+}
+
+# fun: main [args]...
+# txt: entry point :D
+main ()
+{
+  local config_path="$HOME/.config/tl/config:$HOME/.tl/config:$HOME/.tlrc"
+  local major minor ver
+
+  # check BASH
+  if [[ "${BASH_VERSINFO[0]}" -lt 5 ]]; then
+    E=1 error $"bash >= 5 is required"
+  fi
+  
+  CONFIG_FILE="$(try_path "$config_path")"
+  INTERACTIVE=false
+
+  reqs_eval
+
+  # check git version since it's a core requirement
+  read -r _ _ ver < <(git --version)
+  IFS=. read -r major minor _ <<<"$ver"
+
+  if [[ "$major" -lt "2" ]] || [[ "$minor" -lt 30 ]]; then
+    E=1 error $"git version >= 2.30 is required"
+  fi
+
+  args_eval "$@" || shift $?
+
+  [ -r "${CONFIG_FILE}" ] && config_load "${CONFIG_FILE}"
+
+  CACHE_DIR="$(try_path "$(config_get cache.path)")"
+  mkdir -p "${CACHE_DIR}"
+
+  # load the timeline index to operate with previous listed timeline
+  timeline_index_load
+
+  if [ $# -eq 0 ]; then
+    if [[ "${CONFIG[interactive.show-banner]}" = "true" ]]; then
+      info "timeline  Copyright (C) %(%Y)T Andrés J. Díaz" "$(timestamp)"
+      info "This program comes with ABSOLUTELY NO WARRANTY; for details"
+      info "type 'license'. This is free software, and you are welcome to"
+      info "redistribute it under certain conditions; type 'license' for"
+      info "details."
+    fi
+
+    INTERACTIVE=true
+    main_interactive "$@"
+  else
+    main_standalone "$@"
+  fi
+}
 ## vim:ft=sh
 
-# env: TIMELINE_CONTENT: The path relative to the account root, where
-#      CONTENT file is stored.
-TIMELINE_CONTENT="CONTENT"
-
-# env: TIMELINE_FOLLOW The path relative to the account root, where
-#      FOLLOW dir is located.
-TIMELINE_FOLLOW="FOLLOW"
-
-# env: TIMELINE_PRINTED: Internal associative array which contains the EID
-#      of events alredy printed to avoid duplicates.
-declare -A TIMELINE_PRINTED=()
-
-# env: TIMELINE_INDEX: Internal array used to print an index in timeline to
-#      easy refer to an event
-declare -a TIMELINE_INDEX=()
-
-# fun: timeline_load [path] [oid]
-# txt: load the timeline from current active account into memory
-timeline_load ()
+# fun: notify <eid>
+# txt: send notification for specified eid if match the notification filter.
+notify ()
 {
-  local oid="$2" content_path follow_path show_own path="$1"
+  local user uid="${1%%:*}" date="${1#*:}"
+  local date="${date%%:*}" last_date=0
+  local fexpr ncommand="${CONFIG[notify.command]}"
 
-  if [[ -z "$path" ]]; then
-    path="$(account_active_path)"
-    oid="$(account_active_oid)"
+  [[ "$ncommand" ]] || return 0
+
+  last_date_file="${CONFIG[notify.cache-file]:-${HOME}/.cache/tl/notify.cache}"
+  [[ -r "${last_date_file}" ]] && 
+    last_date="$(< "$last_date_file")"
+
+  # discard old events
+  [[ "$date" -le "${last_date}" ]] &&
+    return
+
+  # discard own events
+  user="$(account_active_oid)"
+  [[ "$uid" = "$user" ]] &&
+    return
+
+  fexpr="${CONFIG[notify.filter]}"
+
+  if [[ "$fexpr" ]] && filter_eval_expr "$1" "$fexpr"; then
+    # shellcheck disable=SC2059
+    "$ncommand" "$(printf "${CONFIG[notify.format]:-%s %s}" \
+      "$(username "$uid")")" \
+      "${EVENTS_MESG[$eid]}"
+
+    echo "$date" > "${last_date_file}"
   fi
-
-  content_path="$path/$TIMELINE_CONTENT"
-  follow_path="$path/$TIMELINE_FOLLOW"
-  show_own="${CONFIG["timeline.own-posts"]}"
-  pattern=("⣾" "⣽" "⣻" "⢿" "⡿" "⣟" "⣯" "⣷")
-
-  if ! [[ -r "$content_path" ]]; then
-    error $"Content path does not exists."
-    error $"Maybe you delete your account data?"
-    E=1 error $"Try $0 account rebuild $(account_active_name) to recreate it automatically"
-  fi
-
-  # Load our account timeline
-  [[ "$show_own" = "false" ]] ||
-    event_load "$oid" "${content_path}"
-
-  local dir i=0
-
-  if [[ -d "${follow_path}" ]]; then
-    for dir in "${follow_path}"/*; do
-      [[ -d "$dir" ]] || continue  # ignore non-dir files
-      [[ -r "$dir/$TIMELINE_CONTENT" ]] || continue # ignore non initialized
-
-      dir="${dir%/}"
-      echo -en "\r${pattern[$((i % ${#pattern[@]}))]}\r"
-      event_load "${dir##*/}" "${dir}/$TIMELINE_CONTENT"
-    done
-  fi
-}
-
-# fun: timeline_filter <eid>
-# txt: return true if the item should be filtered and false if not.
-timeline_filter ()
-{
-  local eid="$1"
-  local ret=1
-
-  filter_eval hide "$eid" &&
-    timeline_hide_thread "$eid" && ret=0
-
-  filter_eval show "$eid" &&
-    timeline_show_thread "$eid" && ret=1
-
-  return "$ret"
-}
-
-
-# fun: timeline_hide_thread <eid>
-# txt: hide the thread of the specific EID
-timeline_hide_thread ()
-{
-  TIMELINE_PRINTED["$1"]=1
-  for event in $(event_labels "$1"); do
-    timeline_hide_thread "$event"
-  done
-  for event in $(event_replies "$1"); do
-    timeline_hide_thread "$event"
-  done
-  return 0
-}
-
-# fun: timeline_show_thread <eid>
-# txt: show the thread of the specific EID
-timeline_show_thread ()
-{
-  unset TIMELINE_PRINTED["$1"]
-  for event in $(event_labels "$1"); do
-    timeline_show_thread "$event"
-  done
-  for event in $(event_replies "$1"); do
-    timeline_show_thread "$event"
-  done
-  return 0
-}
-
-# fun: timeline_list_thread <eid>
-# txt: print thread for specific eid passed as argument
-timeline_list_thread ()
-{
-  local prefix indent date kind mesg tags link name eid="$1"
-  local flag show_tags show_replies flags=''
-
-  # item is already printed? then do nothing
-  [[ "${TIMELINE_PRINTED["$eid"]}" ]] && return
-
-  date="${EVENTS_DATE["$eid"]}"
-  kind="${EVENTS_KIND["$eid"]}"
-  name="$(username "$eid")"
-  sign="${EVENTS_SIGN["$eid"]}"
-
-  case "$kind" in
-    post)
-      mesg="${EVENTS_MESG["$eid"]}"
-      timeline_filter "$eid" && return
-      ;;
-    tag)
-      tags="${EVENTS_TAGS["$eid"]// /, }"
-      link="${EVENTS_LINK["$eid"]}"
-      ;;
-    reply)
-      mesg="${EVENTS_MESG["$eid"]}"
-      link="${EVENTS_LINK["$eid"]}"
-      ;;
-  esac
-
-  indent="${CONFIG["timeline.$kind.indent"]}"
-  prefix="${CONFIG["timeline.$kind.prefix"]}"
-
-  case "${sign}" in
-    G) flags+="${CONFIG["timeline.$kind.flag-signed-good"]}";;
-    B) flags+="${CONFIG["timeline.$kind.flag-signed-bad"]}";;
-    U) flags+="${CONFIG["timeline.$kind.flag-signed-unknown"]}";;
-    X|Y) flags+="${CONFIG["timeline.$kind.flag-signed-expired"]}";;
-    R) flags+="${CONFIG["timeline.$kind.flag-signed-revoked"]}";;
-    E) flags+="${CONFIG["timeline.$kind.flag-signed-missing"]}";;
-    *) flags+="${CONFIG["timeline.$kind.flag-signed-none"]}";;
-  esac
-
-  # composing the output
-  format_compose "timeline.$kind" index "${#TIMELINE_INDEX[@]}"
-  format_compose "timeline.$kind" name "$name"
-  format_compose "timeline.$kind" date "$date"
-  format_compose "timeline.$kind" tags "${2}${indent}${prefix}${tags}"
-  format_compose "timeline.$kind" link "$link"
-  format_compose "timeline.$kind" score "${EVENTS_SCORE["$eid"]}"
-  format_compose "timeline.$kind" mesg "${2}${indent}${prefix}${mesg}"
-
-  TIMELINE_PRINTED["$eid"]=1
-  TIMELINE_INDEX+=( "$eid" )
-
-  show_tags="${CONFIG["timeline.show-tags"]}"
-  show_replies="${CONFIG["timeline.show-replies"]}"
-
-  if [[ "$show_tags" != "true" ]]; then
-    if [[ "$(event_labels "$eid")" ]]; then
-      flags+="${CONFIG["timeline.$kind.flag-tagged"]}"
-    else
-      flags+=" "
-    fi
-  fi
-
-  if [[ "$show_replies" != "true" ]]; then
-    if [[ "$(event_replies "$eid")" ]]; then
-      flags+="${CONFIG["timeline.$kind.flag-replied"]}"
-    else
-      flags+=" "
-    fi
-  fi
-
-  format_compose "timeline.$kind" flags "${flags}"
-  format_dumps "timeline.$kind"
-
-  if [[ "$show_tags" = "true" ]]; then
-    for tags in $(event_labels "$eid"); do
-      timeline_list_thread "$tags" "$2${indent}"
-    done
-  fi
-
-  if [[ "$show_replies" = "true" ]]; then
-    for reply in $(event_replies "$eid"); do
-      timeline_list_thread "$reply" "$2${indent}"
-    done
-  fi
-}
-
-# fun: timeline_list [filter]
-# txt: print the entire timelist
-timeline_list ()
-{
-  TIMELINE_PRINTED=()
-  TIMELINE_INDEX=()
-
-  local -a filter_show
-  local -a filter_hide
-
-  read -ra filter_show < <( config_get_empty timeline.filter.show )
-  read -ra filter_hide < <( config_get_empty timeline.filter.hide )
-
-  [[ "${#filter_show[@]}" -gt 0 ]] &&
-    filter_add show "${filter_show[@]}"
-
-  [[ "${#filter_hide[@]}" -gt 0 ]] &&
-    filter_add hide "${filter_hide[@]}"
-
-  if [[ "$1" ]]; then
-    filter_add hide "tag:*"
-    filter_add show "$@"
-  fi
-
-  for eid in "${EVENTS_SORTED[@]}"; do
-    if [[ "${EVENTS_KIND["$eid"]}" = "post" ]]; then
-      timeline_list_thread "$eid" ''
-    fi
-  done
-
-  timeline_index_save
-}
-
-# fun: timeline_index_save
-# txt: dumps TIMELINE_INDEX to a sourceable file to be loaded before any
-#      input to identify an event easily.
-timeline_index_save ()
-{
-  {
-    echo "declare -ag TIMELINE_INDEX=("
-    for var in "${TIMELINE_INDEX[@]}"; do
-      echo "'$var'"
-    done
-    echo ")"
-  } > "${CACHE_DIR}/.timeline-index"
-}
-
-# fun: timeline_index_load
-# txt: source index saved file with timeline_index_save
-timeline_index_load ()
-{
-  # shellcheck source=/dev/null
-  [[ -r "${CACHE_DIR}/.timeline-index" ]] &&
-    source "${CACHE_DIR}/.timeline-index" 
-}
-
-# fun: timeline_index_get <num>
-# txt: return the EID of the event indexed by number passed as argument
-timeline_index_get ()
-{
-  if [[ "$1" -ge ${#TIMELINE_INDEX[@]} ]]; then
-    E=1 error $"Index out of bounds: %s in %s" "$1" "TIMELINE_INDEX"
-  else
-    echo "${TIMELINE_INDEX[$1]}"
-  fi
-}
-
-# fun: timeline_edit
-# txt: interactively edit your timeline
-timeline_edit ()
-{
-  local content auto_push
-  content="$(account_active_path)/CONTENT"
-
-  if [[ -w "$content" ]]; then
-
-    auto_push="${CONFIG["account.$(account_active_name).auto-push"]}"
-
-    if ! [[ "$auto_push" ]]; then
-      auto_push="$(config_get account.auto-push)"
-    fi
-
-    ${EDITOR:-nano} "$content"
-
-    account_commit | info_multi
-
-    if [[ "$auto_push" = "true" ]]; then
-      account_push | info_multi
-    fi
-
-  else
-    fatal $"Unable to edit CONTENT file"
-  fi
-}
-
-# fun: timeline_orphans
-# txt: show orphan events in the timeline
-timeline_orphans ()
-{
-  for eid in ${EVENTS_CROSS_REPLY[@]}; do
-    timeline_list_thread "$eid"
-  done
-  for eid in ${EVENTS_CROSS_TAGS[@]}; do
-    timeline_list_thread "$eid"
-  done
-  for eid in ${EVENTS_CROSS_SCORE[@]}; do
-    timeline_list_thread "$eid"
-  done
-  timeline_index_save
 }
 main "$@"

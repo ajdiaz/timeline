@@ -6,7 +6,7 @@
 history_load ()
 {
   hist_enabled="$(config_get history.enabled)"
-  hist_file="$(config_get_empty history.file)"
+  hist_file="${CONFIG[history.file]}"
 
   history -c
 
@@ -23,7 +23,7 @@ history_load ()
 history_save ()
 {
   hist_enabled="$(config_get history.enabled)"
-  hist_file="$(config_get_empty history.file)"
+  hist_file="${CONFIG[history.file]}"
 
   [ "${hist_enabled}" = "true" ] && [ "${hist_file}" ] &&
     history -w "${hist_file}"

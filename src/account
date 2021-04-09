@@ -29,7 +29,7 @@ account_load ()
 {
   local name="$1"
 
-  name="${name:-$(config_get_empty account.default)}"
+  name="${name:-${CONFIG[account.default]}}"
 
   if [[ -z "$name" ]]; then
 
@@ -98,7 +98,7 @@ account_create ()
 {
   local name="$1" push_url="$2" pull_url="$3" keyid="$4" path="$5"
 
-  if [[ "$(config_get_empty "account.$name.path")" ]]; then
+  if [[ "${CONFIG["account.$name.path"]}" ]]; then
     E=1 fatal $"Another account already exists with that name"
   else
     path="${path:-$(try_path "$(config_get account.path)")/$name}"
@@ -126,7 +126,7 @@ account_clone ()
 
   local name="$1" push_url="$2" pull_url="$3" keyid="$4" path="$5"
 
-  if ! $force && [[ "$(config_get_empty "account.$name.path")" ]]; then
+  if ! $force && [[ "${CONFIG["account.$name.path"]}" ]]; then
     E=1 fatal $"Another account already exists with that name"
   else
     path="${path:-$(try_path "$(config_get account.path)")/$name}"

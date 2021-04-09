@@ -201,8 +201,8 @@ timeline_list ()
   local -a filter_show
   local -a filter_hide
 
-  read -ra filter_show < <( config_get_empty timeline.filter.show )
-  read -ra filter_hide < <( config_get_empty timeline.filter.hide )
+  read -ra filter_show <<< "${CONFIG[timeline.filter.show]}"
+  read -ra filter_hide <<< "${CONFIG[timeline.filter.hide]}"
 
   [[ "${#filter_show[@]}" -gt 0 ]] &&
     filter_add show "${filter_show[@]}"
