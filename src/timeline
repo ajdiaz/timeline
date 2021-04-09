@@ -44,7 +44,7 @@ timeline_load ()
 
   local dir i=0
 
-  if [[ -f "${follow_path}" ]]; then
+  if [[ -d "${follow_path}" ]]; then
     for dir in "${follow_path}"/*; do
       [[ -d "$dir" ]] || continue  # ignore non-dir files
       [[ -r "$dir/$TIMELINE_CONTENT" ]] || continue # ignore non initialized
