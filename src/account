@@ -261,12 +261,17 @@ account_set_keyid ()
 #      specific if present.
 account_preview ()
 {
-  local tmpdir; tmpdir="$(temp_dir)"
-  command git clone "$1" "${tmpdir}" 2>&1 | info_multi ||
-    E=1 error $"Unable to clone remote repo"
+  local tmpdir depth
+  tmpdir="$(temp_dir)"
+  depth="${CONFIG[account.preview-depth]}"
 
+  [[ "$depth" = "-1" ]] && depth=""
+
+  command git clone ${depth:+--depth "${depth}"} "$1" "${tmpdir}" 2>&1 |
+    info_multi ||
+      E=1 error $"Unable to clone remote repo"
+
+  timeline_load "${tmpdir}" "$(oid "$1")"
   shift
-  account_refresh "${tmpdir}"
-  timeline_load "${tmpdir}"
   timeline_list "$@"
 }

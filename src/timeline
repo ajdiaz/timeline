@@ -16,17 +16,15 @@ declare -A TIMELINE_PRINTED=()
 #      easy refer to an event
 declare -a TIMELINE_INDEX=()
 
-# fun: timeline_load [path]
+# fun: timeline_load [path] [oid]
 # txt: load the timeline from current active account into memory
 timeline_load ()
 {
-  local oid content_path follow_path show_own path="$1"
+  local oid="$2" content_path follow_path show_own path="$1"
 
   if [[ -z "$path" ]]; then
     path="$(account_active_path)"
     oid="$(account_active_oid)"
-  else
-    oid="$(oid "$name")"
   fi
 
   content_path="$path/$TIMELINE_CONTENT"

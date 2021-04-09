@@ -8,6 +8,7 @@ declare -xA CONFIG=(
   [interactive.show-banner]=true
   [account.auto-push]=true
   [account.content-markdown]=true
+  [account.preview-depth]=100
   [account.default]=''
   [account.keyid]=''
   [account.path]="$HOME/.local/share/tl/account:$HOME/.tl/account"
