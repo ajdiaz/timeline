@@ -16,7 +16,7 @@ declare -A TIMELINE_PRINTED=()
 #      easy refer to an event
 declare -a TIMELINE_INDEX=()
 
-# fun: timeline_load 
+# fun: timeline_load
 # txt: load the timeline from current active account into memory
 timeline_load ()
 {

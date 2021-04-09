@@ -1,5 +1,5 @@
 #! /bin/bash -i
-TIMELINE_VERSION='1.7'
+TIMELINE_VERSION='1.7-1-gf36a085'
 ## vim:ft=sh
 
 # env: DAEMON_LOG_FILE: Internal variable where file redirections are saved.
@@ -873,121 +873,6 @@ info_multi ()
   }
   # shellcheck disable=SC2034
   mapfile -c 1 -C _i
-}
-#! /usr/bin/env bash
-# 
-# Copyright (C) 2016  Andrés J. Díaz <ajdiaz@ajdiaz.me>
-# 
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-# 
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-# 
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <http://www.gnu.org/licenses/>.
-
-# env: INTERACTIVE: if true, then interactive mode is enabled
-export INTERACTIVE=
-
-# env: CONFIG_FILE: should contain the path to the config file
-export CONFIG_FILE=
-
-# env: CACHE_DIR: should contain the path to the cache directory
-export CACHE_DIR=
-
-# fun: prompt
-# txt: print prompt in interactive mode
-prompt ()
-{
-  local name
-  name="$(account_active_name)"
-
-  format_compose prompt account "${name:-<none>}"
-  format_dumps prompt
-}
-
-# fun: main_interactive
-# txt: evaluate commands in interactive mode
-main_interactive ()
-{
-  local cmd
-  local -a args
-
-  history_load
-  complete_load
-  command_account_active "$(account_active_name)"
-
-  while true; do
-    read -a args -e -r -p "$(T=true prompt)"
-    [ $? -eq 1 ] && break
-    cmd="${args[0]}"
-    local -a args=( "${args[@]:1}" )
-
-    [ "$cmd" ] || continue
-    history_append "$cmd ${args[*]}"
-    main_standalone "$cmd" "${args[@]}"
-  done
-  history_save
-}
-
-# fun: main_standalone <cmd> [args]...
-# txt: evaluate command passed as argument
-main_standalone ()
-{
-  local cmd="$1"; shift
-
-  if fun "command_$cmd"; then
-    "command_$cmd" "$@"
-  else
-    read -ra alias < <( config_get_empty "alias.$cmd" )
-
-    if [[ "${alias[*]}" ]]; then
-      main_standalone "${alias[@]}" "$@"
-    else
-      E=2 fatal $"Invalid command '%s'." "$cmd"
-    fi
-  fi
-}
-
-# fun: main [args]...
-# txt: entry point :D
-main ()
-{
-  local config_path="$HOME/.config/tl/config:$HOME/.tl/config:$HOME/.tlrc"
-  
-  CONFIG_FILE="$(try_path "$config_path")"
-  INTERACTIVE=false
-
-  reqs_eval
-  args_eval "$@" || shift $?
-
-  [ -r "${CONFIG_FILE}" ] && config_load "${CONFIG_FILE}"
-
-  CACHE_DIR="$(try_path "$(config_get cache.path)")"
-  mkdir -p "${CACHE_DIR}"
-
-  # load the timeline index to operate with previous listed timeline
-  timeline_index_load
-
-  if [ $# -eq 0 ]; then
-    if [[ "$(config_get_empty interactive.show-banner)" = "true" ]]; then
-      info "timeline  Copyright (C) %(%Y)T Andrés J. Díaz" "$(timestamp)"
-      info "This program comes with ABSOLUTELY NO WARRANTY; for details"
-      info "type 'license'. This is free software, and you are welcome to"
-      info "redistribute it under certain conditions; type 'license' for"
-      info "details."
-    fi
-
-    INTERACTIVE=true
-    main_interactive "$@"
-  else
-    main_standalone "$@"
-  fi
 }
 ## vim:ft=sh
 
@@ -3308,6 +3193,60 @@ command_version ()
   echo "${TIMELINE_VERSION:-Unknown version}"
 }
 
+# help:fun: directory {refresh|add|del|list|search} {args...}
+# help:txt: Manage public directories
+command_directory ()
+{
+  local cmd="$1"; shift
+  if fun "command_directory_$cmd"; then
+    "command_directory_$cmd" "$@"
+  else
+    E=1 error "$NOSUBCMD" "$cmd" "directory"
+  fi
+}
+
+# help:directory:fun: refresh [directory name]
+# help:directory:txt: Refresh the directory data for a specific directory or for
+# help:directory:txt: all directories in the config
+command_directory_refresh ()
+{
+  directory_refresh "$@" | info_multi
+}
+
+# help:directory:fun: add [--force] <name> <url>
+# help:directory:txt: Add a new directory to the config
+command_directory_add ()
+{
+  directory_add "$@"
+  config_save "${CONFIG_FILE}"
+}
+
+# help:directory:fun: del <name>
+# help:directory:txt: Delete directory from the config
+command_directory_del ()
+{
+  [[ -z "$1" ]] && E=2 error $"Directory name is required"
+  directory_del "$@"
+  config_save "${CONFIG_FILE}"
+}
+
+# help:directory:fun: list
+# help:directory:txt: List all directories in config
+command_directory_list ()
+{
+  directory_list | info_multi
+}
+
+# help:directory:fun: search <regexp>+
+# help:directory:txt: Search for expressions in public directories.
+command_directory_search ()
+{
+  local exp
+  for exp in "$@"; do
+    directory_search "$exp"
+  done | info_multi
+}
+
 # hey! you do not want to use this, only for debug purposes
 if ${DEBUG:-false}; then
   command_debug ()
@@ -3315,6 +3254,602 @@ if ${DEBUG:-false}; then
     eval "$@"
   }
 fi
+#! /usr/bin/env bash
+# 
+# Copyright (C) 2016  Andrés J. Díaz <ajdiaz@ajdiaz.me>
+# 
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+# 
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+# 
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# env: INTERACTIVE: if true, then interactive mode is enabled
+export INTERACTIVE=
+
+# env: CONFIG_FILE: should contain the path to the config file
+export CONFIG_FILE=
+
+# env: CACHE_DIR: should contain the path to the cache directory
+export CACHE_DIR=
+
+# fun: prompt
+# txt: print prompt in interactive mode
+prompt ()
+{
+  local name
+  name="$(account_active_name)"
+
+  format_compose prompt account "${name:-<none>}"
+  format_dumps prompt
+}
+
+# fun: main_interactive
+# txt: evaluate commands in interactive mode
+main_interactive ()
+{
+  local cmd
+  local -a args
+
+  history_load
+  complete_load
+  command_account_active "$(account_active_name)"
+
+  while true; do
+    read -a args -e -r -p "$(T=true prompt)"
+    [ $? -eq 1 ] && break
+    cmd="${args[0]}"
+    local -a args=( "${args[@]:1}" )
+
+    [ "$cmd" ] || continue
+    history_append "$cmd ${args[*]}"
+    main_standalone "$cmd" "${args[@]}"
+  done
+  history_save
+}
+
+# fun: main_standalone <cmd> [args]...
+# txt: evaluate command passed as argument
+main_standalone ()
+{
+  local cmd="$1"; shift
+
+  if fun "command_$cmd"; then
+    "command_$cmd" "$@"
+  else
+    read -ra alias < <( config_get_empty "alias.$cmd" )
+
+    if [[ "${alias[*]}" ]]; then
+      main_standalone "${alias[@]}" "$@"
+    else
+      E=2 fatal $"Invalid command '%s'." "$cmd"
+    fi
+  fi
+}
+
+# fun: main [args]...
+# txt: entry point :D
+main ()
+{
+  local config_path="$HOME/.config/tl/config:$HOME/.tl/config:$HOME/.tlrc"
+  local major minor ver
+
+  # check BASH
+  if [[ "${BASH_VERSINFO[0]}" -lt 5 ]]; then
+    E=1 error $"bash >= 5 is required"
+  fi
+  
+  CONFIG_FILE="$(try_path "$config_path")"
+  INTERACTIVE=false
+
+  reqs_eval
+
+  # check git version since it's a core requirement
+  read -r _ _ ver < <(git --version)
+  IFS=. read -r major minor _ <<<"$ver"
+
+  if [[ "$major" -lt "2" ]] || [[ "$minor" -lt 30 ]]; then
+    E=1 error $"git version >= 2.30 is required"
+  fi
+
+  args_eval "$@" || shift $?
+
+  [ -r "${CONFIG_FILE}" ] && config_load "${CONFIG_FILE}"
+
+  CACHE_DIR="$(try_path "$(config_get cache.path)")"
+  mkdir -p "${CACHE_DIR}"
+
+  # load the timeline index to operate with previous listed timeline
+  timeline_index_load
+
+  if [ $# -eq 0 ]; then
+    if [[ "$(config_get_empty interactive.show-banner)" = "true" ]]; then
+      info "timeline  Copyright (C) %(%Y)T Andrés J. Díaz" "$(timestamp)"
+      info "This program comes with ABSOLUTELY NO WARRANTY; for details"
+      info "type 'license'. This is free software, and you are welcome to"
+      info "redistribute it under certain conditions; type 'license' for"
+      info "details."
+    fi
+
+    INTERACTIVE=true
+    main_interactive "$@"
+  else
+    main_standalone "$@"
+  fi
+}
+## vim:ft=sh
+
+# env: CONFIG: associative array contains the configuration values. This
+#      array should be loaded from file with `config_load` function, and
+#      accessed by `config_get` and `config_set` to read and write,
+#      res pectively.
+declare -xA CONFIG=(
+  [interactive.show-banner]=true
+  [account.auto-push]=true
+  [account.content-markdown]=true
+  [account.default]=''
+  [account.keyid]=''
+  [account.path]="$HOME/.local/share/tl/account:$HOME/.tl/account"
+  [plugin.path]="$HOME/.local/share/tl/plugin:$HOME/.tl/plugin"
+  [cache.path]="$HOME/.cache/tl:$HOME/.tl/cache"
+  [git.jobs]='4'
+  [network.depth]=10
+  [prompt.format]='%b%s:%b '
+  [prompt.fields]='account'
+  [prompt.color]='7,'
+  [prompt.color-name]='7,'
+  [history.enabled]=true
+  [history.file]="$HOME/.local/share/tl/history"
+  [timeline.show-untrusted-items]=true
+  [timeline.show-replies]=true
+  [timeline.show-tags]=false
+  [timeline.react-on-all]=true
+  [timeline.filter.show]=''
+  [timeline.filter.hide]='tag:spam score-min:0'
+  [timeline.own-posts]=true
+  [timeline.max-posts]=100
+  [timeline.max-user-posts]=20
+  [timeline.use-short-ids]=true
+  [timeline.post.format]='%b%-3d%b %b%(%Y%m%d %H%M%S)T%b %b%10s%b [%b%s%b] (%b%d%b) %b%s%b'
+  [timeline.post.fields]='index,date,name,flags,score,mesg'
+  [timeline.post.highlight-mesg]='@[^\ ,.:;=\!\?]+'
+  [timeline.post.prefix]=''
+  [timeline.post.color]='7,'
+  [timeline.post.color-index]='7,'
+  [timeline.post.color-date]='7,'
+  [timeline.post.color-name]='7,'
+  [timeline.post.color-flags]='7,'
+  [timeline.post.color-mesg]='7,'
+  [timeline.post.color-score]='7,'
+  [timeline.post.style-index]='normal'
+  [timeline.post.style-date]='normal'
+  [timeline.post.style-name]='normal'
+  [timeline.post.style-flags]='normal'
+  [timeline.post.style-mesg]='normal'
+  [timeline.post.style-score]='normal'
+  [timeline.post.flag-signed-good]='S'
+  [timeline.post.flag-signed-bad]='!'
+  [timeline.post.flag-signed-unknown]='?'
+  [timeline.post.flag-signed-expired]='X'
+  [timeline.post.flag-signed-revoked]='R'
+  [timeline.post.flag-signed-missing]='m'
+  [timeline.post.flag-signed-none]=' '
+  [timeline.post.flag-tagged]='T'
+  [timeline.post.flag-replied]='R'
+  [timeline.tag.format]='%b%-3d%b %b%(%Y%m%d %H%M%S)T%b %b%10s%b [%b%s%b] (%b%d%b) %b%s%b'
+  [timeline.tag.fields]='index,date,name,flags,score,tags'
+  [timeline.tag.prefix]='# '
+  [timeline.tag.indent]=' '
+  [timeline.tag.color]='7,'
+  [timeline.tag.color-index]='7,'
+  [timeline.tag.color-date]='7,'
+  [timeline.tag.color-name]='7,'
+  [timeline.tag.color-mesg]='7,'
+  [timeline.tag.color-score]='7,'
+  [timeline.tag.color-flags]='7,'
+  [timeline.tag.color-tags]='7,'
+  [timeline.tag.style-index]='normal'
+  [timeline.tag.style-date]='normal'
+  [timeline.tag.style-name]='normal'
+  [timeline.tag.style-score]='normal'
+  [timeline.tag.style-flags]='normal'
+  [timeline.tag.style-tags]='normal'
+  [timeline.tag.flag-signed-good]='S'
+  [timeline.tag.flag-signed-bad]='!'
+  [timeline.tag.flag-signed-unknown]='?'
+  [timeline.tag.flag-signed-expired]='X'
+  [timeline.tag.flag-signed-revoked]='R'
+  [timeline.tag.flag-signed-missing]='m'
+  [timeline.tag.flag-signed-none]=' '
+  [timeline.tag.flag-tagged]='T'
+  [timeline.tag.flag-replied]='R'
+  [timeline.reply.format]='%b%-3d%b %b%(%Y%m%d %H%M%S)T%b %b%10s%b [%b%s%b] (%b%d%b) %b%s%b'
+  [timeline.reply.fields]='index,date,name,flags,score,mesg'
+  [timeline.reply.highlight-mesg]='@[^\ ,.:;=\!\?]+'
+  [timeline.reply.prefix]='> '
+  [timeline.reply.indent]=' '
+  [timeline.reply.color]='7,'
+  [timeline.reply.color-index]='7,'
+  [timeline.reply.color-date]='7,'
+  [timeline.reply.color-name]='7,'
+  [timeline.reply.color-flags]='7,'
+  [timeline.reply.color-mesg]='7,'
+  [timeline.reply.color-score]='7,'
+  [timeline.reply.style-index]='normal'
+  [timeline.reply.style-date]='normal'
+  [timeline.reply.style-name]='normal'
+  [timeline.reply.style-score]='normal'
+  [timeline.reply.style-flags]='normal'
+  [timeline.reply.style-mesg]='normal'
+  [timeline.reply.flag-signed-good]='S'
+  [timeline.reply.flag-signed-bad]='!'
+  [timeline.reply.flag-signed-unknown]='?'
+  [timeline.reply.flag-signed-expired]='X'
+  [timeline.reply.flag-signed-revoked]='R'
+  [timeline.reply.flag-signed-missing]='m'
+  [timeline.reply.flag-signed-none]=' '
+  [timeline.reply.flag-tagged]='T'
+  [timeline.reply.flag-replied]='R'
+  [timeline.fatal.format]='*** %b%(%Y%m%d %H%M%S)T%b %b%10s%b %b%s%b'
+  [timeline.fatal.fields]='date,name,mesg'
+  [timeline.fatal.name]='FATAL'
+  [timeline.fatal.color]='7,'
+  [timeline.fatal.color-date]='7,'
+  [timeline.fatal.color-name]='7,'
+  [timeline.fatal.color-mesg]='7,'
+  [timeline.fatal.style-date]='normal'
+  [timeline.fatal.style-name]='normal'
+  [timeline.fatal.style-mesg]='normal'
+  [timeline.error.format]='*** %b%(%Y%m%d %H%M%S)T%b %b%10s%b %b%s%b'
+  [timeline.error.fields]='date,name,mesg'
+  [timeline.error.name]='ERROR'
+  [timeline.error.color]='7,'
+  [timeline.error.color-date]='7,'
+  [timeline.error.color-name]='7,'
+  [timeline.error.color-mesg]='7,'
+  [timeline.error.style-date]='normal'
+  [timeline.error.style-name]='normal'
+  [timeline.error.style-mesg]='normal'
+  [timeline.info.format]='*** %b%(%Y%m%d %H%M%S)T%b %b%10s%b %b%s%b'
+  [timeline.info.fields]='date,name,mesg'
+  [timeline.info.name]='INFO'
+  [timeline.info.color]='7,'
+  [timeline.info.color-date]='7,'
+  [timeline.info.color-name]='7,'
+  [timeline.info.color-mesg]='7,'
+  [timeline.info.style-date]='normal'
+  [timeline.info.style-name]='normal'
+  [timeline.info.style-mesg]='normal'
+  [timeline.consistent-colors]=''
+  [network.list.format]='*** %b%(%Y%m%d %H%M%S)T%b %b%10s%b  score: %b%-03d%b  %b%-10s%b %b%s%b'
+  [network.list.fields]='date,name,score,user,url'
+  [network.list.color-score]='7,'
+  [network.list.color-date]='7,'
+  [network.list.color-name]='7,'
+  [network.list.color-user]='7,'
+  [network.list.color-url]='7,'
+  [network.list.color]='7,'
+  [network.list.style-date]='normal'
+  [network.list.style-name]='normal'
+  [network.list.style-score]='normal'
+  [network.list.style-user]='normal'
+  [network.list.style-url]='normal'
+  [network.show-followers]=true
+  [network.follower.format]='*** %b%(%Y%m%d %H%M%S)T%b %b%10s%b                         FOLLOWED BY %b%-10s%b'
+  [network.follower.fields]='date,name,user'
+  [network.follower-color-date]='7,'
+  [network.follower-color-name]='7,'
+  [network.follower-color-user]='7,'
+  [network.follower.color]='7,'
+  [daemon.interval]='300'
+  [daemon.commands]='timeline refresh'
+  [daemon.pidfile]="${HOME}/.local/share/tl/daemon.pid"
+  [daemon.log.file]="${HOME}/.local/share/tl/daemon.log"
+  [daemon.log.level]=info
+  [notify.command]="notify-send"
+  [notify.format]='Knock knock from %s'
+  [notify.filter]="mention"
+  [notify.cache-file]="${HOME}/.cache/tl/notify.cache"
+  [directory.default]="https://tldir.ajdiaz.me/index.txt"
+  [alias.tr]='timeline refresh'
+  [alias.tl]='timeline list'
+  [alias.edit]='timeline edit'
+  [alias.e]='timeline edit'
+  [alias.post]='event post'
+  [alias.p]='event post'
+  [alias.reply]='event reply'
+  [alias.r]='event reply'
+  [alias.tag]='event tag'
+  [alias.info]='event info'
+  [alias.show]='event info'
+  [alias.score]='event score'
+  [alias.net]='network'
+  [alias.nl]='network list'
+  [alias.nr]='network refresh'
+  [alias.dir]='directory'
+  [alias.ds]='directory search'
+)
+
+export NO_COLORS=0
+export COLOR=false
+
+if test -t 1; then
+  case "$(tput colors)" in
+     8)
+       export COLOR=true
+       CONFIG['timeline.post.color']=8,
+       CONFIG['timeline.post.color-date']=8,
+       CONFIG['timeline.post.color-mesg']=7,
+       CONFIG['timeline.post.color-flags']=11,
+       CONFIG['timeline.post.color-score']=3,
+       CONFIG['timeline.post.color-name']=CONSISTENT,
+       CONFIG['timeline.reply.color']=8,
+       CONFIG['timeline.reply.color-date']=8,
+       CONFIG['timeline.reply.color-mesg']=7,
+       CONFIG['timeline.reply.color-flags']=11,
+       CONFIG['timeline.reply.color-score']=3,
+       CONFIG['timeline.reply.color-name']=CONSISTENT,
+       CONFIG['timeline.tag.color']=8,
+       CONFIG['timeline.tag.color-date']=8,
+       CONFIG['timeline.tag.color-tags']=3,
+       CONFIG['timeline.tag.color-name']=CONSISTENT,
+       CONFIG['timeline.tag.color-flags']=11,
+       CONFIG['timeline.tag.color-score']=3,
+       CONFIG['timeline.info.color']=8,
+       CONFIG['timeline.info.color-date']=8,
+       CONFIG['timeline.info.color-name']=6,
+       CONFIG['timeline.info.color-mesg']=7,
+       CONFIG['timeline.error.color']=8,
+       CONFIG['timeline.error.color-date']=8,
+       CONFIG['timeline.error.color-name']=4,
+       CONFIG['timeline.error.color-mesg']=7,
+       CONFIG['timeline.fatal.color']=8,
+       CONFIG['timeline.fatal.color-date']=8,
+       CONFIG['timeline.fatal.color-name']=4,
+       CONFIG['timeline.fatal.color-mesg']=7,
+       CONFIG['timeline.consistent-colors']="3,5,6,9"
+       CONFIG['network.list.color-date']=8,
+       CONFIG['network.list.color-name']=6,
+       CONFIG['network.list.color-score']=3,
+       CONFIG['network.list.color-user']=CONSISTENT,
+       CONFIG['network.list.color-url']=4,
+       CONFIG['network.follower.color-user']=6,
+       CONFIG['network.follower.color-name']=6,
+       CONFIG['network.follower.color-date']=8,
+       CONFIG['network.follower.color']=8,
+       CONFIG['prompt.color']=4,
+      ;;
+   256)
+       export COLOR=true
+       CONFIG['timeline.post.color']=240,
+       CONFIG['timeline.post.color-date']=240,
+       CONFIG['timeline.post.color-mesg']=7,
+       CONFIG['timeline.post.color-score']=3,
+       CONFIG['timeline.post.color-name']=CONSISTENT,
+       CONFIG['timeline.post.color-flags']=11,
+       CONFIG['timeline.reply.color']=240,
+       CONFIG['timeline.reply.color-date']=240,
+       CONFIG['timeline.reply.color-mesg']=245,
+       CONFIG['timeline.reply.color-score']=3,
+       CONFIG['timeline.reply.color-name']=CONSISTENT,
+       CONFIG['timeline.reply.color-flags']=11,
+       CONFIG['timeline.reply.prefix']='⤷ ' # XXX 256colors -> unicode!!!
+       CONFIG['timeline.tag.color']=240,
+       CONFIG['timeline.tag.color-date']=240,
+       CONFIG['timeline.tag.color-tags']=136,
+       CONFIG['timeline.tag.color-score']=3,
+       CONFIG['timeline.tag.color-name']=CONSISTENT,
+       CONFIG['timeline.tag.style-tags']=italic
+       CONFIG['timeline.tag.color-flags']=11,
+       CONFIG['timeline.info.color']=240,
+       CONFIG['timeline.info.color-date']=240,
+       CONFIG['timeline.info.color-name']=69,
+       CONFIG['timeline.info.color-mesg']=7,
+       CONFIG['timeline.info.style-mesg']=italic
+       CONFIG['timeline.error.color']=240,
+       CONFIG['timeline.error.color-date']=240,
+       CONFIG['timeline.error.color-name']=9,
+       CONFIG['timeline.error.color-mesg']=7,
+       CONFIG['timeline.fatal.color']=240,
+       CONFIG['timeline.fatal.color-date']=240,
+       CONFIG['timeline.fatal.color-name']=9,
+       CONFIG['timeline.fatal.color-mesg']=7,
+       CONFIG['timeline.consistent-colors']="34,139,149,199,209,173,153"
+       CONFIG['network.list.color-date']=240,
+       CONFIG['network.list.color-name']=165,
+       CONFIG['network.list.color-score']=226,
+       CONFIG['network.list.color-user']=CONSISTENT,
+       CONFIG['network.list.color-url']=69,
+       CONFIG['network.follower.color-user']=214,
+       CONFIG['network.follower.color-name']=165,
+       CONFIG['network.follower.color-date']=240,
+       CONFIG['network.follower.style-user']='italic'
+       CONFIG['network.follower.color']=240,
+       CONFIG['prompt.color']=69,
+       ;;
+   esac
+fi
+
+declare -xa AVAIL_COLORS
+IFS=',' read -ra AVAIL_COLORS <<<"${CONFIG[timeline.consistent-colors]}"
+
+# fun: config_load <filename>
+# txt: given a filename path as argument, read the content and save it in
+#      `$CONFIG` environment variable properly.
+config_load ()
+{
+  local IFS='='
+  while read -r key val; do
+    CONFIG["$key"]="$val"
+  done < <(command git config -f "$1" -l)
+}
+
+# fun: config_get <key>
+# txt: get the configuration value corresponding with the configuration
+#      keyword passed as argument, or fails if not found.
+config_get ()
+{
+  local val="${CONFIG["$1"]}"
+
+  [[ "$val" ]] ||
+    E=1 error $"Unknown configuration variable '%s'" "$1"
+
+  echo "$val"
+}
+
+# fun: config_get_empty <key>
+# txt: similar to `config_get`, but if key is not defined an empty value is
+#      returned instead of failing.
+config_get_empty ()
+{
+  echo "${CONFIG["$1"]}"
+}
+
+# fun: config_set <key> <val>
+# txt: set the properly value of configuration key passed as argument using
+#      value provided.
+config_set ()
+{
+  CONFIG["$1"]="$2"
+}
+
+# fun: config_unset key
+# txt: unset config key with named passed as parameter key.
+config_unset ()
+{
+  CONFIG["$1"]=''
+}
+
+# fun: config_iter <prefix>
+# txt: given a fixed prefix, return all keys matched with specified prefix.
+config_iter ()
+{
+  for key in "${!CONFIG[@]}"; do
+    case "$key" in
+      "$1"*) echo "$key";;
+    esac
+  done
+}
+
+# fun: config_save <filename>
+# txt: given a filename passed as argument, dump the content of `$CONFIG`
+#      variable to that file
+config_save ()
+{
+  local val
+
+  if [[ ! -d "${1%/*}" ]]; then
+    mkdir -p "${1%/*}"
+  fi
+
+  for var in "${!CONFIG[@]}"; do
+    val="${CONFIG["$var"]}"
+
+    if [[ "$val" ]]; then
+      command git config -f "$1" "$var" "${CONFIG["$var"]}"
+    else
+      mute command git config -f "$1" --remove-section "${var}" ||
+        command git config -f "$1" --unset "${var}"
+    fi
+  done
+}
+
+# fun: config_list
+# txt: print all configuration values
+config_list ()
+{
+  for var in "${!CONFIG[@]}"; do
+    echo "${var}=${CONFIG[$var]}"
+  done
+}
+## vim:ft=sh
+
+# fun: directory_requirements
+# txt: ensure that specific requirements for directory management are
+#      present in the system
+directory_requirements ()
+{
+  REQUIREMENTS+=( "+curl" "+grep" )
+  reqs_eval
+}
+
+# fun: directory_refresh [name]
+# txt: download directory files for specific directory or for all directories
+#      listed in config.
+directory_refresh ()
+{
+  local dir
+  directory_requirements
+
+  for dir in "${!CONFIG[@]}"; do
+    case "$dir" in
+      "directory.$1"*)
+        curl -qsSL -o "${CACHE_DIR}/$dir" --fail "${CONFIG[$dir]}" 2>&1 ||
+          E=1 error "Unable to refresh directory: ${dir#directory.}"
+        ;;
+    esac
+  done
+}
+# fun: directory_add [--force] <name> <url>
+# txt: add a directory to the config
+directory_add ()
+{
+  if [[ "$1" == "--force" ]]; then
+    local force=true; shift
+  else
+    local force=false
+  fi
+
+  [[ "$1" ]] || E=2 error $"Name is required for add a directory"
+  [[ "$2" ]] || E=2 error $"URL is required for add a directory"
+
+  if ! $force && [[ "${CONFIG["directory.$1"]}" ]]; then
+    error "Already exists a directory registered with name $1"
+    E=1 error "Use --force to override"
+  fi
+
+  CONFIG["directory.$1"]="$2"
+}
+
+# fun: directory_del <name>
+# txt: del a directory to the config
+directory_del ()
+{
+  [[ "$1" ]] || E=2 error $"Name is required for del a directory"a
+  CONFIG["directory.$1"]=''
+}
+
+# fun: directory_list
+# txt: list all directories in config
+directory_list ()
+{
+  for dir in "${!CONFIG[@]}"; do
+    case "$dir" in
+      directory.*)
+        echo "${dir#directory.}: ${CONFIG["$dir"]}"
+        ;;
+    esac
+  done
+}
+
+# fun: directory_search [pattern]
+# txt: search a pattern in directories
+directory_search ()
+{
+  local dir
+  for dir in "${CACHE_DIR}"/directory.*; do
+    [[ "dir" == "${CACHE_DIR}/directory.*" ]] && break
+
+    grep -v -e '^#' -e '^[ ]*$' "$dir" | grep -w "$1"
+  done
+}
 ## vim:ft=sh
 
 # env: TIMELINE_CONTENT: The path relative to the account root, where
@@ -3333,7 +3868,7 @@ declare -A TIMELINE_PRINTED=()
 #      easy refer to an event
 declare -a TIMELINE_INDEX=()
 
-# fun: timeline_load 
+# fun: timeline_load
 # txt: load the timeline from current active account into memory
 timeline_load ()
 {
@@ -3610,387 +4145,5 @@ timeline_orphans ()
     timeline_list_thread "$eid"
   done
   timeline_index_save
-}
-## vim:ft=sh
-
-# env: CONFIG: associative array contains the configuration values. This
-#      array should be loaded from file with `config_load` function, and
-#      accessed by `config_get` and `config_set` to read and write,
-#      res pectively.
-declare -xA CONFIG=(
-  [interactive.show-banner]=true
-  [account.auto-push]=true
-  [account.content-markdown]=true
-  [account.default]=''
-  [account.keyid]=''
-  [account.path]="$HOME/.local/share/tl/account:$HOME/.tl/account"
-  [plugin.path]="$HOME/.local/share/tl/plugin:$HOME/.tl/plugin"
-  [cache.path]="$HOME/.cache/tl:$HOME/.tl/cache"
-  [git.jobs]='4'
-  [network.depth]=10
-  [prompt.format]='%b%s:%b '
-  [prompt.fields]='account'
-  [prompt.color]='7,'
-  [prompt.color-name]='7,'
-  [history.enabled]=true
-  [history.file]="$HOME/.local/share/tl/history"
-  [timeline.show-untrusted-items]=true
-  [timeline.show-replies]=true
-  [timeline.show-tags]=false
-  [timeline.react-on-all]=true
-  [timeline.filter.show]=''
-  [timeline.filter.hide]='tag:spam score-min:0'
-  [timeline.own-posts]=true
-  [timeline.max-posts]=100
-  [timeline.max-user-posts]=20
-  [timeline.use-short-ids]=true
-  [timeline.post.format]='%b%-3d%b %b%(%Y%m%d %H%M%S)T%b %b%10s%b [%b%s%b] (%b%d%b) %b%s%b'
-  [timeline.post.fields]='index,date,name,flags,score,mesg'
-  [timeline.post.highlight-mesg]='@[^\ ,.:;=\!\?]+'
-  [timeline.post.prefix]=''
-  [timeline.post.color]='7,'
-  [timeline.post.color-index]='7,'
-  [timeline.post.color-date]='7,'
-  [timeline.post.color-name]='7,'
-  [timeline.post.color-flags]='7,'
-  [timeline.post.color-mesg]='7,'
-  [timeline.post.color-score]='7,'
-  [timeline.post.style-index]='normal'
-  [timeline.post.style-date]='normal'
-  [timeline.post.style-name]='normal'
-  [timeline.post.style-flags]='normal'
-  [timeline.post.style-mesg]='normal'
-  [timeline.post.style-score]='normal'
-  [timeline.post.flag-signed-good]='S'
-  [timeline.post.flag-signed-bad]='!'
-  [timeline.post.flag-signed-unknown]='?'
-  [timeline.post.flag-signed-expired]='X'
-  [timeline.post.flag-signed-revoked]='R'
-  [timeline.post.flag-signed-missing]='m'
-  [timeline.post.flag-signed-none]=' '
-  [timeline.post.flag-tagged]='T'
-  [timeline.post.flag-replied]='R'
-  [timeline.tag.format]='%b%-3d%b %b%(%Y%m%d %H%M%S)T%b %b%10s%b [%b%s%b] (%b%d%b) %b%s%b'
-  [timeline.tag.fields]='index,date,name,flags,score,tags'
-  [timeline.tag.prefix]='# '
-  [timeline.tag.indent]=' '
-  [timeline.tag.color]='7,'
-  [timeline.tag.color-index]='7,'
-  [timeline.tag.color-date]='7,'
-  [timeline.tag.color-name]='7,'
-  [timeline.tag.color-mesg]='7,'
-  [timeline.tag.color-score]='7,'
-  [timeline.tag.color-flags]='7,'
-  [timeline.tag.color-tags]='7,'
-  [timeline.tag.style-index]='normal'
-  [timeline.tag.style-date]='normal'
-  [timeline.tag.style-name]='normal'
-  [timeline.tag.style-score]='normal'
-  [timeline.tag.style-flags]='normal'
-  [timeline.tag.style-tags]='normal'
-  [timeline.tag.flag-signed-good]='S'
-  [timeline.tag.flag-signed-bad]='!'
-  [timeline.tag.flag-signed-unknown]='?'
-  [timeline.tag.flag-signed-expired]='X'
-  [timeline.tag.flag-signed-revoked]='R'
-  [timeline.tag.flag-signed-missing]='m'
-  [timeline.tag.flag-signed-none]=' '
-  [timeline.tag.flag-tagged]='T'
-  [timeline.tag.flag-replied]='R'
-  [timeline.reply.format]='%b%-3d%b %b%(%Y%m%d %H%M%S)T%b %b%10s%b [%b%s%b] (%b%d%b) %b%s%b'
-  [timeline.reply.fields]='index,date,name,flags,score,mesg'
-  [timeline.reply.highlight-mesg]='@[^\ ,.:;=\!\?]+'
-  [timeline.reply.prefix]='> '
-  [timeline.reply.indent]=' '
-  [timeline.reply.color]='7,'
-  [timeline.reply.color-index]='7,'
-  [timeline.reply.color-date]='7,'
-  [timeline.reply.color-name]='7,'
-  [timeline.reply.color-flags]='7,'
-  [timeline.reply.color-mesg]='7,'
-  [timeline.reply.color-score]='7,'
-  [timeline.reply.style-index]='normal'
-  [timeline.reply.style-date]='normal'
-  [timeline.reply.style-name]='normal'
-  [timeline.reply.style-score]='normal'
-  [timeline.reply.style-flags]='normal'
-  [timeline.reply.style-mesg]='normal'
-  [timeline.reply.flag-signed-good]='S'
-  [timeline.reply.flag-signed-bad]='!'
-  [timeline.reply.flag-signed-unknown]='?'
-  [timeline.reply.flag-signed-expired]='X'
-  [timeline.reply.flag-signed-revoked]='R'
-  [timeline.reply.flag-signed-missing]='m'
-  [timeline.reply.flag-signed-none]=' '
-  [timeline.reply.flag-tagged]='T'
-  [timeline.reply.flag-replied]='R'
-  [timeline.fatal.format]='*** %b%(%Y%m%d %H%M%S)T%b %b%10s%b %b%s%b'
-  [timeline.fatal.fields]='date,name,mesg'
-  [timeline.fatal.name]='FATAL'
-  [timeline.fatal.color]='7,'
-  [timeline.fatal.color-date]='7,'
-  [timeline.fatal.color-name]='7,'
-  [timeline.fatal.color-mesg]='7,'
-  [timeline.fatal.style-date]='normal'
-  [timeline.fatal.style-name]='normal'
-  [timeline.fatal.style-mesg]='normal'
-  [timeline.error.format]='*** %b%(%Y%m%d %H%M%S)T%b %b%10s%b %b%s%b'
-  [timeline.error.fields]='date,name,mesg'
-  [timeline.error.name]='ERROR'
-  [timeline.error.color]='7,'
-  [timeline.error.color-date]='7,'
-  [timeline.error.color-name]='7,'
-  [timeline.error.color-mesg]='7,'
-  [timeline.error.style-date]='normal'
-  [timeline.error.style-name]='normal'
-  [timeline.error.style-mesg]='normal'
-  [timeline.info.format]='*** %b%(%Y%m%d %H%M%S)T%b %b%10s%b %b%s%b'
-  [timeline.info.fields]='date,name,mesg'
-  [timeline.info.name]='INFO'
-  [timeline.info.color]='7,'
-  [timeline.info.color-date]='7,'
-  [timeline.info.color-name]='7,'
-  [timeline.info.color-mesg]='7,'
-  [timeline.info.style-date]='normal'
-  [timeline.info.style-name]='normal'
-  [timeline.info.style-mesg]='normal'
-  [timeline.consistent-colors]=''
-  [network.list.format]='*** %b%(%Y%m%d %H%M%S)T%b %b%10s%b  score: %b%-03d%b  %b%-10s%b %b%s%b'
-  [network.list.fields]='date,name,score,user,url'
-  [network.list.color-score]='7,'
-  [network.list.color-date]='7,'
-  [network.list.color-name]='7,'
-  [network.list.color-user]='7,'
-  [network.list.color-url]='7,'
-  [network.list.color]='7,'
-  [network.list.style-date]='normal'
-  [network.list.style-name]='normal'
-  [network.list.style-score]='normal'
-  [network.list.style-user]='normal'
-  [network.list.style-url]='normal'
-  [network.show-followers]=true
-  [network.follower.format]='*** %b%(%Y%m%d %H%M%S)T%b %b%10s%b                         FOLLOWED BY %b%-10s%b'
-  [network.follower.fields]='date,name,user'
-  [network.follower-color-date]='7,'
-  [network.follower-color-name]='7,'
-  [network.follower-color-user]='7,'
-  [network.follower.color]='7,'
-  [daemon.interval]='300'
-  [daemon.commands]='timeline refresh'
-  [daemon.pidfile]="${HOME}/.local/share/tl/daemon.pid"
-  [daemon.log.file]="${HOME}/.local/share/tl/daemon.log"
-  [daemon.log.level]=info
-  [notify.command]="notify-send"
-  [notify.format]='Knock knock from %s'
-  [notify.filter]="mention"
-  [notify.cache-file]="${HOME}/.cache/tl/notify.cache"
-  [alias.tr]='timeline refresh'
-  [alias.tl]='timeline list'
-  [alias.edit]='timeline edit'
-  [alias.e]='timeline edit'
-  [alias.post]='event post'
-  [alias.p]='event post'
-  [alias.reply]='event reply'
-  [alias.r]='event reply'
-  [alias.tag]='event tag'
-  [alias.info]='event info'
-  [alias.show]='event info'
-  [alias.score]='event score'
-  [alias.net]='network'
-  [alias.nl]='network list'
-  [alias.nr]='network refresh'
-)
-
-export NO_COLORS=0
-export COLOR=false
-
-if test -t 1; then
-  case "$(tput colors)" in
-     8)
-       export COLOR=true
-       CONFIG['timeline.post.color']=8,
-       CONFIG['timeline.post.color-date']=8,
-       CONFIG['timeline.post.color-mesg']=7,
-       CONFIG['timeline.post.color-flags']=11,
-       CONFIG['timeline.post.color-score']=3,
-       CONFIG['timeline.post.color-name']=CONSISTENT,
-       CONFIG['timeline.reply.color']=8,
-       CONFIG['timeline.reply.color-date']=8,
-       CONFIG['timeline.reply.color-mesg']=7,
-       CONFIG['timeline.reply.color-flags']=11,
-       CONFIG['timeline.reply.color-score']=3,
-       CONFIG['timeline.reply.color-name']=CONSISTENT,
-       CONFIG['timeline.tag.color']=8,
-       CONFIG['timeline.tag.color-date']=8,
-       CONFIG['timeline.tag.color-tags']=3,
-       CONFIG['timeline.tag.color-name']=CONSISTENT,
-       CONFIG['timeline.tag.color-flags']=11,
-       CONFIG['timeline.tag.color-score']=3,
-       CONFIG['timeline.info.color']=8,
-       CONFIG['timeline.info.color-date']=8,
-       CONFIG['timeline.info.color-name']=6,
-       CONFIG['timeline.info.color-mesg']=7,
-       CONFIG['timeline.error.color']=8,
-       CONFIG['timeline.error.color-date']=8,
-       CONFIG['timeline.error.color-name']=4,
-       CONFIG['timeline.error.color-mesg']=7,
-       CONFIG['timeline.fatal.color']=8,
-       CONFIG['timeline.fatal.color-date']=8,
-       CONFIG['timeline.fatal.color-name']=4,
-       CONFIG['timeline.fatal.color-mesg']=7,
-       CONFIG['timeline.consistent-colors']="3,5,6,9"
-       CONFIG['network.list.color-date']=8,
-       CONFIG['network.list.color-name']=6,
-       CONFIG['network.list.color-score']=3,
-       CONFIG['network.list.color-user']=CONSISTENT,
-       CONFIG['network.list.color-url']=4,
-       CONFIG['network.follower.color-user']=6,
-       CONFIG['network.follower.color-name']=6,
-       CONFIG['network.follower.color-date']=8,
-       CONFIG['network.follower.color']=8,
-       CONFIG['prompt.color']=4,
-      ;;
-   256)
-       export COLOR=true
-       CONFIG['timeline.post.color']=240,
-       CONFIG['timeline.post.color-date']=240,
-       CONFIG['timeline.post.color-mesg']=7,
-       CONFIG['timeline.post.color-score']=3,
-       CONFIG['timeline.post.color-name']=CONSISTENT,
-       CONFIG['timeline.post.color-flags']=11,
-       CONFIG['timeline.reply.color']=240,
-       CONFIG['timeline.reply.color-date']=240,
-       CONFIG['timeline.reply.color-mesg']=245,
-       CONFIG['timeline.reply.color-score']=3,
-       CONFIG['timeline.reply.color-name']=CONSISTENT,
-       CONFIG['timeline.reply.color-flags']=11,
-       CONFIG['timeline.reply.prefix']='⤷ ' # XXX 256colors -> unicode!!!
-       CONFIG['timeline.tag.color']=240,
-       CONFIG['timeline.tag.color-date']=240,
-       CONFIG['timeline.tag.color-tags']=136,
-       CONFIG['timeline.tag.color-score']=3,
-       CONFIG['timeline.tag.color-name']=CONSISTENT,
-       CONFIG['timeline.tag.style-tags']=italic
-       CONFIG['timeline.tag.color-flags']=11,
-       CONFIG['timeline.info.color']=240,
-       CONFIG['timeline.info.color-date']=240,
-       CONFIG['timeline.info.color-name']=69,
-       CONFIG['timeline.info.color-mesg']=7,
-       CONFIG['timeline.info.style-mesg']=italic
-       CONFIG['timeline.error.color']=240,
-       CONFIG['timeline.error.color-date']=240,
-       CONFIG['timeline.error.color-name']=9,
-       CONFIG['timeline.error.color-mesg']=7,
-       CONFIG['timeline.fatal.color']=240,
-       CONFIG['timeline.fatal.color-date']=240,
-       CONFIG['timeline.fatal.color-name']=9,
-       CONFIG['timeline.fatal.color-mesg']=7,
-       CONFIG['timeline.consistent-colors']="34,139,149,199,209,173,153"
-       CONFIG['network.list.color-date']=240,
-       CONFIG['network.list.color-name']=165,
-       CONFIG['network.list.color-score']=226,
-       CONFIG['network.list.color-user']=CONSISTENT,
-       CONFIG['network.list.color-url']=69,
-       CONFIG['network.follower.color-user']=214,
-       CONFIG['network.follower.color-name']=165,
-       CONFIG['network.follower.color-date']=240,
-       CONFIG['network.follower.style-user']='italic'
-       CONFIG['network.follower.color']=240,
-       CONFIG['prompt.color']=69,
-       ;;
-   esac
-fi
-
-declare -xa AVAIL_COLORS
-IFS=',' read -ra AVAIL_COLORS <<<"${CONFIG[timeline.consistent-colors]}"
-
-# fun: config_load <filename>
-# txt: given a filename path as argument, read the content and save it in
-#      `$CONFIG` environment variable properly.
-config_load ()
-{
-  local IFS='='
-  while read -r key val; do
-    CONFIG["$key"]="$val"
-  done < <(command git config -f "$1" -l)
-}
-
-# fun: config_get <key>
-# txt: get the configuration value corresponding with the configuration
-#      keyword passed as argument, or fails if not found.
-config_get ()
-{
-  local val="${CONFIG["$1"]}"
-
-  [[ "$val" ]] ||
-    E=1 error $"Unknown configuration variable '%s'" "$1"
-
-  echo "$val"
-}
-
-# fun: config_get_empty <key>
-# txt: similar to `config_get`, but if key is not defined an empty value is
-#      returned instead of failing.
-config_get_empty ()
-{
-  echo "${CONFIG["$1"]}"
-}
-
-# fun: config_set <key> <val>
-# txt: set the properly value of configuration key passed as argument using
-#      value provided.
-config_set ()
-{
-  CONFIG["$1"]="$2"
-}
-
-# fun: config_unset key
-# txt: unset config key with named passed as parameter key.
-config_unset ()
-{
-  CONFIG["$1"]=''
-}
-
-# fun: config_iter <prefix>
-# txt: given a fixed prefix, return all keys matched with specified prefix.
-config_iter ()
-{
-  for key in "${!CONFIG[@]}"; do
-    case "$key" in
-      "$1"*) echo "$key";;
-    esac
-  done
-}
-
-# fun: config_save <filename>
-# txt: given a filename passed as argument, dump the content of `$CONFIG`
-#      variable to that file
-config_save ()
-{
-  local val
-
-  if [[ ! -d "${1%/*}" ]]; then
-    mkdir -p "${1%/*}"
-  fi
-
-  for var in "${!CONFIG[@]}"; do
-    val="${CONFIG["$var"]}"
-
-    if [[ "$val" ]]; then
-      command git config -f "$1" "$var" "${CONFIG["$var"]}"
-    else
-      mute command git config -f "$1" --remove-section "${var}" ||
-        command git config -f "$1" --unset "${var}"
-    fi
-  done
-}
-
-# fun: config_list
-# txt: print all configuration values
-config_list ()
-{
-  for var in "${!CONFIG[@]}"; do
-    echo "${var}=${CONFIG[$var]}"
-  done
 }
 main "$@"

@@ -1451,6 +1451,60 @@ command_version ()
   echo "${TIMELINE_VERSION:-Unknown version}"
 }
 
+# help:fun: directory {refresh|add|del|list|search} {args...}
+# help:txt: Manage public directories
+command_directory ()
+{
+  local cmd="$1"; shift
+  if fun "command_directory_$cmd"; then
+    "command_directory_$cmd" "$@"
+  else
+    E=1 error "$NOSUBCMD" "$cmd" "directory"
+  fi
+}
+
+# help:directory:fun: refresh [directory name]
+# help:directory:txt: Refresh the directory data for a specific directory or for
+# help:directory:txt: all directories in the config
+command_directory_refresh ()
+{
+  directory_refresh "$@" | info_multi
+}
+
+# help:directory:fun: add [--force] <name> <url>
+# help:directory:txt: Add a new directory to the config
+command_directory_add ()
+{
+  directory_add "$@"
+  config_save "${CONFIG_FILE}"
+}
+
+# help:directory:fun: del <name>
+# help:directory:txt: Delete directory from the config
+command_directory_del ()
+{
+  [[ -z "$1" ]] && E=2 error $"Directory name is required"
+  directory_del "$@"
+  config_save "${CONFIG_FILE}"
+}
+
+# help:directory:fun: list
+# help:directory:txt: List all directories in config
+command_directory_list ()
+{
+  directory_list | info_multi
+}
+
+# help:directory:fun: search <regexp>+
+# help:directory:txt: Search for expressions in public directories.
+command_directory_search ()
+{
+  local exp
+  for exp in "$@"; do
+    directory_search "$exp"
+  done | info_multi
+}
+
 # hey! you do not want to use this, only for debug purposes
 if ${DEBUG:-false}; then
   command_debug ()

@@ -171,6 +171,7 @@ declare -xA CONFIG=(
   [notify.format]='Knock knock from %s'
   [notify.filter]="mention"
   [notify.cache-file]="${HOME}/.cache/tl/notify.cache"
+  [directory.default]="https://tldir.ajdiaz.me/index.txt"
   [alias.tr]='timeline refresh'
   [alias.tl]='timeline list'
   [alias.edit]='timeline edit'
@@ -186,6 +187,8 @@ declare -xA CONFIG=(
   [alias.net]='network'
   [alias.nl]='network list'
   [alias.nr]='network refresh'
+  [alias.dir]='directory'
+  [alias.ds]='directory search'
 )
 
 export NO_COLORS=0

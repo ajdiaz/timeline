@@ -105,6 +105,23 @@ timelines.
 You can create your repository public or private, if it's private, then
 security is delegated to the git client (usually uses HTTPS or SSH).
 
+----- Public directories ------------------------------------------------------
+
+Since version 1.8 timeline support public directory listings. A public
+directory is an URL which points to a plain text file with the form:
+
+<name> <url> <tags...>
+
+And allows to discover new timeline accounts around the globe. Please keep in
+mind that directories are designed to discover new accounts that can be
+interesting for you (usually you want to discover by tags), but the aim of
+the timeline is still to follow only trusted people.
+
+You can create your own directory, just server a file like that, and add to
+timeline via command: `tl dir add dirname dirurl`. Timeline has a
+default directory which points to https://tldir.ajdiaz.me. If you wish to
+inscribe your timeline account to this directory just send a mail to
+timeline-dir (at) lists.ajdiaz.me.
 
 ----- Some advantages ---------------------------------------------------------
 

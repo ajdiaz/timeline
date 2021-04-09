@@ -83,11 +83,26 @@ main_standalone ()
 main ()
 {
   local config_path="$HOME/.config/tl/config:$HOME/.tl/config:$HOME/.tlrc"
+  local major minor ver
+
+  # check BASH
+  if [[ "${BASH_VERSINFO[0]}" -lt 5 ]]; then
+    E=1 error $"bash >= 5 is required"
+  fi
   
   CONFIG_FILE="$(try_path "$config_path")"
   INTERACTIVE=false
 
   reqs_eval
+
+  # check git version since it's a core requirement
+  read -r _ _ ver < <(git --version)
+  IFS=. read -r major minor _ <<<"$ver"
+
+  if [[ "$major" -lt "2" ]] || [[ "$minor" -lt 30 ]]; then
+    E=1 error $"git version >= 2.30 is required"
+  fi
+
   args_eval "$@" || shift $?
 
   [ -r "${CONFIG_FILE}" ] && config_load "${CONFIG_FILE}"
