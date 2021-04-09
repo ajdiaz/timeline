@@ -889,8 +889,20 @@ command_account_keyid ()
 command_account_refresh ()
 {
   command_account_active "$(account_active_name)"
-  { account_refresh 2>&1 | info_multi; } ||
+  {
+    account_commit 2>&1 | info_multi
+    account_refresh "$(account_active_path)" 2>&1 | info_multi
+    account_push "origin" 2>&1 | info_multi
+  } ||
       E=1 error $"Unable to refresh local account"
+}
+
+# help:account:fun: account preview <url>
+# help:account:txt: Preview a remote account without following it.
+command_account_preview ()
+{
+  [[ "$1" ]] || E=2 error $"Account url must be provided"
+  account_preview "$1"
 }
 
 # help:fun: git <command>...

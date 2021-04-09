@@ -135,7 +135,7 @@ event_load_line ()
     fi
   fi
 
-  notify "$eid"
+  [[ "$ACCOUNT_NAME" ]] && notify "$eid"
 }
 
 # fun: event_sign <eid>

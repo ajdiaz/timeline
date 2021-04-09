@@ -183,3 +183,17 @@ _temp_file_exit ()
   rm -f "${TMPDIR:-/tmp}/temp_$$".*
 }
 on_exit _temp_file_exit
+
+# fun: temp_dir
+# txt: outputs a temporary directory which will be removed when tl dies
+temp_dir ()
+{
+  local name="${TMPDIR:-/tmp}/tempdir_$$.$RANDOM"
+  mkdir -p "$name"
+  echo "$name"
+}
+_temp_dir_exit ()
+{
+  rm -rf "${TMPDIR:-/tmp}/tempdir_$$".*
+}
+on_exit _temp_dir_exit
