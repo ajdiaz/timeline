@@ -30,7 +30,7 @@ follow_add ()
   command git -C "${ACCOUNT_PATH}" submodule init
   command git -C "${ACCOUNT_PATH}" submodule update --remote
 
-  account_commit
+  account_commit "follow: add ${OID_CACHE["${pull_url}"]}"
   account_push
 
   if [[ "$name" ]]; then
@@ -55,7 +55,7 @@ follow_del ()
   mute command git -C "$ACCOUNT_PATH" config -f .gitmodules \
     --remove-section "submodule.$mpath"
 
-  account_commit
+  account_commit "follow: del "${uid}
 
   command git -C "$ACCOUNT_PATH" rm --cached "$mpath"
   rm -rf "${ACCOUNT_PATH:?}/.git/modules/$mpath"

@@ -174,7 +174,7 @@ account_config ()
   command mkdir -p "${path:?}/FOLLOW"
 }
 
-# fun: account_commit
+# fun: account_commit [message]
 # txt: set a commit point into current active account
 account_commit ()
 {
@@ -182,9 +182,9 @@ account_commit ()
 
   command git -C "$ACCOUNT_PATH" add .
   if [[ "$(keyid "${ACCOUNT_NAME}")" ]]; then
-    command git -C "$ACCOUNT_PATH" commit -S -m "Timeline Autosave: $(timestamp)"
+    command git -C "$ACCOUNT_PATH" commit -S -m "${1:-autosave}"
   else
-    command git -C "$ACCOUNT_PATH" commit -m "Timeline Autosave: $(timestamp)"
+    command git -C "$ACCOUNT_PATH" commit -m "${1:-autosave}"
   fi
 }
 

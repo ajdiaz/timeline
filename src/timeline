@@ -276,7 +276,7 @@ timeline_edit ()
 
     ${EDITOR:-nano} "$content"
 
-    account_commit | info_multi
+    account_commit "manual: timeline edit command" | info_multi
 
     if [[ "$auto_push" = "true" ]]; then
       account_push | info_multi

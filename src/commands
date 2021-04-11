@@ -208,7 +208,7 @@ command_account_refresh ()
 {
   command_account_active "${ACCOUNT_NAME}"
   {
-    account_commit 2>&1 | info_multi
+    account_commit "refresh: commit before pull" 2>&1 | info_multi
     account_refresh "${ACCOUNT_PATH}" 2>&1 | info_multi
     account_push "origin" 2>&1 | info_multi
   } ||

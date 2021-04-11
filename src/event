@@ -20,10 +20,10 @@ declare -a EVENTS_SORTED=()
 event_load ()
 {
   local max_user_posts fname="$2" account="$1" key val
-  local commit line
+  local commit line aname="${CONFIG["user.alias-$account"]:-$account}"
   local -A gitlog
 
-  max_user_posts="${CONFIG["account.${account}.max-posts"]:-${CONFIG[account.max-posts]:-20}}"
+  max_user_posts="${CONFIG["account.${aname}.max-posts"]:-${CONFIG[account.max-posts]:-20}}"
 
   while read -r key val; do
     gitlog["$key"]="$val"
@@ -266,7 +266,7 @@ event_create ()
     markdown_generate
   fi
 
-  account_commit
+  account_commit "event: $*"
 
   if [[ "$auto_push" = "true" ]]; then
     account_push
