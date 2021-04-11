@@ -178,14 +178,10 @@ account_config ()
 # txt: set a commit point into current active account
 account_commit ()
 {
-  local path keyid
-
-  keyid="$(keyid "${ACCOUNT_NAME}")"
-
-  [[ "$path" ]] || E=1 fatal $"No active account to commit"
+  [[ "$ACCOUNT_PATH" ]] || E=1 fatal $"No active account to commit"
 
   command git -C "$ACCOUNT_PATH" add .
-  if [[ "$keyid" ]]; then
+  if [[ "$(keyid "${ACCOUNT_NAME}")" ]]; then
     command git -C "$ACCOUNT_PATH" commit -S -m "Timeline Autosave: $(timestamp)"
   else
     command git -C "$ACCOUNT_PATH" commit -m "Timeline Autosave: $(timestamp)"

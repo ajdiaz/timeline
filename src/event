@@ -19,37 +19,41 @@ declare -a EVENTS_SORTED=()
 # txt: given an content filename, parse it and store events in memory
 event_load ()
 {
-  local i=0 max_posts max_user_posts fname="$2" account="$1" content
+  local max_posts max_user_posts fname="$2" account="$1" key val
+  local commit line
+  local -A gitlog
 
   max_posts="${CONFIG[timeline.max-posts]}"
   max_user_posts="${CONFIG[timeline.max-user-posts]}"
 
-  mapfile content < "$fname"
-
   # reached timeline.max-posts
+  # TODO: keep only recent ones
   [[ "${#EVENTS_SORTED[@]}" -gt "$max_posts" ]] && return
 
+  while read -r key val; do
+    gitlog["$key"]="$val"
+  done < <(
+    command git -C "${fname%/*}" log -s --pretty=format:"%H %G?" \
+      --no-color "$fname"
+  )
 
   _i() {
-    [[ $i -gt "${max_user_posts}" ]] && return
+    [[ "$1" -gt "${max_user_posts}" ]] && return
 
-    case "${content[i]}" in
+    case "${2}" in
       ''|\#*) return
     esac
 
     commit="${2%% *}";
-    flags="${2#$commit }"; flags="${flags%% *}"
+    line="${2#$commit *) }";
 
     event_load_line "$account" "${fname%/*}" "$commit" \
-      "$flags" "${content[i]}" "$i"
-
-    ((i++))
+      "${gitlog["$commit"]}" "${line}" "$1"
   }
 
   # shellcheck disable=SC2034
   mapfile -c 1 -C _i < <(
-    git -C "${fname%/*}" log -s --pretty=format:"%H %G? %s" \
-      --no-color "$fname"
+    command git -C "${fname%/*}" blame -s -l "$fname"
   )
 }
 
