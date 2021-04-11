@@ -1,5 +1,5 @@
 #! /bin/bash -i
-TIMELINE_VERSION='1.7-9-gd1c7e99'
+TIMELINE_VERSION='1.7-10-gf3ace22'
 ## vim:ft=sh
 
 # fun: [E=code] fatal <message>
@@ -3495,6 +3495,7 @@ declare -xA CONFIG=(
   [account.preview-depth]=100
   [account.default]=''
   [account.keyid]=''
+  [account.max-posts]=20
   [account.path]="$HOME/.local/share/tl/account:$HOME/.tl/account"
   [plugin.path]="$HOME/.local/share/tl/plugin:$HOME/.tl/plugin"
   [cache.path]="$HOME/.cache/tl:$HOME/.tl/cache"
@@ -3513,8 +3514,6 @@ declare -xA CONFIG=(
   [timeline.filter.show]=''
   [timeline.filter.hide]='tag:spam score-min:0'
   [timeline.own-posts]=true
-  [timeline.max-posts]=100
-  [timeline.max-user-posts]=20
   [timeline.use-short-ids]=true
   [timeline.post.format]='%b%-3d%b %b%(%Y%m%d %H%M%S)T%b %b%10s%b [%b%s%b] (%b%d%b) %b%s%b'
   [timeline.post.fields]='index,date,name,flags,score,mesg'
@@ -3882,16 +3881,11 @@ declare -a EVENTS_SORTED=()
 # txt: given an content filename, parse it and store events in memory
 event_load ()
 {
-  local max_posts max_user_posts fname="$2" account="$1" key val
+  local max_user_posts fname="$2" account="$1" key val
   local commit line
   local -A gitlog
 
-  max_posts="${CONFIG[timeline.max-posts]}"
-  max_user_posts="${CONFIG[timeline.max-user-posts]}"
-
-  # reached timeline.max-posts
-  # TODO: keep only recent ones
-  [[ "${#EVENTS_SORTED[@]}" -gt "$max_posts" ]] && return
+  max_user_posts="${CONFIG["account.${account}.max-posts"]:-${CONFIG[account.max-posts]:-20}}"
 
   while read -r key val; do
     gitlog["$key"]="$val"

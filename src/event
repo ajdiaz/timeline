@@ -19,16 +19,11 @@ declare -a EVENTS_SORTED=()
 # txt: given an content filename, parse it and store events in memory
 event_load ()
 {
-  local max_posts max_user_posts fname="$2" account="$1" key val
+  local max_user_posts fname="$2" account="$1" key val
   local commit line
   local -A gitlog
 
-  max_posts="${CONFIG[timeline.max-posts]}"
-  max_user_posts="${CONFIG[timeline.max-user-posts]}"
-
-  # reached timeline.max-posts
-  # TODO: keep only recent ones
-  [[ "${#EVENTS_SORTED[@]}" -gt "$max_posts" ]] && return
+  max_user_posts="${CONFIG["account.${account}.max-posts"]:-${CONFIG[account.max-posts]:-20}}"
 
   while read -r key val; do
     gitlog["$key"]="$val"
