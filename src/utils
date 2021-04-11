@@ -1,5 +1,9 @@
 ## vim: ft=sh
 
+# env: OID_CACHE
+# txt: save a generated oids to avoid recalculation
+declare -gA OID_CACHE
+
 # fun: fun <function_name>
 # txt: return true if function is defined
 fun ()
@@ -43,7 +47,36 @@ join ()
 # txt: create a unique object id for the string passed as argument
 oid ()
 {
-  command git hash-object --stdin <<<"${1%.git}"
+  if [[ -z "${OID_CACHE["$1"]}" ]]; then
+    OID_CACHE["$1"]="$(command git hash-object --stdin <<<"${1%.git}")"
+  fi
+}
+
+# fun: oid_save
+# txt: save the list of OIDs to a cache file
+oid_save ()
+{
+  local i=0
+  [[ "${CONFIG[oid.use-cache]}" != "true" ]] && return
+  {
+    echo "declare -Axg OID_CACHE=("
+    for key in "${!OID_CACHE[@]}"; do
+      echo "[\"$key\"]=\"${OID_CACHE[$key]}\""
+      [[ $((++i)) -gt ${CONFIG[oid.max-cache-size]:-1000} ]] && break
+    done
+    echo ")"
+  } > "${CACHE_DIR}/oid.cache"
+}
+
+# fun: oid_load
+# txt: load precalculated OIDs from cache file
+oid_load ()
+{
+  [[ "${CONFIG[oid.use-cache]}" != "true" ]] && return
+
+  # shellcheck source=/dev/null
+  [[ -r "${CACHE_DIR}/oid.cache" ]] &&
+    source "${CACHE_DIR}/oid.cache"
 }
 
 # fun: try_path <path_list>
@@ -60,14 +93,6 @@ try_path ()
     fi
   done
   echo "${1%%:*}"
-}
-
-# fun: workon <path> <command>...
-# txt: run command inside path passed as argument
-workon ()
-{
-  local dir="$1"; shift
-  ( cd "$dir" && "$@"; )
 }
 
 # fun: valid_url <url>

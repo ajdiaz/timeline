@@ -19,7 +19,7 @@ notify ()
     return
 
   # discard own events
-  user="$(account_active_oid)"
+  user="${ACCOUNT_OID}"
   [[ "$uid" = "$user" ]] &&
     return
 

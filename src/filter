@@ -80,7 +80,7 @@ filter_text ()
 filter_mention ()
 {
   local eid="$1" uid pattern
-  uid="$(account_active_oid)"
+  uid="${ACCOUNT_OID}"
   local -a reat=()
 
   # no acctive account

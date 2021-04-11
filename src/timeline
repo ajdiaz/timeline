@@ -23,8 +23,8 @@ timeline_load ()
   local oid="$2" content_path follow_path show_own path="$1"
 
   if [[ -z "$path" ]]; then
-    path="$(account_active_path)"
-    oid="$(account_active_oid)"
+    path="${ACCOUNT_PATH}"
+    oid="${ACCOUNT_OID}"
   fi
 
   content_path="$path/$TIMELINE_CONTENT"
@@ -35,7 +35,7 @@ timeline_load ()
   if ! [[ -r "$content_path" ]]; then
     error $"Content path does not exists."
     error $"Maybe you delete your account data?"
-    E=1 error $"Try $0 account rebuild $(account_active_name) to recreate it automatically"
+    E=1 error $"Try $0 account rebuild ${ACCOUNT_NAME} to recreate it automatically"
   fi
 
   # Load our account timeline
@@ -229,6 +229,7 @@ timeline_list ()
 #      input to identify an event easily.
 timeline_index_save ()
 {
+  local var
   {
     echo "declare -ag TIMELINE_INDEX=("
     for var in "${TIMELINE_INDEX[@]}"; do
@@ -263,11 +264,11 @@ timeline_index_get ()
 timeline_edit ()
 {
   local content auto_push
-  content="$(account_active_path)/CONTENT"
+  content="${ACCOUNT_PATH}/CONTENT"
 
   if [[ -w "$content" ]]; then
 
-    auto_push="${CONFIG["account.$(account_active_name).auto-push"]}"
+    auto_push="${CONFIG["account.${ACCOUNT_NAME}.auto-push"]}"
 
     if ! [[ "$auto_push" ]]; then
       auto_push="$(config_get account.auto-push)"

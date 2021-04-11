@@ -51,7 +51,7 @@ network_load_repo ()
 {
   local uid="$1" url="$2" parent="$3" active_oid
   local path="${CACHE_DIR}/${NETWORK_PATH_PREFIX}/$1"
-  active_oid="$(account_active_oid)"
+  active_oid="${ACCOUNT_OID}"
 
   [[ "$uid" = "$active_oid" ]] && return
 
@@ -71,7 +71,7 @@ network_load ()
 {
   local path="$1" active_oid
   local cache="${CACHE_DIR}/${NETWORK_PATH_PREFIX}"
-  active_oid="$(account_active_oid)"
+  active_oid="${ACCOUNT_OID}"
 
   while read -r  uid url; do
     [[ "$active_oid" = "$uid" ]] && continue
@@ -82,7 +82,7 @@ network_load ()
       error $"Unable to load repository '%s'. Try network refresh first." \
         "$uid"
     fi
-  done < <(follow_list "$(account_active_path)")
+  done < <(follow_list "${ACCOUNT_PATH}")
 }
 
 # fun: network_refresh_repo <uid> <url> [count]
@@ -107,13 +107,13 @@ network_refresh_repo ()
 
   if [[ -d "${cache}/$uid" ]]; then
     # repo already exists, just rebase
-    if ! workon "${cache}/$uid" command git pull --rebase 2>&1; then
+    if ! command git -C "${cache}/$uid" pull --rebase 2>&1; then
       error $"Unable to pull repository '%s' from '%s'" "$uid" "$url"
       return 1
     fi
   else
     # repo does not exists yet, cloning...
-    if ! workon "${cache}" git clone --depth 1 "$url" "$uid" 2>&1; then
+    if ! command git clone --depth 1 "$url" "$cache/$uid" 2>&1; then
       error $"Unable to clone repository '%s' from '%s'" "$uid" "$url"
       return 1
     fi

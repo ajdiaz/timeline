@@ -5,10 +5,8 @@
 #      it.
 markdown_generate ()
 {
-  local account_path; account_path="$(account_active_path)"
-
-  if [[ ! -r "${account_path}/CONTENT.md}" ]]; then
-    echo -e "# CONTENT\n\n" > "${account_path}/CONTENT.md"
+  if [[ ! -r "${ACCOUNT_PATH}/CONTENT.md}" ]]; then
+    echo -e "# CONTENT\n\n" > "${ACCOUNT_PATH}/CONTENT.md"
     while read -r d k p; do
       if [[ "$k" == 'P' ]]; then
         {
@@ -17,8 +15,8 @@ markdown_generate ()
             echo "> $line"
           done
           printf "\n\n"
-        } >> "${account_path}/CONTENT.md"
+        } >> "${ACCOUNT_PATH}/CONTENT.md"
       fi
-    done < "${account_path}/CONTENT"
+    done < "${ACCOUNT_PATH}/CONTENT"
   fi
 }

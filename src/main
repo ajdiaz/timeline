@@ -28,10 +28,7 @@ export CACHE_DIR=
 # txt: print prompt in interactive mode
 prompt ()
 {
-  local name
-  name="$(account_active_name)"
-
-  format_compose prompt account "${name:-<none>}"
+  format_compose prompt account "${ACCOUNT_NAME:-<none>}"
   format_dumps prompt
 }
 
@@ -44,7 +41,7 @@ main_interactive ()
 
   history_load
   complete_load
-  command_account_active "$(account_active_name)"
+  command_account_active "${ACCOUNT_NAME}"
 
   while true; do
     read -a args -e -r -p "$(T=true prompt)"
@@ -113,6 +110,9 @@ main ()
   # load the timeline index to operate with previous listed timeline
   timeline_index_load
 
+  # local the OID cache if enabled
+  oid_load
+
   if [ $# -eq 0 ]; then
     if [[ "${CONFIG[interactive.show-banner]}" = "true" ]]; then
       info "timeline  Copyright (C) %(%Y)T Andrés J. Díaz" "$(timestamp)"
@@ -127,4 +127,6 @@ main ()
   else
     main_standalone "$@"
   fi
+
+  oid_save
 }

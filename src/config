@@ -5,6 +5,8 @@
 #      accessed by `config_get` and `config_set` to read and write,
 #      res pectively.
 declare -xA CONFIG=(
+  [oid.use-cache]=true
+  [oid.max-cache-size]=1000
   [interactive.show-banner]=true
   [account.auto-push]=true
   [account.content-markdown]=true

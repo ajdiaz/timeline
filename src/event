@@ -78,21 +78,24 @@ event_load_line ()
     P|POST)
       mesg="$rest"
       kind='post'
-      hmac="$(oid "$mesg")"
+      oid "$mesg"
+      hmac="${OID_CACHE["$mesg"]}"
       ;;
     R|REPLY)
       link="${rest%% *}"
       mesg="${rest#$link }"
       [[ "$show_untrusted" == "true" ]] && has_hmac "$link" && link="${link%:*}"
       kind='reply'
-      hmac="$(oid "$mesg")"
+      oid "$mesg"
+      hmac="${OID_CACHE["$mesg"]}"
       ;;
     T|TAG)
       link="${rest%% *}"
       tags="${rest#$link }"
       [[ "$show_untrusted" == "true" ]] && has_hmac "$link" && link="${link%:*}"
       kind='tag'
-      hmac="$(oid "$link $tags")"
+      oid "$link $tags"
+      hmac="${OID_CACHE["$link $tags"]}"
       ;;
     S|SCORE)
       kind='score'
@@ -103,7 +106,8 @@ event_load_line ()
         -1) score="-1";;
         *) score="1";;
       esac
-      hmac="$(oid "$link $score")"
+      oid "$link $score"
+      hmac="${OID_CACHE["$link $score"]}"
       ;;
     *)
       error $"Ignored malformed event: '$line'"
@@ -240,21 +244,20 @@ event_create ()
   local path auto_push content_markdown
   local -a content
 
-  auto_push="${CONFIG["account.$(account_active_name).auto-push"]}"
+  auto_push="${CONFIG["account.${ACCOUNT_NAME}.auto-push"]}"
 
   if ! [[ "$auto_push" ]]; then
     auto_push="$(config_get account.auto-push)"
   fi
 
-  path="$(account_active_path)"
-  mapfile -t content < "${path}/$TIMELINE_CONTENT"
+  mapfile -t content < "${ACCOUNT_PATH}/$TIMELINE_CONTENT"
 
-  echo "$*" > "${path}/$TIMELINE_CONTENT"
+  echo "$*" > "${ACCOUNT_PATH}/$TIMELINE_CONTENT"
   for line in "${content[@]}"; do
-    echo "$line" >> "${path}/$TIMELINE_CONTENT"
+    echo "$line" >> "${ACCOUNT_PATH}/$TIMELINE_CONTENT"
   done
 
-  content_markdown="${CONFIG["account.$(account_active_name).content-markdown"]}"
+  content_markdown="${CONFIG["account.${ACCOUNT_NAME}.content-markdown"]}"
 
   if ! [[ "$content_markdown" ]]; then
     content_markdown="${CONFIG[account.content-markdown]}"

@@ -13,7 +13,7 @@ follow_list ()
         echo "${line%.url=*}" "${line#*.url=}"
       ;;
     esac
-  done < <(workon "$path" command git config -f .gitmodules -l 2>/dev/null)
+  done < <(command git -C "$path" config -f .gitmodules -l 2>/dev/null)
 }
 
 
@@ -22,20 +22,19 @@ follow_list ()
 #      will add a config entry for user alias to this name.
 follow_add ()
 {
-  local path pull_url="${1}" name="$2"
+  local pull_url="${1}" name="$2"
+  oid "$pull_url"
   
-  path="$(account_active_path)"
-
-  workon "$path" command git submodule add \
-    "$pull_url" "${TIMELINE_FOLLOW}/$(oid "$pull_url")"
-  workon "$path" command git submodule init
-  workon "$path" command git submodule update --remote
+  command git -C "${ACCOUNT_PATH}" submodule add \
+    "$pull_url" "${TIMELINE_FOLLOW}/${OID_CACHE["$pull_url"]}"
+  command git -C "${ACCOUNT_PATH}" submodule init
+  command git -C "${ACCOUNT_PATH}" submodule update --remote
 
   account_commit
   account_push
 
   if [[ "$name" ]]; then
-    config_set "user.alias-$(oid "$pull_url")" "$name"
+    config_set "user.alias-${OID_CACHE["$pull_url"]}" "$name"
     config_save "${CONFIG_FILE}"
   fi
 
@@ -45,25 +44,24 @@ follow_add ()
 # txt: remove following for user identified by specific UID
 follow_del ()
 {
-  local path uid="$1"
+  local uid="$1"
 
-  path="$(account_active_path)"
   mpath="${TIMELINE_FOLLOW}/$uid"
 
   # remove gitconfig sections
-  workon "$path" mute command git config -f .git/config \
+  mute command git -C "$ACCOUNT_PATH" config -f .git/config \
     --remove-section "submodule.$mpath"
 
-  workon "$path" mute command git config -f .gitmodules \
+  mute command git -C "$ACCOUNT_PATH" config -f .gitmodules \
     --remove-section "submodule.$mpath"
 
   account_commit
 
-  workon "$path" command git rm --cached "$mpath"
-  workon "$path" rm -rf ".git/modules/$mpath"
+  command git -C "$ACCOUNT_PATH" rm --cached "$mpath"
+  rm -rf "${ACCOUNT_PATH:?}/.git/modules/$mpath"
  
-  if [[ -d "$path/$mpath" ]]; then
-    rm -rf "${path:?}/${mpath:?}"
+  if [[ -d "$ACCOUNT_PATH/$mpath" ]]; then
+    rm -rf "${ACCOUNT_PATH:?}/${mpath:?}"
   fi
 
   account_push

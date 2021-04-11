@@ -1,7 +1,13 @@
 ## vim:ft=sh
 
 # env: ACCOUNT_NAME: A variable contains the name of the acctive account.
-ACCOUNT_NAME=
+export ACCOUNT_NAME=
+
+# env: ACCOUNT_PATH: A variable contains the path of the acctive account.
+export ACCOUNT_PATH=
+
+# env: ACCOUNT_OID: A variable contains the OID of the acctive account.
+export ACCOUNT_OID=
 
 # fun: account_list
 # txt: output a new-line separated list of defined accounts.
@@ -27,7 +33,7 @@ account_list ()
 #      Otherwise failed.
 account_load ()
 {
-  local name="$1"
+  local name="$1" pull_url
 
   name="${name:-${CONFIG[account.default]}}"
 
@@ -46,34 +52,13 @@ account_load ()
   fi
 
   ACCOUNT_NAME="$name"
+  pull_url="$(config_get "account.$ACCOUNT_NAME.pull-url")"
+  oid "$pull_url"
+  ACCOUNT_OID="${OID_CACHE["$pull_url"]}"
+  ACCOUNT_PATH="$(config_get "account.$ACCOUNT_NAME.path")"
 }
 
-NOACTIVE=$"There are no active accounts"
-
-# fun: account_active_name
-# txt: print the name of the current active account
-account_active_name ()
-{
-  echo "${ACCOUNT_NAME}"
-}
-
-# fun: account_active_oid
-# txt: print the OID of the current active account
-account_active_oid ()
-{
-  [[ "$ACCOUNT_NAME" ]] ||
-    E=1 fatal "$NOACTIVE"
-  oid "$(config_get "account.$ACCOUNT_NAME.pull-url")"
-}
-
-# fun: account_active_path
-# txt: print the path of the current active account
-account_active_path ()
-{
-  [[ "$ACCOUNT_NAME" ]] ||
-    E=1 fatal "$NOACTIVE"
-  config_get "account.$ACCOUNT_NAME.path"
-}
+export NOACTIVE=$"There are no active accounts"
 
 # fun: account_exists [name]
 # txt: return true if the account name passed as argument is a initialized
@@ -85,7 +70,7 @@ account_exists ()
   [[ "$1" ]] && path="$(config_get "account.$1.path")"
 
   if [[ -z "$path" ]]; then
-    path="$(account_active_path)"
+    path="${ACCOUNT_PATH}"
   fi
   [ -d "${path%.git}/.git" ]
 }
@@ -106,7 +91,8 @@ account_create ()
     config_set "account.$name.pull-url" "$pull_url"
     config_set "account.$name.path" "$path"
     config_set "account.$name.keyid" "$keyid"
-    config_set "user.alias-$(oid "$pull_url")" "$name"
+    oid "$pull_url"
+    config_set "user.alias-${OID_CACHE["$pull_url"]}" "$name"
     account_init "$name"
     config_save "${CONFIG_FILE}"
   fi
@@ -134,9 +120,10 @@ account_clone ()
     config_set "account.$name.pull-url" "$pull_url"
     config_set "account.$name.keyid" "$keyid"
     config_set "account.$name.path" "$path"
-    config_set "user.alias-$(oid "$pull_url")" "$name"
+    oid "$pull_url"
+    config_set "user.alias-${OID_CACHE["$pull_url"]}" "$name"
     command git clone "$push_url" "$path"
-    workon "$path" command git submodule init
+    command git -C "$path" submodule init
     account_config "$path" "$pull_url" "$keyid"
     config_save "${CONFIG_FILE}"
   fi
@@ -160,15 +147,15 @@ account_init ()
     mkdir -p "$path" ||
       E=1 fatal $"Unable to create account directory: %s" "$path"
 
-    workon "$path" command git init
+    command git -C "$path" init
     account_config "$path" "$pull_url" "$keyid"
-    workon "$path" command git add .
+    command git -C "$path" add .
     if [[ "$keyid" ]]; then
-      workon "$path" command git commit -S -m 'Initial commit'
+      command git -C "$path" commit -S -m 'Initial commit'
     else
-      workon "$path" command git commit -m 'Initial commit'
+      command git -C "$path" commit -m 'Initial commit'
     fi
-    workon "$path" command git remote add origin "$push_url"
+    command git -C "$path" remote add origin "$push_url"
   fi
 }
 
@@ -177,12 +164,14 @@ account_init ()
 account_config ()
 {
   local path="$1" pull_url="$2" keyid="$3"
-  workon "$path" command git config user.name "$(oid "$pull_url")"
-  workon "$path" command git config user.email "$(oid "$pull_url")@timeline"
+  oid "$pull_url"
+
+  command git -C "$path" config user.name "${OID_CACHE["$pull_url"]}"
+  command git -C "$path" config user.email "${OID_CACHE["$pull_url"]}@timeline"
   [[ "$keyid" ]] &&
-    workon "$path" command git config user.signingkey "$keyid"
-  workon "$path" command touch CONTENT
-  workon "$path" command mkdir -p "FOLLOW"
+    command git -C "$path" config user.signingkey "$keyid"
+  command touch "${path:?}/CONTENT"
+  command mkdir -p "${path:?}/FOLLOW"
 }
 
 # fun: account_commit
@@ -191,16 +180,15 @@ account_commit ()
 {
   local path keyid
 
-  path="$(account_active_path)"
-  keyid="$(keyid "$(account_active_name)")"
+  keyid="$(keyid "${ACCOUNT_NAME}")"
 
   [[ "$path" ]] || E=1 fatal $"No active account to commit"
 
-  workon "$path" command git add .
+  command git -C "$ACCOUNT_PATH" add .
   if [[ "$keyid" ]]; then
-    workon "$path" command git commit -S -m "Timeline Autosave: $(timestamp)"
+    command git -C "$ACCOUNT_PATH" commit -S -m "Timeline Autosave: $(timestamp)"
   else
-    workon "$path" command git commit -m "Timeline Autosave: $(timestamp)"
+    command git -C "$ACCOUNT_PATH" commit -m "Timeline Autosave: $(timestamp)"
   fi
 }
 
@@ -210,7 +198,7 @@ account_commit ()
 account_push ()
 {
   # TODO Add support for multiple branches
-  workon "$(account_active_path)" command git push "${1:-origin}" master
+  command git -C "${ACCOUNT_PATH}" push "${1:-origin}" master
 }
 
 # fun: account_refresh <path> [remote]
@@ -220,11 +208,11 @@ account_refresh ()
 {
   local path="$1"; shift
 
-  workon "$path" command git fetch --all
+  command git -C "$path" fetch --all
   # TODO Add support for multiple branches
-  workon "$path" command git rebase "${1:-origin}/master"
-  workon "$path" command git submodule update --remote \
-    --jobs "${CONFIG[git.jobs]}"
+  command git -C "$path" rebase "${1:-origin}/master"
+  command git -C "$path" submodule update --remote \
+    --jobs "${CONFIG[git.jobs]:-1}"
 }
 
 # fun: account_delete [name]
@@ -232,17 +220,19 @@ account_refresh ()
 #      name is provided.
 account_delete ()
 {
-  local name="${1:-$ACCOUNT_NAME}" path oid
+  local name="${1:-$ACCOUNT_NAME}" path pull_url
 
   path="$(config_get "account.$name.path")"
-  oid="$(oid "$(config_get "account.$name.pull-url")")"
+  pull_url="$(config_get "account.$name.pull-url")"
+  
+  oid "$pull_url"
 
   if [[ -d "$path" ]]; then
     rm -rf "$path"
   fi
 
   config_unset "account.$name"
-  config_unset "user.alias-$oid"
+  config_unset "user.alias-${OID_CACHE["$pull_url"]}"
 
   config_save "${CONFIG_FILE}"
 }
@@ -251,8 +241,7 @@ account_delete ()
 # txt: set keyid for an existant account
 account_set_keyid ()
 {
-  workon "$(config_get "account.$1.path")" \
-    command git config user.signingkey "$2"
+  command git -C "$(config_get "account.$1.path")" config user.signingkey "$2"
   config_set "account.$1.keyid" "$2"
 }
 
@@ -271,7 +260,8 @@ account_preview ()
     info_multi ||
       E=1 error $"Unable to clone remote repo"
 
-  timeline_load "${tmpdir}" "$(oid "$1")"
+  oid "$1"
+  timeline_load "${tmpdir}" "${OID_CACHE["$1"]}"
   shift
   timeline_list "$@"
 }
