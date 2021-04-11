@@ -419,6 +419,8 @@ command_event_post ()
     command_account_active "${ACCOUNT_NAME}"
     command_account_refresh 
     event_create "$(timestamp)" P "$*" 2>&1 | info_multi
+    timeline_load
+    timeline_index_save
   fi
 }
 
@@ -458,6 +460,8 @@ command_event_reply ()
   else
     command_account_refresh
     event_create "$(timestamp)" R "$eid" "$*" 2>&1 | info_multi
+    timeline_load
+    timeline_index_save
   fi
 }
 
