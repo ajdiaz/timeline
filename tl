@@ -1,5 +1,5 @@
 #! /bin/bash -i
-TIMELINE_VERSION='1.7-12-gd280d3d'
+TIMELINE_VERSION='1.7-13-g11902ff'
 ## vim:ft=sh
 
 # fun: [E=code] fatal <message>
@@ -321,87 +321,6 @@ reqs_eval ()
 }
 ## vim:ft=sh
 
-# fun: directory_requirements
-# txt: ensure that specific requirements for directory management are
-#      present in the system
-directory_requirements ()
-{
-  REQUIREMENTS+=( "+curl" "+grep" )
-  reqs_eval
-}
-
-# fun: directory_refresh [name]
-# txt: download directory files for specific directory or for all directories
-#      listed in config.
-directory_refresh ()
-{
-  local dir
-  directory_requirements
-
-  for dir in "${!CONFIG[@]}"; do
-    case "$dir" in
-      "directory.$1"*)
-        curl -qsSL -o "${CACHE_DIR}/$dir" --fail "${CONFIG[$dir]}" 2>&1 ||
-          E=1 error "Unable to refresh directory: ${dir#directory.}"
-        ;;
-    esac
-  done
-}
-# fun: directory_add [--force] <name> <url>
-# txt: add a directory to the config
-directory_add ()
-{
-  if [[ "$1" == "--force" ]]; then
-    local force=true; shift
-  else
-    local force=false
-  fi
-
-  [[ "$1" ]] || E=2 error $"Name is required for add a directory"
-  [[ "$2" ]] || E=2 error $"URL is required for add a directory"
-
-  if ! $force && [[ "${CONFIG["directory.$1"]}" ]]; then
-    error "Already exists a directory registered with name $1"
-    E=1 error "Use --force to override"
-  fi
-
-  CONFIG["directory.$1"]="$2"
-}
-
-# fun: directory_del <name>
-# txt: del a directory to the config
-directory_del ()
-{
-  [[ "$1" ]] || E=2 error $"Name is required for del a directory"a
-  CONFIG["directory.$1"]=''
-}
-
-# fun: directory_list
-# txt: list all directories in config
-directory_list ()
-{
-  for dir in "${!CONFIG[@]}"; do
-    case "$dir" in
-      directory.*)
-        echo "${dir#directory.}: ${CONFIG["$dir"]}"
-        ;;
-    esac
-  done
-}
-
-# fun: directory_search [pattern]
-# txt: search a pattern in directories
-directory_search ()
-{
-  local dir
-  for dir in "${CACHE_DIR}"/directory.*; do
-    [[ "dir" == "${CACHE_DIR}/directory.*" ]] && break
-
-    grep -v -e '^#' -e '^[ ]*$' "$dir" | grep -w "$1"
-  done
-}
-## vim:ft=sh
-
 # fun: history_load
 # txt: if is defined prompt_history and prompt_history_file configuration
 #      file, load from there the history of the commands.
@@ -672,166 +591,6 @@ markdown_generate ()
       fi
     done < "${ACCOUNT_PATH}/CONTENT"
   fi
-}
-## vim:ft=sh
-
-FILTER_HIDE=()
-FILTER_SHOW=()
-
-# fun: filter <tags_to_filter> <eid>
-# txt: return true if EID need to be filtered
-filter_tag ()
-{
-  local fpattern="$1" eid="$2"
-  local event tag
-
-  [[ "$fpattern" = "*" ]] && return 0
-
-  for event in $(event_labels "$eid"); do
-    for tag in $(event_tags "$event"); do
-      if any "$fpattern" "$tag"; then
-        return 0
-      fi
-    done
-  done
-  return 1
-}
-
-# fun: filter <view> <eid>
-# txt: return true if EID need to be filtered
-filter_view ()
-{
-  local fpattern="$1" eid="$2"
-  read -ra view <<< "${CONFIG["views.$fpattern"]}"
-
-  if [[ "${#view[@]}" -ne 0 ]]; then
-    filter_eval_expr "$eid" "${view[@]}"
-  else
-    E=1 fatal $"No view named: %s" "$fpattern"
-  fi
-}
-
-# fun: filter {score-min|score-max} <value> <eid>
-# txt: return true if EID need to be filtered according to score values
-#      passsed as argument.
-filter_score ()
-{
-  local kind="$1" value="$2" eid="$3"
-  local score
-
-  score="$(event_score "$eid")"
-
-  case "$kind" in
-    score-min)
-      [[ "${score:-0}" -lt "${value}" ]] && return 0
-    ;;
-    score-max)
-      [[ "${score:-0}" -gt "${value}" ]] && return 0
-    ;;
-    *)
-      E=1 fatal $"Invalid score filter: %s" "$kind"
-    ;;
-  esac
-
-  return 1
-}
-
-# fun: filter_text <pattern> <eid>
-# txt: return true if especified eid contains text which match with pattern
-#      passed as argument (glob pattern supported only).
-filter_text ()
-{
-  local fpattern="$1" eid="$2"
-
-  # shellcheck disable=SC2254
-  case "$(event_mesg "$eid")" in
-    $fpattern) return 0;;
-  esac
-  return 1
-}
-
-# fun: filter_mention <eid>
-# txt: return true if myself is mentioned in eid
-filter_mention ()
-{
-  local eid="$1" uid pattern
-  uid="${ACCOUNT_OID}"
-  local -a reat=()
-
-  # no acctive account
-  [[ "$uid" ]] || return 1
-
-  reat=( "@$uid" "@${uid:0:8}" "$(username "$uid")" )
-
-  if [[ "${CONFIG[timeline.react-on-all]}" = "true" ]]; then
-    reat+=( "@all" "@here" )
-  fi
-
-  for pattern in "${reat[@]}"; do
-    filter_text "*${pattern}*" "$eid" && return 0
-  done
-
-  return 1
-}
-
-# fun: filter_add {hide|show} <expr>
-# txt: Add an expression filter
-filter_add ()
-{
-  local mode="$1"; shift
-
-  case "$mode" in
-    hide) FILTER_HIDE+=( "$@" );;
-    show) FILTER_SHOW+=( "$@" );;
-  esac
-}
-
-# fun: filter_eval {hide|show} <eid>
-# txt: evaluate filtering of the eid for the specified mode. If this funcion
-#      return 0, means that the item is filtered, otherwise is not filtered.
-filter_eval ()
-{
-  local mode="$1" eid="$2"
-  local -a expr_array=()
-
-  case "$mode" in
-    hide) expr_array+=( "${FILTER_HIDE[@]}" );;
-    show) expr_array+=( "${FILTER_SHOW[@]}" );;
-  esac
-
-  filter_eval_expr "$eid" "${expr_array[@]}"
-}
-
-# fun: filter_eval_expr <eid> <expr>...
-# txt: eval an expression and return true if filtered or false if not
-filter_eval_expr ()
-{
-  local eid="$1" expr=; shift
-
-  for expr in "${@}"; do
-    case "$expr" in
-      '') ;;
-      tag:*)
-        filter_tag "${expr#tag:}" "$eid" && return 0
-        ;;
-      score-min:*|score-max:*)
-        filter_score "${expr%%:*}" "${expr#*:}" "$eid" && return 0
-        ;;
-      view:*)
-        filter_view "${expr#view:}" "$eid" && return 0
-        ;;
-      text:*)
-        filter_text "${expr#text:}" "$eid" && return 0
-        ;;
-      mention)
-        filter_mention "$eid" && return 0
-        ;;
-      *)
-        E=3 error $"This kind of filtering ($xpr) is not implemented yet"
-        ;;
-    esac
-  done
-  return 1
 }
 ## vim:ft=sh
 
@@ -1965,378 +1724,6 @@ account_preview ()
 }
 ## vim:ft=sh
 
-# env: TIMELINE_CONTENT: The path relative to the account root, where
-#      CONTENT file is stored.
-TIMELINE_CONTENT="CONTENT"
-
-# env: TIMELINE_FOLLOW The path relative to the account root, where
-#      FOLLOW dir is located.
-TIMELINE_FOLLOW="FOLLOW"
-
-# env: TIMELINE_PRINTED: Internal associative array which contains the EID
-#      of events alredy printed to avoid duplicates.
-declare -A TIMELINE_PRINTED=()
-
-# env: TIMELINE_INDEX: Internal array used to print an index in timeline to
-#      easy refer to an event
-declare -a TIMELINE_INDEX=()
-
-# fun: timeline_load [path] [oid]
-# txt: load the timeline from current active account into memory
-timeline_load ()
-{
-  local oid="$2" content_path follow_path show_own path="$1"
-
-  if [[ -z "$path" ]]; then
-    path="${ACCOUNT_PATH}"
-    oid="${ACCOUNT_OID}"
-  fi
-
-  content_path="$path/$TIMELINE_CONTENT"
-  follow_path="$path/$TIMELINE_FOLLOW"
-  show_own="${CONFIG["timeline.own-posts"]}"
-  pattern=("⣾" "⣽" "⣻" "⢿" "⡿" "⣟" "⣯" "⣷")
-
-  if ! [[ -r "$content_path" ]]; then
-    error $"Content path does not exists."
-    error $"Maybe you delete your account data?"
-    E=1 error $"Try $0 account rebuild ${ACCOUNT_NAME} to recreate it automatically"
-  fi
-
-  # Load our account timeline
-  [[ "$show_own" = "false" ]] ||
-    event_load "$oid" "${content_path}"
-
-  local dir i=0
-
-  if [[ -d "${follow_path}" ]]; then
-    for dir in "${follow_path}"/*; do
-      [[ -d "$dir" ]] || continue  # ignore non-dir files
-      [[ -r "$dir/$TIMELINE_CONTENT" ]] || continue # ignore non initialized
-
-      dir="${dir%/}"
-      echo -en "\r${pattern[$((i % ${#pattern[@]}))]}\r"
-      event_load "${dir##*/}" "${dir}/$TIMELINE_CONTENT"
-    done
-  fi
-}
-
-# fun: timeline_filter <eid>
-# txt: return true if the item should be filtered and false if not.
-timeline_filter ()
-{
-  local eid="$1"
-  local ret=1
-
-  filter_eval hide "$eid" &&
-    timeline_hide_thread "$eid" && ret=0
-
-  filter_eval show "$eid" &&
-    timeline_show_thread "$eid" && ret=1
-
-  return "$ret"
-}
-
-
-# fun: timeline_hide_thread <eid>
-# txt: hide the thread of the specific EID
-timeline_hide_thread ()
-{
-  TIMELINE_PRINTED["$1"]=1
-  for event in $(event_labels "$1"); do
-    timeline_hide_thread "$event"
-  done
-  for event in $(event_replies "$1"); do
-    timeline_hide_thread "$event"
-  done
-  return 0
-}
-
-# fun: timeline_show_thread <eid>
-# txt: show the thread of the specific EID
-timeline_show_thread ()
-{
-  unset TIMELINE_PRINTED["$1"]
-  for event in $(event_labels "$1"); do
-    timeline_show_thread "$event"
-  done
-  for event in $(event_replies "$1"); do
-    timeline_show_thread "$event"
-  done
-  return 0
-}
-
-# fun: timeline_list_thread <eid>
-# txt: print thread for specific eid passed as argument
-timeline_list_thread ()
-{
-  local prefix indent date kind mesg tags link name eid="$1"
-  local flag show_tags show_replies flags=''
-
-  # item is already printed? then do nothing
-  [[ "${TIMELINE_PRINTED["$eid"]}" ]] && return
-
-  date="${EVENTS_DATE["$eid"]}"
-  kind="${EVENTS_KIND["$eid"]}"
-  name="$(username "$eid")"
-  sign="${EVENTS_SIGN["$eid"]}"
-
-  case "$kind" in
-    post)
-      mesg="${EVENTS_MESG["$eid"]}"
-      timeline_filter "$eid" && return
-      ;;
-    tag)
-      tags="${EVENTS_TAGS["$eid"]// /, }"
-      link="${EVENTS_LINK["$eid"]}"
-      ;;
-    reply)
-      mesg="${EVENTS_MESG["$eid"]}"
-      link="${EVENTS_LINK["$eid"]}"
-      ;;
-  esac
-
-  indent="${CONFIG["timeline.$kind.indent"]}"
-  prefix="${CONFIG["timeline.$kind.prefix"]}"
-
-  case "${sign}" in
-    G) flags+="${CONFIG["timeline.$kind.flag-signed-good"]}";;
-    B) flags+="${CONFIG["timeline.$kind.flag-signed-bad"]}";;
-    U) flags+="${CONFIG["timeline.$kind.flag-signed-unknown"]}";;
-    X|Y) flags+="${CONFIG["timeline.$kind.flag-signed-expired"]}";;
-    R) flags+="${CONFIG["timeline.$kind.flag-signed-revoked"]}";;
-    E) flags+="${CONFIG["timeline.$kind.flag-signed-missing"]}";;
-    *) flags+="${CONFIG["timeline.$kind.flag-signed-none"]}";;
-  esac
-
-  # composing the output
-  format_compose "timeline.$kind" index "${#TIMELINE_INDEX[@]}"
-  format_compose "timeline.$kind" name "$name"
-  format_compose "timeline.$kind" date "$date"
-  format_compose "timeline.$kind" tags "${2}${indent}${prefix}${tags}"
-  format_compose "timeline.$kind" link "$link"
-  format_compose "timeline.$kind" score "${EVENTS_SCORE["$eid"]}"
-  format_compose "timeline.$kind" mesg "${2}${indent}${prefix}${mesg}"
-
-  TIMELINE_PRINTED["$eid"]=1
-  TIMELINE_INDEX+=( "$eid" )
-
-  show_tags="${CONFIG["timeline.show-tags"]}"
-  show_replies="${CONFIG["timeline.show-replies"]}"
-
-  if [[ "$show_tags" != "true" ]]; then
-    if [[ "$(event_labels "$eid")" ]]; then
-      flags+="${CONFIG["timeline.$kind.flag-tagged"]}"
-    else
-      flags+=" "
-    fi
-  fi
-
-  if [[ "$show_replies" != "true" ]]; then
-    if [[ "$(event_replies "$eid")" ]]; then
-      flags+="${CONFIG["timeline.$kind.flag-replied"]}"
-    else
-      flags+=" "
-    fi
-  fi
-
-  format_compose "timeline.$kind" flags "${flags}"
-  format_dumps "timeline.$kind"
-
-  if [[ "$show_tags" = "true" ]]; then
-    for tags in $(event_labels "$eid"); do
-      timeline_list_thread "$tags" "$2${indent}"
-    done
-  fi
-
-  if [[ "$show_replies" = "true" ]]; then
-    for reply in $(event_replies "$eid"); do
-      timeline_list_thread "$reply" "$2${indent}"
-    done
-  fi
-}
-
-# fun: timeline_list [filter]
-# txt: print the entire timelist
-timeline_list ()
-{
-  TIMELINE_PRINTED=()
-  TIMELINE_INDEX=()
-
-  local -a filter_show
-  local -a filter_hide
-
-  read -ra filter_show <<< "${CONFIG[timeline.filter.show]}"
-  read -ra filter_hide <<< "${CONFIG[timeline.filter.hide]}"
-
-  [[ "${#filter_show[@]}" -gt 0 ]] &&
-    filter_add show "${filter_show[@]}"
-
-  [[ "${#filter_hide[@]}" -gt 0 ]] &&
-    filter_add hide "${filter_hide[@]}"
-
-  if [[ "$1" ]]; then
-    filter_add hide "tag:*"
-    filter_add show "$@"
-  fi
-
-  for eid in "${EVENTS_SORTED[@]}"; do
-    if [[ "${EVENTS_KIND["$eid"]}" = "post" ]]; then
-      timeline_list_thread "$eid" ''
-    fi
-  done
-
-  timeline_index_save
-}
-
-# fun: timeline_index_save
-# txt: dumps TIMELINE_INDEX to a sourceable file to be loaded before any
-#      input to identify an event easily.
-timeline_index_save ()
-{
-  local var
-  {
-    echo "declare -ag TIMELINE_INDEX=("
-    for var in "${TIMELINE_INDEX[@]}"; do
-      echo "'$var'"
-    done
-    echo ")"
-  } > "${CACHE_DIR}/.timeline-index"
-}
-
-# fun: timeline_index_load
-# txt: source index saved file with timeline_index_save
-timeline_index_load ()
-{
-  # shellcheck source=/dev/null
-  [[ -r "${CACHE_DIR}/.timeline-index" ]] &&
-    source "${CACHE_DIR}/.timeline-index" 
-}
-
-# fun: timeline_index_get <num>
-# txt: return the EID of the event indexed by number passed as argument
-timeline_index_get ()
-{
-  if [[ "$1" -ge ${#TIMELINE_INDEX[@]} ]]; then
-    E=1 error $"Index out of bounds: %s in %s" "$1" "TIMELINE_INDEX"
-  else
-    echo "${TIMELINE_INDEX[$1]}"
-  fi
-}
-
-# fun: timeline_edit
-# txt: interactively edit your timeline
-timeline_edit ()
-{
-  local content auto_push
-  content="${ACCOUNT_PATH}/CONTENT"
-
-  if [[ -w "$content" ]]; then
-
-    auto_push="${CONFIG["account.${ACCOUNT_NAME}.auto-push"]}"
-
-    if ! [[ "$auto_push" ]]; then
-      auto_push="$(config_get account.auto-push)"
-    fi
-
-    ${EDITOR:-nano} "$content"
-
-    account_commit "manual: timeline edit command" | info_multi
-
-    if [[ "$auto_push" = "true" ]]; then
-      account_push | info_multi
-    fi
-
-  else
-    fatal $"Unable to edit CONTENT file"
-  fi
-}
-
-# fun: timeline_orphans
-# txt: show orphan events in the timeline
-timeline_orphans ()
-{
-  for eid in ${EVENTS_CROSS_REPLY[@]}; do
-    timeline_list_thread "$eid"
-  done
-  for eid in ${EVENTS_CROSS_TAGS[@]}; do
-    timeline_list_thread "$eid"
-  done
-  for eid in ${EVENTS_CROSS_SCORE[@]}; do
-    timeline_list_thread "$eid"
-  done
-  timeline_index_save
-}
-## vim:ft=sh
-
-# fun: follow_list <path>
-# txt: given a path get the submodules into FOLLOW directory
-follow_list ()
-{
-  local line path="$1"
-
-  while read -r line; do
-    line="${line#*${TIMELINE_FOLLOW}/}"
-    case "$line" in
-      *'.url='*)
-        echo "${line%.url=*}" "${line#*.url=}"
-      ;;
-    esac
-  done < <(command git -C "$path" config -f .gitmodules -l 2>/dev/null)
-}
-
-
-# fun: follow_add <pull_url> [name]
-# txt: Add new following using pull_url passed as argument. Optional name
-#      will add a config entry for user alias to this name.
-follow_add ()
-{
-  local pull_url="${1}" name="$2"
-  oid "$pull_url"
-  
-  command git -C "${ACCOUNT_PATH}" submodule add \
-    "$pull_url" "${TIMELINE_FOLLOW}/${OID_CACHE["$pull_url"]}"
-  command git -C "${ACCOUNT_PATH}" submodule init
-  command git -C "${ACCOUNT_PATH}" submodule update --remote
-
-  account_commit "follow: add ${OID_CACHE["${pull_url}"]}"
-  account_push
-
-  if [[ "$name" ]]; then
-    config_set "user.alias-${OID_CACHE["$pull_url"]}" "$name"
-    config_save "${CONFIG_FILE}"
-  fi
-
-}
-
-# fun: follow_del <uid>
-# txt: remove following for user identified by specific UID
-follow_del ()
-{
-  local uid="$1"
-
-  mpath="${TIMELINE_FOLLOW}/$uid"
-
-  # remove gitconfig sections
-  mute command git -C "$ACCOUNT_PATH" config -f .git/config \
-    --remove-section "submodule.$mpath"
-
-  mute command git -C "$ACCOUNT_PATH" config -f .gitmodules \
-    --remove-section "submodule.$mpath"
-
-  account_commit "follow: del "${uid}
-
-  command git -C "$ACCOUNT_PATH" rm --cached "$mpath"
-  rm -rf "${ACCOUNT_PATH:?}/.git/modules/$mpath"
- 
-  if [[ -d "$ACCOUNT_PATH/$mpath" ]]; then
-    rm -rf "${ACCOUNT_PATH:?}/${mpath:?}"
-  fi
-
-  account_push
-}
-## vim:ft=sh
-
 # env: EVENT: associative array which contains parts of an event line.
 declare -A EVENTS_KIND=()
 declare -A EVENTS_DATE=()
@@ -2577,7 +1964,7 @@ event_mesg ()
 #      For tags:  date kind link tags
 event_create ()
 {
-  local path auto_push content_markdown
+  local auto_push content_markdown
   local -a content
 
   auto_push="${CONFIG["account.${ACCOUNT_NAME}.auto-push"]}"
@@ -2773,6 +2160,7 @@ command_account_rebuild ()
         info_multi
       config_load "${CONFIG_FILE}"
       command_account_active "$name"
+    # shellcheck disable=SC2119
     command_timeline_refresh
   fi
 }
@@ -2930,6 +2318,7 @@ command_timeline_list ()
 # help:timeline:fun: timeline refresh [filter]
 # help:timeline:txt: Pull changes in the current enabled timeline and show
 # help:timeline:txt: the results.
+# shellcheck disable=SC2120
 command_timeline_refresh ()
 {
   command_account_refresh
@@ -4195,5 +3584,616 @@ the library.  If this is what you want to do, use the GNU Lesser General
 Public License instead of this License.  But first, please read
 <https://www.gnu.org/licenses/why-not-lgpl.html>.
 EOF
+}
+## vim:ft=sh
+
+# fun: directory_requirements
+# txt: ensure that specific requirements for directory management are
+#      present in the system
+directory_requirements ()
+{
+  REQUIREMENTS+=( "+curl" "+grep" )
+  reqs_eval
+}
+
+# fun: directory_refresh [name]
+# txt: download directory files for specific directory or for all directories
+#      listed in config.
+directory_refresh ()
+{
+  local dir
+  directory_requirements
+
+  for dir in "${!CONFIG[@]}"; do
+    case "$dir" in
+      "directory.$1"*)
+        curl -qsSL -o "${CACHE_DIR}/$dir" --fail "${CONFIG[$dir]}" 2>&1 ||
+          E=1 error "Unable to refresh directory: ${dir#directory.}"
+        ;;
+    esac
+  done
+}
+# fun: directory_add [--force] <name> <url>
+# txt: add a directory to the config
+directory_add ()
+{
+  if [[ "$1" == "--force" ]]; then
+    local force=true; shift
+  else
+    local force=false
+  fi
+
+  [[ "$1" ]] || E=2 error $"Name is required for add a directory"
+  [[ "$2" ]] || E=2 error $"URL is required for add a directory"
+
+  if ! $force && [[ "${CONFIG["directory.$1"]}" ]]; then
+    error "Already exists a directory registered with name $1"
+    E=1 error "Use --force to override"
+  fi
+
+  CONFIG["directory.$1"]="$2"
+}
+
+# fun: directory_del <name>
+# txt: del a directory to the config
+directory_del ()
+{
+  [[ "$1" ]] || E=2 error $"Name is required for del a directory"a
+  CONFIG["directory.$1"]=''
+}
+
+# fun: directory_list
+# txt: list all directories in config
+directory_list ()
+{
+  for dir in "${!CONFIG[@]}"; do
+    case "$dir" in
+      directory.*)
+        echo "${dir#directory.}: ${CONFIG["$dir"]}"
+        ;;
+    esac
+  done
+}
+
+# fun: directory_search [pattern]
+# txt: search a pattern in directories
+directory_search ()
+{
+  local dir
+  for dir in "${CACHE_DIR}"/directory.*; do
+    grep -v -e '^#' -e '^[ ]*$' "$dir" | grep -w "$1"
+  done
+}
+## vim:ft=sh
+
+FILTER_HIDE=()
+FILTER_SHOW=()
+
+# fun: filter <tags_to_filter> <eid>
+# txt: return true if EID need to be filtered
+filter_tag ()
+{
+  local fpattern="$1" eid="$2"
+  local event tag
+
+  [[ "$fpattern" = "*" ]] && return 0
+
+  for event in $(event_labels "$eid"); do
+    for tag in $(event_tags "$event"); do
+      if any "$fpattern" "$tag"; then
+        return 0
+      fi
+    done
+  done
+  return 1
+}
+
+# fun: filter <view> <eid>
+# txt: return true if EID need to be filtered
+filter_view ()
+{
+  local fpattern="$1" eid="$2"
+  read -ra view <<< "${CONFIG["views.$fpattern"]}"
+
+  if [[ "${#view[@]}" -ne 0 ]]; then
+    filter_eval_expr "$eid" "${view[@]}"
+  else
+    E=1 fatal $"No view named: %s" "$fpattern"
+  fi
+}
+
+# fun: filter {score-min|score-max} <value> <eid>
+# txt: return true if EID need to be filtered according to score values
+#      passsed as argument.
+filter_score ()
+{
+  local kind="$1" value="$2" eid="$3"
+  local score
+
+  score="$(event_score "$eid")"
+
+  case "$kind" in
+    score-min)
+      [[ "${score:-0}" -lt "${value}" ]] && return 0
+    ;;
+    score-max)
+      [[ "${score:-0}" -gt "${value}" ]] && return 0
+    ;;
+    *)
+      E=1 fatal $"Invalid score filter: %s" "$kind"
+    ;;
+  esac
+
+  return 1
+}
+
+# fun: filter_text <pattern> <eid>
+# txt: return true if especified eid contains text which match with pattern
+#      passed as argument (glob pattern supported only).
+filter_text ()
+{
+  local fpattern="$1" eid="$2"
+
+  # shellcheck disable=SC2254
+  case "$(event_mesg "$eid")" in
+    $fpattern) return 0;;
+  esac
+  return 1
+}
+
+# fun: filter_mention <eid>
+# txt: return true if myself is mentioned in eid
+filter_mention ()
+{
+  local eid="$1" uid pattern
+  uid="${ACCOUNT_OID}"
+  local -a reat=()
+
+  # no acctive account
+  [[ "$uid" ]] || return 1
+
+  reat=( "@$uid" "@${uid:0:8}" "$(username "$uid")" )
+
+  if [[ "${CONFIG[timeline.react-on-all]}" = "true" ]]; then
+    reat+=( "@all" "@here" )
+  fi
+
+  for pattern in "${reat[@]}"; do
+    filter_text "*${pattern}*" "$eid" && return 0
+  done
+
+  return 1
+}
+
+# fun: filter_add {hide|show} <expr>
+# txt: Add an expression filter
+filter_add ()
+{
+  local mode="$1"; shift
+
+  case "$mode" in
+    hide) FILTER_HIDE+=( "$@" );;
+    show) FILTER_SHOW+=( "$@" );;
+  esac
+}
+
+# fun: filter_eval {hide|show} <eid>
+# txt: evaluate filtering of the eid for the specified mode. If this funcion
+#      return 0, means that the item is filtered, otherwise is not filtered.
+filter_eval ()
+{
+  local mode="$1" eid="$2"
+  local -a expr_array=()
+
+  case "$mode" in
+    hide) expr_array+=( "${FILTER_HIDE[@]}" );;
+    show) expr_array+=( "${FILTER_SHOW[@]}" );;
+  esac
+
+  filter_eval_expr "$eid" "${expr_array[@]}"
+}
+
+# fun: filter_eval_expr <eid> <expr>...
+# txt: eval an expression and return true if filtered or false if not
+filter_eval_expr ()
+{
+  local eid="$1" expr=; shift
+
+  for expr in "${@}"; do
+    case "$expr" in
+      '') ;;
+      tag:*)
+        filter_tag "${expr#tag:}" "$eid" && return 0
+        ;;
+      score-min:*|score-max:*)
+        filter_score "${expr%%:*}" "${expr#*:}" "$eid" && return 0
+        ;;
+      view:*)
+        filter_view "${expr#view:}" "$eid" && return 0
+        ;;
+      text:*)
+        filter_text "${expr#text:}" "$eid" && return 0
+        ;;
+      mention)
+        filter_mention "$eid" && return 0
+        ;;
+      *)
+        E=3 error $"This kind of filtering ($expr) is not implemented yet"
+        ;;
+    esac
+  done
+  return 1
+}
+## vim:ft=sh
+
+# fun: follow_list <path>
+# txt: given a path get the submodules into FOLLOW directory
+follow_list ()
+{
+  local line path="$1"
+
+  while read -r line; do
+    line="${line#*${TIMELINE_FOLLOW}/}"
+    case "$line" in
+      *'.url='*)
+        echo "${line%.url=*}" "${line#*.url=}"
+      ;;
+    esac
+  done < <(command git -C "$path" config -f .gitmodules -l 2>/dev/null)
+}
+
+
+# fun: follow_add <pull_url> [name]
+# txt: Add new following using pull_url passed as argument. Optional name
+#      will add a config entry for user alias to this name.
+follow_add ()
+{
+  local pull_url="${1}" name="$2"
+  oid "$pull_url"
+  
+  command git -C "${ACCOUNT_PATH}" submodule add \
+    "$pull_url" "${TIMELINE_FOLLOW}/${OID_CACHE["$pull_url"]}"
+  command git -C "${ACCOUNT_PATH}" submodule init
+  command git -C "${ACCOUNT_PATH}" submodule update --remote
+
+  account_commit "follow: add ${OID_CACHE["${pull_url}"]}"
+  account_push
+
+  if [[ "$name" ]]; then
+    config_set "user.alias-${OID_CACHE["$pull_url"]}" "$name"
+    config_save "${CONFIG_FILE}"
+  fi
+
+}
+
+# fun: follow_del <uid>
+# txt: remove following for user identified by specific UID
+follow_del ()
+{
+  local uid="$1"
+
+  mpath="${TIMELINE_FOLLOW}/$uid"
+
+  # remove gitconfig sections
+  mute command git -C "$ACCOUNT_PATH" config -f .git/config \
+    --remove-section "submodule.$mpath"
+
+  mute command git -C "$ACCOUNT_PATH" config -f .gitmodules \
+    --remove-section "submodule.$mpath"
+
+  account_commit "follow: del ${uid}"
+
+  command git -C "$ACCOUNT_PATH" rm --cached "$mpath"
+  rm -rf "${ACCOUNT_PATH:?}/.git/modules/$mpath"
+ 
+  if [[ -d "$ACCOUNT_PATH/$mpath" ]]; then
+    rm -rf "${ACCOUNT_PATH:?}/${mpath:?}"
+  fi
+
+  account_push
+}
+## vim:ft=sh
+
+# env: TIMELINE_CONTENT: The path relative to the account root, where
+#      CONTENT file is stored.
+TIMELINE_CONTENT="CONTENT"
+
+# env: TIMELINE_FOLLOW The path relative to the account root, where
+#      FOLLOW dir is located.
+TIMELINE_FOLLOW="FOLLOW"
+
+# env: TIMELINE_PRINTED: Internal associative array which contains the EID
+#      of events alredy printed to avoid duplicates.
+declare -A TIMELINE_PRINTED=()
+
+# env: TIMELINE_INDEX: Internal array used to print an index in timeline to
+#      easy refer to an event
+declare -a TIMELINE_INDEX=()
+
+# fun: timeline_load [path] [oid]
+# txt: load the timeline from current active account into memory
+timeline_load ()
+{
+  local oid="$2" content_path follow_path show_own path="$1"
+
+  if [[ -z "$path" ]]; then
+    path="${ACCOUNT_PATH}"
+    oid="${ACCOUNT_OID}"
+  fi
+
+  content_path="$path/$TIMELINE_CONTENT"
+  follow_path="$path/$TIMELINE_FOLLOW"
+  show_own="${CONFIG["timeline.own-posts"]}"
+  pattern=("⣾" "⣽" "⣻" "⢿" "⡿" "⣟" "⣯" "⣷")
+
+  if ! [[ -r "$content_path" ]]; then
+    error $"Content path does not exists."
+    error $"Maybe you delete your account data?"
+    E=1 error $"Try $0 account rebuild ${ACCOUNT_NAME} to recreate it automatically"
+  fi
+
+  # Load our account timeline
+  [[ "$show_own" = "false" ]] ||
+    event_load "$oid" "${content_path}"
+
+  local dir i=0
+
+  if [[ -d "${follow_path}" ]]; then
+    for dir in "${follow_path}"/*; do
+      [[ -d "$dir" ]] || continue  # ignore non-dir files
+      [[ -r "$dir/$TIMELINE_CONTENT" ]] || continue # ignore non initialized
+
+      dir="${dir%/}"
+      echo -en "\r${pattern[$((i % ${#pattern[@]}))]}\r"
+      event_load "${dir##*/}" "${dir}/$TIMELINE_CONTENT"
+    done
+  fi
+}
+
+# fun: timeline_filter <eid>
+# txt: return true if the item should be filtered and false if not.
+timeline_filter ()
+{
+  local eid="$1"
+  local ret=1
+
+  filter_eval hide "$eid" &&
+    timeline_hide_thread "$eid" && ret=0
+
+  filter_eval show "$eid" &&
+    timeline_show_thread "$eid" && ret=1
+
+  return "$ret"
+}
+
+
+# fun: timeline_hide_thread <eid>
+# txt: hide the thread of the specific EID
+timeline_hide_thread ()
+{
+  TIMELINE_PRINTED["$1"]=1
+  for event in $(event_labels "$1"); do
+    timeline_hide_thread "$event"
+  done
+  for event in $(event_replies "$1"); do
+    timeline_hide_thread "$event"
+  done
+  return 0
+}
+
+# fun: timeline_show_thread <eid>
+# txt: show the thread of the specific EID
+timeline_show_thread ()
+{
+  unset TIMELINE_PRINTED["$1"]
+  for event in $(event_labels "$1"); do
+    timeline_show_thread "$event"
+  done
+  for event in $(event_replies "$1"); do
+    timeline_show_thread "$event"
+  done
+  return 0
+}
+
+# fun: timeline_list_thread <eid>
+# txt: print thread for specific eid passed as argument
+timeline_list_thread ()
+{
+  local prefix indent date kind mesg tags link name eid="$1"
+  local flag show_tags show_replies flags=''
+
+  # item is already printed? then do nothing
+  [[ "${TIMELINE_PRINTED["$eid"]}" ]] && return
+
+  date="${EVENTS_DATE["$eid"]}"
+  kind="${EVENTS_KIND["$eid"]}"
+  name="$(username "$eid")"
+  sign="${EVENTS_SIGN["$eid"]}"
+
+  case "$kind" in
+    post)
+      mesg="${EVENTS_MESG["$eid"]}"
+      timeline_filter "$eid" && return
+      ;;
+    tag)
+      tags="${EVENTS_TAGS["$eid"]// /, }"
+      link="${EVENTS_LINK["$eid"]}"
+      ;;
+    reply)
+      mesg="${EVENTS_MESG["$eid"]}"
+      link="${EVENTS_LINK["$eid"]}"
+      ;;
+  esac
+
+  indent="${CONFIG["timeline.$kind.indent"]}"
+  prefix="${CONFIG["timeline.$kind.prefix"]}"
+
+  case "${sign}" in
+    G) flags+="${CONFIG["timeline.$kind.flag-signed-good"]}";;
+    B) flags+="${CONFIG["timeline.$kind.flag-signed-bad"]}";;
+    U) flags+="${CONFIG["timeline.$kind.flag-signed-unknown"]}";;
+    X|Y) flags+="${CONFIG["timeline.$kind.flag-signed-expired"]}";;
+    R) flags+="${CONFIG["timeline.$kind.flag-signed-revoked"]}";;
+    E) flags+="${CONFIG["timeline.$kind.flag-signed-missing"]}";;
+    *) flags+="${CONFIG["timeline.$kind.flag-signed-none"]}";;
+  esac
+
+  # composing the output
+  format_compose "timeline.$kind" index "${#TIMELINE_INDEX[@]}"
+  format_compose "timeline.$kind" name "$name"
+  format_compose "timeline.$kind" date "$date"
+  format_compose "timeline.$kind" tags "${2}${indent}${prefix}${tags}"
+  format_compose "timeline.$kind" link "$link"
+  format_compose "timeline.$kind" score "${EVENTS_SCORE["$eid"]}"
+  format_compose "timeline.$kind" mesg "${2}${indent}${prefix}${mesg}"
+
+  TIMELINE_PRINTED["$eid"]=1
+  TIMELINE_INDEX+=( "$eid" )
+
+  show_tags="${CONFIG["timeline.show-tags"]}"
+  show_replies="${CONFIG["timeline.show-replies"]}"
+
+  if [[ "$show_tags" != "true" ]]; then
+    if [[ "$(event_labels "$eid")" ]]; then
+      flags+="${CONFIG["timeline.$kind.flag-tagged"]}"
+    else
+      flags+=" "
+    fi
+  fi
+
+  if [[ "$show_replies" != "true" ]]; then
+    if [[ "$(event_replies "$eid")" ]]; then
+      flags+="${CONFIG["timeline.$kind.flag-replied"]}"
+    else
+      flags+=" "
+    fi
+  fi
+
+  format_compose "timeline.$kind" flags "${flags}"
+  format_dumps "timeline.$kind"
+
+  if [[ "$show_tags" = "true" ]]; then
+    for tags in $(event_labels "$eid"); do
+      timeline_list_thread "$tags" "$2${indent}"
+    done
+  fi
+
+  if [[ "$show_replies" = "true" ]]; then
+    for reply in $(event_replies "$eid"); do
+      timeline_list_thread "$reply" "$2${indent}"
+    done
+  fi
+}
+
+# fun: timeline_list [filter]
+# txt: print the entire timelist
+timeline_list ()
+{
+  TIMELINE_PRINTED=()
+  TIMELINE_INDEX=()
+
+  local -a filter_show
+  local -a filter_hide
+
+  read -ra filter_show <<< "${CONFIG[timeline.filter.show]}"
+  read -ra filter_hide <<< "${CONFIG[timeline.filter.hide]}"
+
+  [[ "${#filter_show[@]}" -gt 0 ]] &&
+    filter_add show "${filter_show[@]}"
+
+  [[ "${#filter_hide[@]}" -gt 0 ]] &&
+    filter_add hide "${filter_hide[@]}"
+
+  if [[ "$1" ]]; then
+    filter_add hide "tag:*"
+    filter_add show "$@"
+  fi
+
+  for eid in "${EVENTS_SORTED[@]}"; do
+    if [[ "${EVENTS_KIND["$eid"]}" = "post" ]]; then
+      timeline_list_thread "$eid" ''
+    fi
+  done
+
+  timeline_index_save
+}
+
+# fun: timeline_index_save
+# txt: dumps TIMELINE_INDEX to a sourceable file to be loaded before any
+#      input to identify an event easily.
+timeline_index_save ()
+{
+  local var
+  {
+    echo "declare -ag TIMELINE_INDEX=("
+    for var in "${TIMELINE_INDEX[@]}"; do
+      echo "'$var'"
+    done
+    echo ")"
+  } > "${CACHE_DIR}/.timeline-index"
+}
+
+# fun: timeline_index_load
+# txt: source index saved file with timeline_index_save
+timeline_index_load ()
+{
+  # shellcheck source=/dev/null
+  [[ -r "${CACHE_DIR}/.timeline-index" ]] &&
+    source "${CACHE_DIR}/.timeline-index" 
+}
+
+# fun: timeline_index_get <num>
+# txt: return the EID of the event indexed by number passed as argument
+timeline_index_get ()
+{
+  if [[ "$1" -ge ${#TIMELINE_INDEX[@]} ]]; then
+    E=1 error $"Index out of bounds: %s in %s" "$1" "TIMELINE_INDEX"
+  else
+    echo "${TIMELINE_INDEX[$1]}"
+  fi
+}
+
+# fun: timeline_edit
+# txt: interactively edit your timeline
+timeline_edit ()
+{
+  local content auto_push
+  content="${ACCOUNT_PATH}/CONTENT"
+
+  if [[ -w "$content" ]]; then
+
+    auto_push="${CONFIG["account.${ACCOUNT_NAME}.auto-push"]}"
+
+    if ! [[ "$auto_push" ]]; then
+      auto_push="$(config_get account.auto-push)"
+    fi
+
+    ${EDITOR:-nano} "$content"
+
+    account_commit "manual: timeline edit command" | info_multi
+
+    if [[ "$auto_push" = "true" ]]; then
+      account_push | info_multi
+    fi
+
+  else
+    fatal $"Unable to edit CONTENT file"
+  fi
+}
+
+# fun: timeline_orphans
+# txt: show orphan events in the timeline
+timeline_orphans ()
+{
+  for eid in "${EVENTS_CROSS_REPLY[@]}"; do
+    timeline_list_thread "$eid"
+  done
+  for eid in "${EVENTS_CROSS_TAGS[@]}"; do
+    timeline_list_thread "$eid"
+  done
+  for eid in "${EVENTS_CROSS_SCORE[@]}"; do
+    timeline_list_thread "$eid"
+  done
+  timeline_index_save
 }
 main "$@"

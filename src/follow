@@ -55,7 +55,7 @@ follow_del ()
   mute command git -C "$ACCOUNT_PATH" config -f .gitmodules \
     --remove-section "submodule.$mpath"
 
-  account_commit "follow: del "${uid}
+  account_commit "follow: del ${uid}"
 
   command git -C "$ACCOUNT_PATH" rm --cached "$mpath"
   rm -rf "${ACCOUNT_PATH:?}/.git/modules/$mpath"

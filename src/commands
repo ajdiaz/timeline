@@ -104,6 +104,7 @@ command_account_rebuild ()
         info_multi
       config_load "${CONFIG_FILE}"
       command_account_active "$name"
+    # shellcheck disable=SC2119
     command_timeline_refresh
   fi
 }
@@ -261,6 +262,7 @@ command_timeline_list ()
 # help:timeline:fun: timeline refresh [filter]
 # help:timeline:txt: Pull changes in the current enabled timeline and show
 # help:timeline:txt: the results.
+# shellcheck disable=SC2120
 command_timeline_refresh ()
 {
   command_account_refresh

@@ -152,7 +152,7 @@ filter_eval_expr ()
         filter_mention "$eid" && return 0
         ;;
       *)
-        E=3 error $"This kind of filtering ($xpr) is not implemented yet"
+        E=3 error $"This kind of filtering ($expr) is not implemented yet"
         ;;
     esac
   done

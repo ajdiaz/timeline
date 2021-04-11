@@ -74,8 +74,6 @@ directory_search ()
 {
   local dir
   for dir in "${CACHE_DIR}"/directory.*; do
-    [[ "dir" == "${CACHE_DIR}/directory.*" ]] && break
-
     grep -v -e '^#' -e '^[ ]*$' "$dir" | grep -w "$1"
   done
 }

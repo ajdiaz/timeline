@@ -291,13 +291,13 @@ timeline_edit ()
 # txt: show orphan events in the timeline
 timeline_orphans ()
 {
-  for eid in ${EVENTS_CROSS_REPLY[@]}; do
+  for eid in "${EVENTS_CROSS_REPLY[@]}"; do
     timeline_list_thread "$eid"
   done
-  for eid in ${EVENTS_CROSS_TAGS[@]}; do
+  for eid in "${EVENTS_CROSS_TAGS[@]}"; do
     timeline_list_thread "$eid"
   done
-  for eid in ${EVENTS_CROSS_SCORE[@]}; do
+  for eid in "${EVENTS_CROSS_SCORE[@]}"; do
     timeline_list_thread "$eid"
   done
   timeline_index_save

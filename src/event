@@ -240,7 +240,7 @@ event_mesg ()
 #      For tags:  date kind link tags
 event_create ()
 {
-  local path auto_push content_markdown
+  local auto_push content_markdown
   local -a content
 
   auto_push="${CONFIG["account.${ACCOUNT_NAME}.auto-push"]}"
