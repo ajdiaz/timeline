@@ -70,7 +70,8 @@ format_dumps ()
 
   [ "$format" ] || format=''
 
-  for field in $(split "$fields"); do
+  local IFS=','
+  for field in ${fields}; do
     mapfile -t -O "${#args[@]}" args <<< "${FORMAT["$field"]}"
   done
 

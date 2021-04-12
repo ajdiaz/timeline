@@ -26,13 +26,6 @@ timestamp ()
   printf "%(%s)T"
 }
 
-# fun: split <str>
-# txt: split a comma separated list
-split ()
-{
-  echo "${1//,/ }"
-}
-
 # fun: join <delim> <array_items>
 # txt: return a delim separated list of array_items
 join ()
