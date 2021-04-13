@@ -33,8 +33,6 @@ event_load ()
   )
 
   _i() {
-    [[ "$1" -gt "${max_user_posts}" ]] && return
-
     case "${2}" in
       ''|\#*) return
     esac
@@ -47,7 +45,7 @@ event_load ()
   }
 
   # shellcheck disable=SC2034
-  mapfile -c 1 -C _i < <(
+  mapfile -c 1 -n "${max_user_posts}" -C _i < <(
     command git -C "${fname%/*}" blame -s -l "$fname"
   )
 }
