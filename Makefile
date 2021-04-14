@@ -6,13 +6,16 @@
 SRCDIR=src
 OUTBIN=./tl
 
-all:
+all: man
 	@echo "#! /bin/bash -i" > $(OUTBIN)
 	@echo "TIMELINE_VERSION='$(shell git describe --tags)'" >> $(OUTBIN)
 	find $(SRCDIR) -type f -exec cat {} \; >> $(OUTBIN)
 	@echo 'main "$$@"' >> $(OUTBIN)
 	@chmod 755 $(OUTBIN)
 	@ls -l $(OUTBIN)
+
+man:
+	@cd doc && VERSION='$(shell git describe --tags)' ./build
 
 clean:
 	rm -f $(OUTBIN)

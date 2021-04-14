@@ -355,7 +355,7 @@ command_config_edit ()
   "${EDITOR:-vi}" "${CONFIG_FILE}"
 }
 
-# help:fun: alias [name value]
+# help:fun: alias [<name> <value>]
 # help:txt: Show aliases (if no argument provided) or created a new one
 # help:txt  named as argument, and replaced by value.
 command_alias ()
@@ -377,7 +377,7 @@ command_alias ()
 }
 
 
-# help:fun: user [uid nickname]
+# help:fun: user [<name> <uid>]
 # help:txt: Show user aliases registered in configuration if not arguments
 # help:txt: provided. If two arguments passed create a new user aliases,
 # help:txt: replacing UID by nickname in timeline.
@@ -390,8 +390,7 @@ command_user ()
       done
       ;;
     2)
-      local uid="$1"; shift
-      command_config_set "user.alias-$uid" "$1"
+      command_config_set "user.alias-$2" "$1"
       ;;
     *)
       E=2 error $"User command requires zero or two arguments"

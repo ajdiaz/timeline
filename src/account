@@ -147,7 +147,7 @@ account_init ()
     mkdir -p "$path" ||
       E=1 fatal $"Unable to create account directory: %s" "$path"
 
-    command git -C "$path" init
+    command git -C "$path" init ${TIMELINE_EXPERIMENTAL_SHA256:+--object-format=sha256}
     account_config "$path" "$pull_url" "$keyid"
     command git -C "$path" add .
     if [[ "$keyid" ]]; then

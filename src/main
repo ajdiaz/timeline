@@ -100,6 +100,11 @@ main ()
     E=1 error $"git version >= 2.30 is required"
   fi
 
+  # accept commands like tl-account as symlink to tl
+  case "${0##*/}" in
+    tl-*) set -- "${0##*/tl-}" "$@";;
+  esac
+
   args_eval "$@" || shift $?
 
   [ -r "${CONFIG_FILE}" ] && config_load "${CONFIG_FILE}"
