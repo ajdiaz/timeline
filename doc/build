@@ -1,9 +1,0 @@
-#! /bin/bash
-
-for md in src/*.md; do
-	name="${md##*/}"; name="${name%.md}"; mansect="${name##*.}" name="${name%.*}"
-	pandoc -s -t man -o "$name.$mansect" -M "title:${name^^}($mansect) Timeline v${VERSION} | Timeline Manual" -M "date:$(date +'%Y-%m-%d')" "$md"
-done
-
-# vim:ft=make
-#
