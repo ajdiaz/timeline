@@ -1,5 +1,9 @@
 ## vim:ft=sh
 
+# env: TIMELINE_OLD: a $IFS separated line contains the last load
+#      indexes.
+TIMELINE_OLD=
+
 # env: TIMELINE_CONTENT: The path relative to the account root, where
 #      CONTENT file is stored.
 TIMELINE_CONTENT="CONTENT"
@@ -144,6 +148,12 @@ timeline_list_thread ()
     *) flags+="${CONFIG["timeline.$kind.flag-signed-none"]}";;
   esac
 
+  if [[ "${TIMELINE_OLD//$eid/}" = "${TIMELINE_OLD}" ]]; then
+    flags+="${CONFIG["timeline.$kind.flag-new"]}"
+  else
+    flags+=" "
+  fi
+
   # composing the output
   format_compose "timeline.$kind" index "${#TIMELINE_INDEX[@]}"
   format_compose "timeline.$kind" name "$name"
@@ -246,6 +256,7 @@ timeline_index_load ()
   # shellcheck source=/dev/null
   [[ -r "${CACHE_DIR}/.timeline-index" ]] &&
     source "${CACHE_DIR}/.timeline-index" 
+  TIMELINE_OLD="${TIMELINE_INDEX[*]}"
 }
 
 # fun: timeline_index_get <num>

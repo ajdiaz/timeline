@@ -154,6 +154,12 @@ are set to *false*.
 : Set the flag to set when a post or a reply is replied, but *timeline.show-replies*
 are set to *false*.
 
+*timeline.post.flag-new*=*N*
+
+*timeline.reply.flag-new*=*N*
+
+: Set the flag to set when a post was not previously shown in the index.
+
 
 # FILTER
 

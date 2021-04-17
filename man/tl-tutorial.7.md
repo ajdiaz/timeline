@@ -126,11 +126,11 @@ which you can change editing the config, please read **tl-config**(1) for know
 more about formatting).:
 
 ```
-24  20210321 171504  @timeline [ST] (0) Hello @all We have new release: 1.6, codename “Engagement”
-^^  ^^^^^^^^^^^^^^^  ^^^^^^^^^ ^^^^ ^^^ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-|        |               |      |    |                          |
-|        |               |      |    |                          This is the message of the post.
-|        |               |      |    This is the score of the post
+24  20210321 171504  @timeline [SNT] (0) Hello @all We have new release: 1.6, codename “Engagement”
+^^  ^^^^^^^^^^^^^^^  ^^^^^^^^^ ^^^^^ ^^^ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+|        |               |      |     |                          |
+|        |               |      |     |                          This is the message of the post.
+|        |               |      |     This is the score of the post
 |        |               |      There are some flags
 |        |               This is the user name of the account who post it.
 |        This is the date and time of the event

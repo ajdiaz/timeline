@@ -470,15 +470,17 @@ command_event_reply ()
   else
     local tag mesg="$1" ts; ts="$(timestamp)"; shift
     command_account_refresh
-    event_create "$ts" R "$eid" "$mesg" 2>&1
-    eid="$EID"
-    for tag in "$@"; do
-      sleep 1  # Because we can only post one event per second.
-      event_create "$ts" T "$eid" "$tag" 2>&1
-    done
+    {
+      event_create "$ts" R "$eid" "$mesg" 2>&1
+      eid="$EID"
+      for tag in "$@"; do
+        sleep 1  # Because we can only post one event per second.
+        event_create "$ts" T "$eid" "$tag" 2>&1
+      done
+    } | info_multi
     timeline_load
     timeline_index_save
-  fi | info_multi
+  fi
 }
 
 # help:event:fun: event tag [--eid] <num/eid> <tags>
