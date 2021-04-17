@@ -21,19 +21,20 @@ these terms, please read **TERMINOLOGY** section in **tl**(1) man page.
 The **event** command allows the following subcommands and its respective
 arguments:
 
-**post** \<message\>
+**post** \<message\> [\<tags\>+]
 
 : Post a new message in your timeline, if configuration option *account.auto-push*
 is set to *true*, then also will push the change to the public repository. A
 **message** could be any utf-8 encoded text, including emojis, or any other
-unicode stuff.
+unicode stuff. Aditionally you can tag your post in the same step.
 
-**reply** [\-\-eid] \<num/eid\> \<message\>
+**reply** [\-\-eid] \<num/eid\> \<message\> [\<tags\>+]
 
 : Post a message as reply of the specific event. The source event to reply
 can be identified by an EID (i.e. the unique identifier for a message that
 you can get via **info** command), or easier, using the index number that
-you can seen when do a **tl-timeline**(1) *list* command.
+you can seen when do a **tl-timeline**(1) *list* command. Aditionally you can
+tag your post in the same step.
 
 **tag**  [\-\-eid] \<num/eid\> \<tags\>+
 

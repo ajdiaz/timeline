@@ -1,5 +1,8 @@
 ## vim:ft=sh
 
+# env: EID: store the last EID created
+export EID=
+
 # env: EVENT: associative array which contains parts of an event line.
 declare -A EVENTS_KIND=()
 declare -A EVENTS_DATE=()
@@ -236,15 +239,27 @@ event_mesg ()
 #      For posts: date kind mesg
 #      For reply: date kind link mesg
 #      For tags:  date kind link tags
+# env: EID: set this variable to the value of the EID to the created element.
 event_create ()
 {
-  local auto_push content_markdown
+  local auto_push content_markdown mesg
   local -a content
 
   auto_push="${CONFIG["account.${ACCOUNT_NAME}.auto-push"]}"
 
   if ! [[ "$auto_push" ]]; then
     auto_push="$(config_get account.auto-push)"
+  fi
+
+  EID="$ACCOUNT_OID:$1"
+
+  if [[ "${CONFIG[timeline.show-untrusted-items]}" != "true" ]]; then
+    case "$2" in
+      P) mesg="$3";;
+      R|T|S) mesg="$4";;
+    esac
+    oid "$mesg"
+    EID+=":${OID_CACHE["$mesg"]}"
   fi
 
   mapfile -t content < "${ACCOUNT_PATH}/$TIMELINE_CONTENT"
