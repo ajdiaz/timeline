@@ -23,9 +23,9 @@ tl: $(SRCDIR)/*
 doc: $(DOCOBJ)
 
 $(DOCOBJ): $(DOCSRC)
-	VERSION='$(shell git describe --tags)'; name="$@.md"; f="$@.md"; \
+	export VERSION='$(shell git describe --tags)'; name="$@.md"; f="$@.md"; \
 	name="$${name##*/}"; name="$${name%.md}"; mansect="$${name##*.}" name="$${name%.*}"; \
-	pandoc -s -t man -o "$@" -M "title:$${name^^}($$mansect) Timeline v${VERSION} | Timeline Manual" -M "date:$$(date +'%Y-%m-%d')" "$$f"
+	pandoc -s -t man -o "$@" -M "title:$${name^^}($$mansect) Timeline v$${VERSION} | Timeline Manual" -M "date:$$(date +'%Y-%m-%d')" "$$f"
 
 clean:
 	rm -f $(OUTBIN)
