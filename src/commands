@@ -184,6 +184,8 @@ command_account_active ()
     error $"Please create account: %s account create <name> <push> <pull>" "$0"
     error $"Or clone an existent one: %s account clone <name> <push> <pull>" "$0"
     E=1 error $"Account does not exist yet"
+  else
+    timeline_index_load
   fi
 }
 

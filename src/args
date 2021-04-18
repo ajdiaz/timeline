@@ -27,7 +27,7 @@ args_eval ()
         export CONFIG_FILE="$OPTARG"
       ;;
       a)
-        command_account_active "$OPTARG"
+        export ACCOUNT_NAME="$OPTARG"
       ;;
       V)
         command_version; exit 0

@@ -218,9 +218,9 @@ discover the EID of an event.
 
 : The main configuration file for timeline.
 
-*$XDG_CACHE_HOME/tl/.timeline.index*
+*$XDG_CACHE_HOME/tl/index.\*.cache*
 
-: The file where the last generated index is kept.
+: The file where the last generated index for an account is kept.
 
 # SEE ALSO
 

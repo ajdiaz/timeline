@@ -252,7 +252,7 @@ timeline_index_save ()
       echo "'$var'"
     done
     echo ")"
-  } > "${CACHE_DIR}/.timeline-index"
+  } > "${CACHE_DIR}/index.${ACCOUNT_OID}.cache"
 }
 
 # fun: timeline_index_load
@@ -260,9 +260,10 @@ timeline_index_save ()
 timeline_index_load ()
 {
   # shellcheck source=/dev/null
-  [[ -r "${CACHE_DIR}/.timeline-index" ]] &&
-    source "${CACHE_DIR}/.timeline-index" 
-  TIMELINE_OLD="${TIMELINE_INDEX[*]}"
+  if [[ -r "${CACHE_DIR}/index.${ACCOUNT_OID}.cache" ]]; then
+    source "${CACHE_DIR}/index.${ACCOUNT_OID}.cache" 
+    TIMELINE_OLD="${TIMELINE_INDEX[*]}"
+  fi
 }
 
 # fun: timeline_index_get <num>

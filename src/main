@@ -107,13 +107,12 @@ main ()
 
   args_eval "$@" || shift $?
 
-  [ -r "${CONFIG_FILE}" ] && config_load "${CONFIG_FILE}"
+  [[ -r "${CONFIG_FILE}" ]] && config_load "${CONFIG_FILE}"
+  [[ "$ACCOUNT_NAME" ]] && command_account_active "$ACCOUNT_NAME"
+
 
   CACHE_DIR="$(try_path "$(config_get cache.path)")"
   mkdir -p "${CACHE_DIR}"
-
-  # load the timeline index to operate with previous listed timeline
-  timeline_index_load
 
   # local the OID cache if enabled
   oid_load
