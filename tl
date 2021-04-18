@@ -1,5 +1,5 @@
 #! /bin/bash -i
-TIMELINE_VERSION='1.7-21-g3af4e55'
+TIMELINE_VERSION='1.8'
 ## vim:ft=sh
 
 # fun: [E=code] fatal <message>
