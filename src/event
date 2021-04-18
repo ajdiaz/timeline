@@ -244,7 +244,7 @@ event_mesg ()
 # env: EID: set this variable to the value of the EID to the created element.
 event_create ()
 {
-  local auto_push content_markdown mesg line
+  local auto_push content_markdown mesg line l
   local -a content
 
   auto_push="${CONFIG["account.${ACCOUNT_NAME}.auto-push"]}"
@@ -277,8 +277,8 @@ event_create ()
   mapfile -t content < "${ACCOUNT_PATH}/$TIMELINE_CONTENT"
 
   echo "$line" > "${ACCOUNT_PATH}/$TIMELINE_CONTENT"
-  for line in "${content[@]}"; do
-    echo "$line" >> "${ACCOUNT_PATH}/$TIMELINE_CONTENT"
+  for l in "${content[@]}"; do
+    echo "$l" >> "${ACCOUNT_PATH}/$TIMELINE_CONTENT"
   done
 
   content_markdown="${CONFIG["account.${ACCOUNT_NAME}.content-markdown"]}"
