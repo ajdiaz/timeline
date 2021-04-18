@@ -84,7 +84,6 @@ event_load_line ()
     R|REPLY)
       link="${rest%% *}"
       mesg="${rest#$link }"
-      [[ "$show_untrusted" == "true" ]] && has_hmac "$link" && link="${link%:*}"
       kind='reply'
       oid "$mesg"
       hmac="${OID_CACHE["$mesg"]}"
@@ -92,7 +91,6 @@ event_load_line ()
     T|TAG)
       link="${rest%% *}"
       tags="${rest#$link }"
-      [[ "$show_untrusted" == "true" ]] && has_hmac "$link" && link="${link%:*}"
       kind='tag'
       oid "$link $tags"
       hmac="${OID_CACHE["$link $tags"]}"
@@ -101,7 +99,6 @@ event_load_line ()
       kind='score'
       link="${rest%% *}"
       score="${rest#$link }"
-      [[ "$show_untrusted" == "true" ]] && has_hmac "$link" && link="${link%:*}"
       case "$score" in
         -1) score="-1";;
         *) score="1";;
@@ -115,9 +112,14 @@ event_load_line ()
       ;;
   esac
 
-  [[ "$show_untrusted" != "true" ]] &&
-    eid="$aid:$datet:$hmac" ||
+  if [[ "$show_untrusted" = "true" ]]; then
     eid="$aid:$datet"
+    case "$link" in
+      *:*:*) flags+="*"; link="${link%:*}";;
+    esac
+  else
+    eid="$aid:$datet:$hmac"
+  fi
 
   EVENTS_KIND["$eid"]="$kind"
   EVENTS_DATE["$eid"]="$datet"
@@ -242,7 +244,7 @@ event_mesg ()
 # env: EID: set this variable to the value of the EID to the created element.
 event_create ()
 {
-  local auto_push content_markdown mesg
+  local auto_push content_markdown mesg line
   local -a content
 
   auto_push="${CONFIG["account.${ACCOUNT_NAME}.auto-push"]}"
@@ -253,18 +255,28 @@ event_create ()
 
   EID="$ACCOUNT_OID:$1"
 
-  if [[ "${CONFIG[timeline.show-untrusted-items]}" != "true" ]]; then
-    case "$2" in
-      P) mesg="$3";;
-      R|T|S) mesg="$4";;
-    esac
-    oid "$mesg"
-    EID+=":${OID_CACHE["$mesg"]}"
-  fi
+  case "$2" in
+    P) mesg="$3"; line="$*";;
+    R|T|S)
+      mesg="$4"
+      case "$3" in
+        *:*:*) line="$*" ;;
+        *:*)
+          if [[ "${EVENTS_MESG["$3"]}" ]]; then
+            oid "${EVENTS_MESG["$3"]}"
+            line="$1 $2 $3:${OID_CACHE["${EVENTS_MESG["$3"]}"]} $4"
+          else
+            E=1 error $"Try to reference a non-existant EID: $3"
+          fi;;
+        *) E=1 error $"Invalid EID reference: $*";;
+      esac;;
+  esac
+  oid "$mesg"
+  EID+=":${OID_CACHE["$mesg"]}"
 
   mapfile -t content < "${ACCOUNT_PATH}/$TIMELINE_CONTENT"
 
-  echo "$*" > "${ACCOUNT_PATH}/$TIMELINE_CONTENT"
+  echo "$line" > "${ACCOUNT_PATH}/$TIMELINE_CONTENT"
   for line in "${content[@]}"; do
     echo "$line" >> "${ACCOUNT_PATH}/$TIMELINE_CONTENT"
   done
@@ -279,7 +291,7 @@ event_create ()
     markdown_generate
   fi
 
-  account_commit "event: $*"
+  account_commit "event: $line"
 
   if [[ "$auto_push" = "true" ]]; then
     account_push

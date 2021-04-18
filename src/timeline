@@ -139,14 +139,20 @@ timeline_list_thread ()
   prefix="${CONFIG["timeline.$kind.prefix"]}"
 
   case "${sign}" in
-    G) flags+="${CONFIG["timeline.$kind.flag-signed-good"]}";;
-    B) flags+="${CONFIG["timeline.$kind.flag-signed-bad"]}";;
-    U) flags+="${CONFIG["timeline.$kind.flag-signed-unknown"]}";;
-    X|Y) flags+="${CONFIG["timeline.$kind.flag-signed-expired"]}";;
-    R) flags+="${CONFIG["timeline.$kind.flag-signed-revoked"]}";;
-    E) flags+="${CONFIG["timeline.$kind.flag-signed-missing"]}";;
+    G*) flags+="${CONFIG["timeline.$kind.flag-signed-good"]}";;
+    B*) flags+="${CONFIG["timeline.$kind.flag-signed-bad"]}";;
+    U*) flags+="${CONFIG["timeline.$kind.flag-signed-unknown"]}";;
+    X*|Y*) flags+="${CONFIG["timeline.$kind.flag-signed-expired"]}";;
+    R*) flags+="${CONFIG["timeline.$kind.flag-signed-revoked"]}";;
+    E*) flags+="${CONFIG["timeline.$kind.flag-signed-missing"]}";;
     *) flags+="${CONFIG["timeline.$kind.flag-signed-none"]}";;
   esac
+
+  if [[ "${CONFIG["timeline.show-untrusted-items"]}" = "true" ]]; then
+    [[ "${sign//\*/}" != "${sign}" ]] &&
+      flags+="${CONFIG["timeline.$kind.flag-trusted"]}" ||
+      flags+=' '
+  fi
 
   if [[ "${TIMELINE_OLD//$eid/}" = "${TIMELINE_OLD}" ]]; then
     flags+="${CONFIG["timeline.$kind.flag-new"]}"
@@ -302,14 +308,14 @@ timeline_edit ()
 # txt: show orphan events in the timeline
 timeline_orphans ()
 {
-  for eid in "${EVENTS_CROSS_REPLY[@]}"; do
-    timeline_list_thread "$eid"
-  done
-  for eid in "${EVENTS_CROSS_TAGS[@]}"; do
-    timeline_list_thread "$eid"
-  done
-  for eid in "${EVENTS_CROSS_SCORE[@]}"; do
-    timeline_list_thread "$eid"
+  for eids in "${EVENTS_CROSS_REPLY[@]}" "${EVENTS_CROSS_TAGS[@]}" \
+    "${EVENTS_CROSS_SCORE[@]}"
+  do
+    for eid in $eids; do
+      if [[ -z "${EVENTS_KIND["$eid"]}" ]]; then
+        timeline_list_thread "$eid"
+      fi
+    done
   done
   timeline_index_save
 }

@@ -160,6 +160,12 @@ are set to *false*.
 
 : Set the flag to set when a post was not previously shown in the index.
 
+*timeline.post.flag-trusted*=*\**
+
+*timeline.reply.flag-trusted*=*\**
+
+: If *timeline.show-untrusted-items* is *true* then this flag will mark the
+events that are trusted.
 
 # FILTER
 

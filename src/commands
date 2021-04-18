@@ -471,6 +471,7 @@ command_event_reply ()
     local tag mesg="$1" ts; ts="$(timestamp)"; shift
     command_account_refresh
     {
+      timeline_load
       event_create "$ts" R "$eid" "$mesg" 2>&1
       eid="$EID"
       for tag in "$@"; do
@@ -518,8 +519,8 @@ command_event_tag ()
   if [[ $# -eq 0 ]]; then
     E=2 error $"Event tag required an argument: tags"
   else
-
     command_account_refresh
+    timeline_load
     event_create "$(timestamp)" T "$eid" "$*" 2>&1 | info_multi
   fi
 }
@@ -566,6 +567,7 @@ command_event_score ()
     esac
 
     command_account_refresh
+    timeline_load
     event_create "$(timestamp)" S "$eid" "$score" 2>&1 | info_multi
   fi
 }
