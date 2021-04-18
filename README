@@ -23,10 +23,15 @@ git configuration manager. Timeline is:
 
 Just curl for it:
 
-  curl -o ./tl \
+  curl -sSLo ./tl \
     https://raw.githubusercontent.com/ajdiaz/timeline/master/tl && \
     chmod 755 ./tl
 
+And don't forget to verify it:
+
+  curl -sSLo - \
+    https://raw.githubusercontent.com/ajdiaz/timeline/master/tl.asc | \
+    gpg --verify - tl
 
 
 ----- Getting started ---------------------------------------------------------
