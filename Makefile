@@ -12,6 +12,9 @@ DOCOBJ=$(DOCSRC:%.md=%)
 
 all: tl doc
 
+sign: tl
+	gpg --batch --yes -o tl.asc --detach-sign --armor tl
+
 tl: $(SRCDIR)/*
 	@echo "#! /bin/bash -i" > $(OUTBIN)
 	@echo "TIMELINE_VERSION='$(shell git describe --tags)'" >> $(OUTBIN)
