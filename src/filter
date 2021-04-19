@@ -99,6 +99,26 @@ filter_mention ()
   return 1
 }
 
+# fun: filter_engagement <eid>
+# txt: return true if the event has engagement with your account
+filter_engagement ()
+{
+  local eid="$1" uid="${ACCOUNT_OID}" link
+
+  # no acctive account
+  [[ "$uid" ]] || return 1
+
+  case "${EVENTS_KIND["$eid"]}" in
+    P) return 1;;
+    R|T|S)
+      link="${EVENTS_LINK["$eid"]}"
+      link="${link#*:}"; link="${link%:*}"
+      [[ "$link" = "$uid" ]] && return 0
+      ;;
+  esac
+  return 1
+}
+
 # fun: filter_add {hide|show} <expr>
 # txt: Add an expression filter
 filter_add ()
@@ -150,6 +170,9 @@ filter_eval_expr ()
         ;;
       mention)
         filter_mention "$eid" && return 0
+        ;;
+      engagement)
+        filter_engagement "$eid" && return 0
         ;;
       *)
         E=3 error $"This kind of filtering ($expr) is not implemented yet"
