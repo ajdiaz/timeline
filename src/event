@@ -18,6 +18,8 @@ declare -A EVENTS_CROSS_TAGS=()
 declare -A EVENTS_CROSS_SCORE=()
 declare -a EVENTS_SORTED=()
 
+ERR_TIME_DUPLICATED=$"Duplicated timestamp for events %s and %s"
+
 # fun: event_load <account_id> <filename>
 # txt: given an content filename, parse it and store events in memory
 event_load ()
@@ -163,6 +165,7 @@ event_replies ()
 
   for reply in ${EVENTS_CROSS_REPLY["$1"]}; do
     idx="${reply#*:}"; idx="${idx%%:*}$(printf %03d "$((RANDOM % 100))")"
+    [[ "$reply" = "$1" ]] && E=3 error "$ERR_TIME_DUPLICATED" "$label" "$1"
     sorted_replies[$idx]="$reply"
   done
 
@@ -178,6 +181,7 @@ event_labels ()
 
   for label in ${EVENTS_CROSS_TAGS["$1"]}; do
     idx="${label#*:}"; idx="${idx%%:*}$(printf %03d "$((RANDOM % 100))")"
+    [[ "$label" = "$1" ]] && E=3 error "$ERR_TIME_DUPLICATED" "$label" "$1"
     sorted_labels[$idx]="$label"
   done
 

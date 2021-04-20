@@ -12,6 +12,8 @@ DOCOBJ=$(DOCSRC:%.md=%)
 
 all: tl doc
 
+full: all sign
+
 sign: tl
 	gpg --batch --yes -o tl.asc --detach-sign --armor tl
 
