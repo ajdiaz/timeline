@@ -1,7 +1,6 @@
 ## vim:ft=sh
 
-FILTER_HIDE=()
-FILTER_SHOW=()
+FILTER_LIST=()
 
 # fun: filter <tags_to_filter> <eid>
 # txt: return true if EID need to be filtered
@@ -30,7 +29,7 @@ filter_view ()
   read -ra view <<< "${CONFIG["views.$fpattern"]}"
 
   if [[ "${#view[@]}" -ne 0 ]]; then
-    filter_eval_expr "$eid" "${view[@]}"
+    filter_eval "$eid" "${view[@]}"
   else
     E=1 fatal $"No view named: %s" "$fpattern"
   fi
@@ -69,7 +68,7 @@ filter_text ()
   local fpattern="$1" eid="$2"
 
   # shellcheck disable=SC2254
-  case "$(event_mesg "$eid")" in
+  case "${EVENTS_MESG["$eid"]}" in
     $fpattern) return 0;;
   esac
   return 1
@@ -119,65 +118,59 @@ filter_engagement ()
   return 1
 }
 
-# fun: filter_add {hide|show} <expr>
+# fun: filter_add <expr>
 # txt: Add an expression filter
 filter_add ()
 {
-  local mode="$1"; shift
-
-  case "$mode" in
-    hide) FILTER_HIDE+=( "$@" );;
-    show) FILTER_SHOW+=( "$@" );;
-  esac
+  FILTER_LIST+=( "$@" )
 }
 
-# fun: filter_eval {hide|show} <eid>
+# fun: filter_eval <eid> [<expr>...]
 # txt: evaluate filtering of the eid for the specified mode. If this funcion
 #      return 0, means that the item is filtered, otherwise is not filtered.
 filter_eval ()
 {
-  local mode="$1" eid="$2"
-  local -a expr_array=()
+  local eid="$1" ret=0; shift
 
-  case "$mode" in
-    hide) expr_array+=( "${FILTER_HIDE[@]}" );;
-    show) expr_array+=( "${FILTER_SHOW[@]}" );;
-  esac
-
-  filter_eval_expr "$eid" "${expr_array[@]}"
+  [[ "$#" -eq 0 ]] && set -- "${FILTER_LIST[@]}"
+  for exp in "$@"; do
+    case "$exp" in
+      -*) filter_eval_expr "$eid" "${exp#-}" && ret=1 || ret=0;;
+      *) filter_eval_expr "$eid" "${exp#+}" && ret=0 || ret=1;;
+    esac
+  done
+  return $ret
 }
 
-# fun: filter_eval_expr <eid> <expr>...
+# fun: filter_eval_expr <eid> <expr>
 # txt: eval an expression and return true if filtered or false if not
 filter_eval_expr ()
 {
-  local eid="$1" expr=; shift
+  local eid="$1" expr="$2"
 
-  for expr in "${@}"; do
-    case "$expr" in
-      '') ;;
-      tag:*)
-        filter_tag "${expr#tag:}" "$eid" && return 0
-        ;;
-      score-min:*|score-max:*)
-        filter_score "${expr%%:*}" "${expr#*:}" "$eid" && return 0
-        ;;
-      view:*)
-        filter_view "${expr#view:}" "$eid" && return 0
-        ;;
-      text:*)
-        filter_text "${expr#text:}" "$eid" && return 0
-        ;;
-      mention)
-        filter_mention "$eid" && return 0
-        ;;
-      engagement)
-        filter_engagement "$eid" && return 0
-        ;;
-      *)
-        E=3 error $"This kind of filtering ($expr) is not implemented yet"
-        ;;
-    esac
-  done
+  case "$expr" in
+    '') ;;
+    tag:*)
+      filter_tag "${expr#tag:}" "$eid" && return 0
+      ;;
+    score-min:*|score-max:*)
+      filter_score "${expr%%:*}" "${expr#*:}" "$eid" && return 0
+      ;;
+    view:*)
+      filter_view "${expr#view:}" "$eid" && return 0
+      ;;
+    text:*)
+      filter_text "${expr#text:}" "$eid" && return 0
+      ;;
+    mention)
+      filter_mention "$eid" && return 0
+      ;;
+    engagement)
+      filter_engagement "$eid" && return 0
+      ;;
+    *)
+      E=3 error $"This kind of filtering ($expr) is not implemented yet"
+      ;;
+  esac
   return 1
 }

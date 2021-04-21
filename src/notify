@@ -25,7 +25,7 @@ notify ()
 
   fexpr="${CONFIG[notify.filter]}"
 
-  if [[ "$fexpr" ]] && filter_eval_expr "$1" "$fexpr"; then
+  if [[ "$fexpr" ]] && filter_eval "$1" "$fexpr"; then
     # shellcheck disable=SC2059
     "$ncommand" "$(printf "${CONFIG[notify.format]:-%s %s}" \
       "$(username "$uid")")" \

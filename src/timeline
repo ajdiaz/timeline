@@ -60,23 +60,6 @@ timeline_load ()
   fi
 }
 
-# fun: timeline_filter <eid>
-# txt: return true if the item should be filtered and false if not.
-timeline_filter ()
-{
-  local eid="$1"
-  local ret=1
-
-  filter_eval hide "$eid" &&
-    timeline_hide_thread "$eid" && ret=0
-
-  filter_eval show "$eid" &&
-    timeline_show_thread "$eid" && ret=1
-
-  return "$ret"
-}
-
-
 # fun: timeline_hide_thread <eid>
 # txt: hide the thread of the specific EID
 timeline_hide_thread ()
@@ -123,15 +106,17 @@ timeline_list_thread ()
   case "$kind" in
     post)
       mesg="${EVENTS_MESG["$eid"]}"
-      timeline_filter "$eid" && return
+      filter_eval "$eid" || return
       ;;
     tag)
       tags="${EVENTS_TAGS["$eid"]// /, }"
       link="${EVENTS_LINK["$eid"]}"
+      filter_eval "$eid" || return
       ;;
     reply)
       mesg="${EVENTS_MESG["$eid"]}"
       link="${EVENTS_LINK["$eid"]}"
+      filter_eval "$eid" || return
       ;;
   esac
 
@@ -211,24 +196,17 @@ timeline_list_thread ()
 # txt: print the entire timelist
 timeline_list ()
 {
+  local eid
+  local -a filter_list
+
   TIMELINE_PRINTED=()
   TIMELINE_INDEX=()
 
-  local -a filter_show
-  local -a filter_hide
-
-  read -ra filter_show <<< "${CONFIG[timeline.filter.show]}"
-  read -ra filter_hide <<< "${CONFIG[timeline.filter.hide]}"
-
-  [[ "${#filter_show[@]}" -gt 0 ]] &&
-    filter_add show "${filter_show[@]}"
-
-  [[ "${#filter_hide[@]}" -gt 0 ]] &&
-    filter_add hide "${filter_hide[@]}"
-
-  if [[ "$1" ]]; then
-    filter_add hide "tag:*"
-    filter_add show "$@"
+  if [[ $# -eq 0 ]]; then
+    read -ra filter_list <<< "${CONFIG[timeline.filter]}"
+    filter_add "${filter_list[@]}"
+  else
+    filter_add "$@"
   fi
 
   for eid in "${EVENTS_SORTED[@]}"; do
