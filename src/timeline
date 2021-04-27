@@ -106,17 +106,15 @@ timeline_list_thread ()
   case "$kind" in
     post)
       mesg="${EVENTS_MESG["$eid"]}"
-      filter_eval "$eid" || return
       ;;
     tag)
       tags="${EVENTS_TAGS["$eid"]// /, }"
+      # shellcheck disable=SC2153
       link="${EVENTS_LINK["$eid"]}"
-      filter_eval "$eid" || return
       ;;
     reply)
       mesg="${EVENTS_MESG["$eid"]}"
       link="${EVENTS_LINK["$eid"]}"
-      filter_eval "$eid" || return
       ;;
   esac
 
@@ -176,8 +174,10 @@ timeline_list_thread ()
     fi
   fi
 
-  format_compose "timeline.$kind" flags "${flags}"
-  format_dumps "timeline.$kind"
+  if filter_eval "$eid"; then
+    format_compose "timeline.$kind" flags "${flags}"
+    format_dumps "timeline.$kind"
+  fi
 
   if [[ "$show_tags" = "true" ]]; then
     for tags in $(event_labels "$eid"); do

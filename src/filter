@@ -69,7 +69,7 @@ filter_text ()
 
   # shellcheck disable=SC2254
   case "${EVENTS_MESG["$eid"]}" in
-    $fpattern) return 0;;
+    *$fpattern*) return 0;;
   esac
   return 1
 }
@@ -159,9 +159,6 @@ filter_eval_expr ()
     view:*)
       filter_view "${expr#view:}" "$eid" && return 0
       ;;
-    text:*)
-      filter_text "${expr#text:}" "$eid" && return 0
-      ;;
     mention)
       filter_mention "$eid" && return 0
       ;;
@@ -169,7 +166,7 @@ filter_eval_expr ()
       filter_engagement "$eid" && return 0
       ;;
     *)
-      E=3 error $"This kind of filtering ($expr) is not implemented yet"
+      filter_text "${expr#text:}" "$eid" && return 0
       ;;
   esac
   return 1

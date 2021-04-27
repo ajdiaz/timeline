@@ -194,7 +194,10 @@ more information about views.
 **text:\<string\>**
 
 : Show (or hide) events that match with the specified text. You can use
-shell globs here, like *\** or *?*, but not regular expressions.
+shell globs here, like *\** or *?*, but not regular expressions. Also this
+is the default filter, which means that if the filter expression does
+not match with anyone in this list, then timeline will understand a text
+filter with the *string* provided as filter.
 
 **mention**
 
