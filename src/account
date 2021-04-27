@@ -33,7 +33,7 @@ account_list ()
 #      Otherwise failed.
 account_load ()
 {
-  local name="$1" pull_url
+  local name="$1" pull_url changes
 
   name="${name:-${CONFIG[account.default]}}"
 
@@ -56,6 +56,14 @@ account_load ()
   oid "$pull_url"
   ACCOUNT_OID="${OID_CACHE["$pull_url"]}"
   ACCOUNT_PATH="$(config_get "account.$ACCOUNT_NAME.path")"
+
+  changes="$(command git -C "${ACCOUNT_PATH}" status --porcelain 2>&1)" ||
+    E=3 error $"Unable to check account status"
+  if [[ "$changes" ]]; then
+    error $"Account is dirty. Maybe you edit your account manually and badly."
+    error $"To repair just run: git reset --hard master in $ACCOUNT_PATH"
+    exit 100
+  fi
 }
 
 export NOACTIVE=$"There are no active accounts"
