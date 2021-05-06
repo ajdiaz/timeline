@@ -26,7 +26,8 @@ arguments:
 : Post a new message in your timeline, if configuration option *account.auto-push*
 is set to *true*, then also will push the change to the public repository. A
 **message** could be any utf-8 encoded text, including emojis, or any other
-unicode stuff. Aditionally you can tag your post in the same step.
+unicode stuff. Aditionally you can tag your post in the same step. Message
+used in post will support **ABBREVIATIONS**.
 
 **reply** [\-\-eid] \<num/eid\> \<message\> [\<tags\>+]
 
@@ -34,7 +35,8 @@ unicode stuff. Aditionally you can tag your post in the same step.
 can be identified by an EID (i.e. the unique identifier for a message that
 you can get via **info** command), or easier, using the index number that
 you can seen when do a **tl-timeline**(1) *list* command. Aditionally you can
-tag your post in the same step.
+tag your post in the same step. Message used in reply will support
+**ABBREVIATIONS**.
 
 **tag**  [\-\-eid] \<num/eid\> \<tags\>+
 
@@ -54,6 +56,24 @@ about what scores are.
 
 : Get the event information for the event idenfied by the specific timeline
 index number or EID (when *\-\-eid* is present).
+
+# ABBREVIATIONS
+
+Message used in post and reply will be parsed and some symbols can be replaced
+by others. We call these abbreviations. For instance you can add a abbreviation
+using the *abbr* command (see *tl*(1)) to create an abbreviation *:lol:* to
+be replaced by *:-D*.
+
+Since version 1.9 Timeline support emojis natively, so no specific abbreviations
+are required. Just enable it using config setting *input.emojis* to *true*
+
+# CONFIG SETTINGS
+
+*input.emojis*=*false*
+
+: if true support natively emojis. Symbols like *:love:*, or *:smile:* will be
+replaced by the proper emoji code. You can use the *abbr* command to list
+all.
 
 # SEE ALSO
 

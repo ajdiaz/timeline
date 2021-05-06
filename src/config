@@ -196,6 +196,7 @@ declare -xA CONFIG=(
   [alias.dir]='directory'
   [alias.ds]='directory search'
   [alias.pre]='account preview'
+  [input.emojis]=false
 )
 
 export NO_COLORS=0

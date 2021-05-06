@@ -217,6 +217,10 @@ account_refresh ()
   command git -C "$path" rebase "${1:-origin}/master"
   command git -C "$path" submodule update --remote \
     --jobs "${CONFIG[git.jobs]:-1}"
+
+  if [[ "$(command git -C "$path" status -s)" ]]; then
+    account_commit "FOLLOW updated"
+  fi
 }
 
 # fun: account_delete [name]

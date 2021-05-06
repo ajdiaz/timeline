@@ -1,5 +1,5 @@
 #! /bin/bash -i
-TIMELINE_VERSION='1.8-8-g87310e6'
+TIMELINE_VERSION='1.8-10-g2e62876'
 ## vim:ft=sh
 
 # fun: [E=code] fatal <message>
@@ -844,6 +844,3379 @@ args_eval ()
 }
 ## vim:ft=sh
 
+# fun: notify <eid>
+# txt: send notification for specified eid if match the notification filter.
+notify ()
+{
+  local user uid="${1%%:*}" date="${1#*:}"
+  local date="${date%%:*}" last_date=0
+  local fexpr ncommand="${CONFIG[notify.command]}"
+
+  [[ "$ncommand" ]] || return 0
+
+  last_date_file="${CONFIG[notify.cache-file]:-${HOME}/.cache/tl/notify.cache}"
+  [[ -r "${last_date_file}" ]] && 
+    last_date="$(< "$last_date_file")"
+
+  # discard old events
+  [[ "$date" -le "${last_date}" ]] &&
+    return
+
+  # discard own events
+  user="${ACCOUNT_OID}"
+  [[ "$uid" = "$user" ]] &&
+    return
+
+  fexpr="${CONFIG[notify.filter]}"
+
+  if [[ "$fexpr" ]] && filter_eval "$1" "$fexpr"; then
+    # shellcheck disable=SC2059
+    "$ncommand" "$(printf "${CONFIG[notify.format]:-%s %s}" \
+      "$(username "$uid")")" \
+      "${EVENTS_MESG[$eid]}"
+
+    echo "$date" > "${last_date_file}"
+  fi
+}
+## vim: ft=sh
+
+# env: OID_CACHE
+# txt: save a generated oids to avoid recalculation
+declare -gA OID_CACHE
+
+# fun: fun <function_name>
+# txt: return true if function is defined
+fun ()
+{
+  declare -f "$1" >/dev/null 2>&1
+}
+
+# fun: mute <command> [args]
+# txt: run command quietly
+mute ()
+{
+  "$@" >/dev/null 2>&1
+}
+
+# fun: timestamp
+# txt: print current timestamp in UTC
+timestamp ()
+{
+  # shellcheck disable=SC2183
+  printf "%(%s)T"
+}
+
+# fun: join <delim> <array_items>
+# txt: return a delim separated list of array_items
+join ()
+{
+  local delim="$1"; shift
+  for x in "$@"; do
+    printf "%s%s" "$x" "$delim"
+  done
+}
+
+# fun: oid <string>
+# txt: create a unique object id for the string passed as argument
+oid ()
+{
+  if [[ -z "${OID_CACHE["$1"]}" ]]; then
+    OID_CACHE["$1"]="$(command git hash-object --stdin <<<"${1%.git}")"
+  fi
+}
+
+# fun: oid_save
+# txt: save the list of OIDs to a cache file
+oid_save ()
+{
+  local i=0
+  [[ "${CONFIG[oid.use-cache]}" != "true" ]] && return
+  {
+    echo "declare -Axg OID_CACHE=("
+    for key in "${!OID_CACHE[@]}"; do
+      echo "[\"$key\"]=\"${OID_CACHE[$key]}\""
+      [[ $((++i)) -gt ${CONFIG[oid.max-cache-size]:-1000} ]] && break
+    done
+    echo ")"
+  } > "${CACHE_DIR}/oid.cache"
+}
+
+# fun: oid_load
+# txt: load precalculated OIDs from cache file
+oid_load ()
+{
+  [[ "${CONFIG[oid.use-cache]}" != "true" ]] && return
+
+  # shellcheck source=/dev/null
+  [[ -r "${CACHE_DIR}/oid.cache" ]] &&
+    source "${CACHE_DIR}/oid.cache"
+}
+
+# fun: try_path <path_list>
+# txt: given a path list, return the first existant item in the list, or, if
+#      none exists, the first one. NOTE: this function does not allow colons
+#      in path items.
+try_path ()
+{
+  local IFS=':'
+  for path in $1; do
+    if [ -d "$path" ]; then
+      echo "$path"
+      return
+    fi
+  done
+  echo "${1%%:*}"
+}
+
+# fun: valid_url <url>
+# txt: return true if url is valid, otherwise return false
+valid_url ()
+{
+  case "$1" in
+    ssh://*|http://*|https://*) return 0
+  esac
+  return 1
+}
+
+# fun: has_hmac <eid>
+# txt: return true if the eid has an hmac
+has_hmac ()
+{
+  local hmac; hmac="${1#*:}"
+  [[ "${hmac}" != "${hmac#*:}" ]]
+}
+
+# fun: username <eid|account_id>
+# txt: return username from a event_id or account_id using alias defined in
+#      configuration and short form if 'timeline.use-short-ids' is true.
+username ()
+{
+  local uname="$1"
+  
+  uname="${uname%%:*}" # remove timestamp if present
+  uname="${uname#@}"  # remove trail @ if present
+
+  alias_name="${CONFIG["user.alias-$uname"]}"
+  short_ids="${CONFIG["timeline.use-short-ids"]}"
+
+  if [[ "$alias_name" ]]; then
+    uname="$alias_name"
+  elif [[ "$short_ids" = "true" ]]; then
+    uname="${uname:0:8}"
+  fi
+
+  echo "@${uname}"
+}
+
+# fun: is_decimal <num>
+# txt: return true if num is a decimal based number.
+is_decimal () {
+  [[ "$1" = "0" ]] && return 0
+  mute let i="10#${1#-}" 2>/dev/null
+}
+
+# fun: keyid <name>
+# txt: get the keyid configured for account name passed as argument
+keyid ()
+{
+  echo "${CONFIG[account.$1.keyid]:-${CONFIG[account.keyid]}}"
+}
+
+# fun: any <list> <list>
+# txt: return true if any element of the first list is also in the second
+#      list.
+any ()
+{
+  case "$1" in
+    '*'|"$2") return 0;;
+    '') return 1;;
+  esac
+
+  local -A list
+
+  for item in $1; do
+    list["$item"]=1
+  done
+
+  for item in $2; do
+    [[ "${list["$item"]}" ]] && return 0
+  done
+  return 1
+}
+
+# fun: on_exit <callback>
+# txt: run callback on exit
+declare -a _on_exit=()
+trap _handler_on_exit EXIT
+_handler_on_exit ()
+{
+  local fun
+  for fun in "${_on_exit[@]}"; do
+    "$fun";
+  done
+}
+on_exit ()
+{
+  _on_exit+=( "$1" )
+}
+
+# fun: temp_file
+# txt: outputs a temporary file which will ensure that will be eliminated
+#      when exectution ends.
+temp_file ()
+{
+  local name="${TMPDIR:-/tmp}/temp_$$.$RANDOM"
+  : > "$name"
+  echo "$name"
+}
+_temp_file_exit ()
+{
+  rm -f "${TMPDIR:-/tmp}/temp_$$".*
+}
+on_exit _temp_file_exit
+
+# fun: temp_dir
+# txt: outputs a temporary directory which will be removed when tl dies
+temp_dir ()
+{
+  local name="${TMPDIR:-/tmp}/tempdir_$$.$RANDOM"
+  mkdir -p "$name"
+  echo "$name"
+}
+_temp_dir_exit ()
+{
+  rm -rf "${TMPDIR:-/tmp}/tempdir_$$".*
+}
+on_exit _temp_dir_exit
+## vim:ft=sh
+
+# env: TIMELINE_OLD: a $IFS separated line contains the last load
+#      indexes.
+TIMELINE_OLD=
+
+# env: TIMELINE_CONTENT: The path relative to the account root, where
+#      CONTENT file is stored.
+TIMELINE_CONTENT="CONTENT"
+
+# env: TIMELINE_FOLLOW The path relative to the account root, where
+#      FOLLOW dir is located.
+TIMELINE_FOLLOW="FOLLOW"
+
+# env: TIMELINE_PRINTED: Internal associative array which contains the EID
+#      of events alredy printed to avoid duplicates.
+declare -A TIMELINE_PRINTED=()
+
+# env: TIMELINE_INDEX: Internal array used to print an index in timeline to
+#      easy refer to an event
+declare -a TIMELINE_INDEX=()
+
+# fun: timeline_load [path] [oid]
+# txt: load the timeline from current active account into memory
+timeline_load ()
+{
+  local oid="$2" content_path follow_path show_own path="$1"
+
+  if [[ -z "$path" ]]; then
+    path="${ACCOUNT_PATH}"
+    oid="${ACCOUNT_OID}"
+  fi
+
+  content_path="$path/$TIMELINE_CONTENT"
+  follow_path="$path/$TIMELINE_FOLLOW"
+  show_own="${CONFIG["timeline.own-posts"]}"
+  pattern=("⣾" "⣽" "⣻" "⢿" "⡿" "⣟" "⣯" "⣷")
+
+  if ! [[ -r "$content_path" ]]; then
+    error $"Content path does not exists."
+    error $"Maybe you delete your account data?"
+    E=1 error $"Try $0 account rebuild ${ACCOUNT_NAME} to recreate it automatically"
+  fi
+
+  # Load our account timeline
+  [[ "$show_own" = "false" ]] ||
+    event_load "$oid" "${content_path}"
+
+  local dir i=0
+
+  if [[ -d "${follow_path}" ]]; then
+    for dir in "${follow_path}"/*; do
+      [[ -d "$dir" ]] || continue  # ignore non-dir files
+      [[ -r "$dir/$TIMELINE_CONTENT" ]] || continue # ignore non initialized
+
+      dir="${dir%/}"
+      echo -en "\r${pattern[$((i % ${#pattern[@]}))]}\r"
+      event_load "${dir##*/}" "${dir}/$TIMELINE_CONTENT"
+    done
+  fi
+}
+
+# fun: timeline_hide_thread <eid>
+# txt: hide the thread of the specific EID
+timeline_hide_thread ()
+{
+  TIMELINE_PRINTED["$1"]=1
+  for event in $(event_labels "$1"); do
+    timeline_hide_thread "$event"
+  done
+  for event in $(event_replies "$1"); do
+    timeline_hide_thread "$event"
+  done
+  return 0
+}
+
+# fun: timeline_show_thread <eid>
+# txt: show the thread of the specific EID
+timeline_show_thread ()
+{
+  unset TIMELINE_PRINTED["$1"]
+  for event in $(event_labels "$1"); do
+    timeline_show_thread "$event"
+  done
+  for event in $(event_replies "$1"); do
+    timeline_show_thread "$event"
+  done
+  return 0
+}
+
+# fun: timeline_list_thread <eid>
+# txt: print thread for specific eid passed as argument
+timeline_list_thread ()
+{
+  local prefix indent date kind mesg tags link name eid="$1"
+  local flag show_tags show_replies flags=''
+
+  # item is already printed? then do nothing
+  [[ "${TIMELINE_PRINTED["$eid"]}" ]] && return
+
+  date="${EVENTS_DATE["$eid"]}"
+  kind="${EVENTS_KIND["$eid"]}"
+  name="$(username "$eid")"
+  sign="${EVENTS_SIGN["$eid"]}"
+
+  case "$kind" in
+    post)
+      mesg="${EVENTS_MESG["$eid"]}"
+      ;;
+    tag)
+      tags="${EVENTS_TAGS["$eid"]// /, }"
+      # shellcheck disable=SC2153
+      link="${EVENTS_LINK["$eid"]}"
+      ;;
+    reply)
+      mesg="${EVENTS_MESG["$eid"]}"
+      link="${EVENTS_LINK["$eid"]}"
+      ;;
+  esac
+
+  indent="${CONFIG["timeline.$kind.indent"]}"
+  prefix="${CONFIG["timeline.$kind.prefix"]}"
+
+  case "${sign}" in
+    G*) flags+="${CONFIG["timeline.$kind.flag-signed-good"]}";;
+    B*) flags+="${CONFIG["timeline.$kind.flag-signed-bad"]}";;
+    U*) flags+="${CONFIG["timeline.$kind.flag-signed-unknown"]}";;
+    X*|Y*) flags+="${CONFIG["timeline.$kind.flag-signed-expired"]}";;
+    R*) flags+="${CONFIG["timeline.$kind.flag-signed-revoked"]}";;
+    E*) flags+="${CONFIG["timeline.$kind.flag-signed-missing"]}";;
+    *) flags+="${CONFIG["timeline.$kind.flag-signed-none"]}";;
+  esac
+
+  if [[ "${CONFIG["timeline.show-untrusted-items"]}" = "true" ]]; then
+    [[ "${sign//\*/}" != "${sign}" ]] &&
+      flags+="${CONFIG["timeline.$kind.flag-trusted"]}" ||
+      flags+=' '
+  fi
+
+  if [[ "${TIMELINE_OLD//$eid/}" = "${TIMELINE_OLD}" ]]; then
+    flags+="${CONFIG["timeline.$kind.flag-new"]}"
+  else
+    flags+=" "
+  fi
+
+  # composing the output
+  format_compose "timeline.$kind" index "${#TIMELINE_INDEX[@]}"
+  format_compose "timeline.$kind" name "$name"
+  format_compose "timeline.$kind" date "$date"
+  format_compose "timeline.$kind" tags "${2}${indent}${prefix}${tags}"
+  format_compose "timeline.$kind" link "$link"
+  format_compose "timeline.$kind" score "${EVENTS_SCORE["$eid"]}"
+  format_compose "timeline.$kind" mesg "${2}${indent}${prefix}${mesg}"
+
+  TIMELINE_PRINTED["$eid"]=1
+  TIMELINE_INDEX+=( "$eid" )
+
+  show_tags="${CONFIG["timeline.show-tags"]}"
+  show_replies="${CONFIG["timeline.show-replies"]}"
+
+  if [[ "$show_tags" != "true" ]]; then
+    if [[ "$(event_labels "$eid")" ]]; then
+      flags+="${CONFIG["timeline.$kind.flag-tagged"]}"
+    else
+      flags+=" "
+    fi
+  fi
+
+  if [[ "$show_replies" != "true" ]]; then
+    if [[ "$(event_replies "$eid")" ]]; then
+      flags+="${CONFIG["timeline.$kind.flag-replied"]}"
+    else
+      flags+=" "
+    fi
+  fi
+
+  if filter_eval "$eid"; then
+    format_compose "timeline.$kind" flags "${flags}"
+    format_dumps "timeline.$kind"
+  fi
+
+  if [[ "$show_tags" = "true" ]]; then
+    for tags in $(event_labels "$eid"); do
+      timeline_list_thread "$tags" "$2${indent}"
+    done
+  fi
+
+  if [[ "$show_replies" = "true" ]]; then
+    for reply in $(event_replies "$eid"); do
+      timeline_list_thread "$reply" "$2${indent}"
+    done
+  fi
+}
+
+# fun: timeline_list [filter]
+# txt: print the entire timelist
+timeline_list ()
+{
+  local eid
+  local -a filter_list
+
+  TIMELINE_PRINTED=()
+  TIMELINE_INDEX=()
+
+  if [[ $# -eq 0 ]]; then
+    read -ra filter_list <<< "${CONFIG[timeline.filter]}"
+    filter_add "${filter_list[@]}"
+  else
+    filter_add "$@"
+  fi
+
+  for eid in "${EVENTS_SORTED[@]}"; do
+    if [[ "${EVENTS_KIND["$eid"]}" = "post" ]]; then
+      timeline_list_thread "$eid" ''
+    fi
+  done
+
+  timeline_index_save
+}
+
+# fun: timeline_index_save
+# txt: dumps TIMELINE_INDEX to a sourceable file to be loaded before any
+#      input to identify an event easily.
+timeline_index_save ()
+{
+  local var
+  {
+    echo "declare -ag TIMELINE_INDEX=("
+    for var in "${TIMELINE_INDEX[@]}"; do
+      echo "'$var'"
+    done
+    echo ")"
+  } > "${CACHE_DIR}/index.${ACCOUNT_OID}.cache"
+}
+
+# fun: timeline_index_load
+# txt: source index saved file with timeline_index_save
+timeline_index_load ()
+{
+  # shellcheck source=/dev/null
+  if [[ -r "${CACHE_DIR}/index.${ACCOUNT_OID}.cache" ]]; then
+    source "${CACHE_DIR}/index.${ACCOUNT_OID}.cache" 
+    TIMELINE_OLD="${TIMELINE_INDEX[*]}"
+  fi
+}
+
+# fun: timeline_index_get <num>
+# txt: return the EID of the event indexed by number passed as argument
+timeline_index_get ()
+{
+  if [[ "$1" -ge ${#TIMELINE_INDEX[@]} ]]; then
+    E=1 error $"Index out of bounds: %s in %s" "$1" "TIMELINE_INDEX"
+  else
+    echo "${TIMELINE_INDEX[$1]}"
+  fi
+}
+
+# fun: timeline_edit
+# txt: interactively edit your timeline
+timeline_edit ()
+{
+  local content auto_push
+  content="${ACCOUNT_PATH}/CONTENT"
+
+  if [[ -w "$content" ]]; then
+
+    auto_push="${CONFIG["account.${ACCOUNT_NAME}.auto-push"]}"
+
+    if ! [[ "$auto_push" ]]; then
+      auto_push="$(config_get account.auto-push)"
+    fi
+
+    ${EDITOR:-nano} "$content"
+
+    account_commit "manual: timeline edit command" | info_multi
+
+    if [[ "$auto_push" = "true" ]]; then
+      account_push | info_multi
+    fi
+
+  else
+    fatal $"Unable to edit CONTENT file"
+  fi
+}
+
+# fun: timeline_orphans
+# txt: show orphan events in the timeline
+timeline_orphans ()
+{
+  for eids in "${EVENTS_CROSS_REPLY[@]}" "${EVENTS_CROSS_TAGS[@]}" \
+    "${EVENTS_CROSS_SCORE[@]}"
+  do
+    for eid in $eids; do
+      if [[ -z "${EVENTS_KIND["$eid"]}" ]]; then
+        timeline_list_thread "$eid"
+      fi
+    done
+  done
+  timeline_index_save
+}
+## vim:ft=sh
+
+FILTER_LIST=()
+
+# fun: filter <tags_to_filter> <eid>
+# txt: return true if EID need to be filtered
+filter_tag ()
+{
+  local fpattern="$1" eid="$2"
+  local event tag
+
+  [[ "$fpattern" = "*" ]] && return 0
+
+  for event in $(event_labels "$eid"); do
+    for tag in $(event_tags "$event"); do
+      if any "$fpattern" "$tag"; then
+        return 0
+      fi
+    done
+  done
+  return 1
+}
+
+# fun: filter <view> <eid>
+# txt: return true if EID need to be filtered
+filter_view ()
+{
+  local fpattern="$1" eid="$2"
+  read -ra view <<< "${CONFIG["views.$fpattern"]}"
+
+  if [[ "${#view[@]}" -ne 0 ]]; then
+    filter_eval "$eid" "${view[@]}"
+  else
+    E=1 fatal $"No view named: %s" "$fpattern"
+  fi
+}
+
+# fun: filter {score-min|score-max} <value> <eid>
+# txt: return true if EID need to be filtered according to score values
+#      passsed as argument.
+filter_score ()
+{
+  local kind="$1" value="$2" eid="$3"
+  local score
+
+  score="$(event_score "$eid")"
+
+  case "$kind" in
+    score-min)
+      [[ "${score:-0}" -lt "${value}" ]] && return 0
+    ;;
+    score-max)
+      [[ "${score:-0}" -gt "${value}" ]] && return 0
+    ;;
+    *)
+      E=1 fatal $"Invalid score filter: %s" "$kind"
+    ;;
+  esac
+
+  return 1
+}
+
+# fun: filter_text <pattern> <eid>
+# txt: return true if especified eid contains text which match with pattern
+#      passed as argument (glob pattern supported only).
+filter_text ()
+{
+  local fpattern="$1" eid="$2"
+
+  # shellcheck disable=SC2254
+  case "${EVENTS_MESG["$eid"]}" in
+    *$fpattern*) return 0;;
+  esac
+  return 1
+}
+
+# fun: filter_mention <eid>
+# txt: return true if myself is mentioned in eid
+filter_mention ()
+{
+  local eid="$1" uid pattern
+  uid="${ACCOUNT_OID}"
+  local -a reat=()
+
+  # no acctive account
+  [[ "$uid" ]] || return 1
+
+  reat=( "@$uid" "@${uid:0:8}" "$(username "$uid")" )
+
+  if [[ "${CONFIG[timeline.react-on-all]}" = "true" ]]; then
+    reat+=( "@all" "@here" )
+  fi
+
+  for pattern in "${reat[@]}"; do
+    filter_text "*${pattern}*" "$eid" && return 0
+  done
+
+  return 1
+}
+
+# fun: filter_engagement <eid>
+# txt: return true if the event has engagement with your account
+filter_engagement ()
+{
+  local eid="$1" uid="${ACCOUNT_OID}" link
+
+  # no acctive account
+  [[ "$uid" ]] || return 1
+
+  case "${EVENTS_KIND["$eid"]}" in
+    P) return 1;;
+    R|T|S)
+      link="${EVENTS_LINK["$eid"]}"
+      link="${link#*:}"; link="${link%:*}"
+      [[ "$link" = "$uid" ]] && return 0
+      ;;
+  esac
+  return 1
+}
+
+# fun: filter_add <expr>
+# txt: Add an expression filter
+filter_add ()
+{
+  FILTER_LIST+=( "$@" )
+}
+
+# fun: filter_eval <eid> [<expr>...]
+# txt: evaluate filtering of the eid for the specified mode. If this funcion
+#      return 0, means that the item is filtered, otherwise is not filtered.
+filter_eval ()
+{
+  local eid="$1" ret=0; shift
+
+  [[ "$#" -eq 0 ]] && set -- "${FILTER_LIST[@]}"
+  for exp in "$@"; do
+    case "$exp" in
+      -*) filter_eval_expr "$eid" "${exp#-}" && ret=1 || ret=0;;
+      *) filter_eval_expr "$eid" "${exp#+}" && ret=0 || ret=1;;
+    esac
+  done
+  return $ret
+}
+
+# fun: filter_eval_expr <eid> <expr>
+# txt: eval an expression and return true if filtered or false if not
+filter_eval_expr ()
+{
+  local eid="$1" expr="$2"
+
+  case "$expr" in
+    '') ;;
+    tag:*)
+      filter_tag "${expr#tag:}" "$eid" && return 0
+      ;;
+    score-min:*|score-max:*)
+      filter_score "${expr%%:*}" "${expr#*:}" "$eid" && return 0
+      ;;
+    view:*)
+      filter_view "${expr#view:}" "$eid" && return 0
+      ;;
+    mention)
+      filter_mention "$eid" && return 0
+      ;;
+    engagement)
+      filter_engagement "$eid" && return 0
+      ;;
+    *)
+      filter_text "${expr#text:}" "$eid" && return 0
+      ;;
+  esac
+  return 1
+}
+#! /usr/bin/env bash
+# 
+# Copyright (C) 2016  Andrés J. Díaz <ajdiaz@ajdiaz.me>
+# 
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+# 
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+# 
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# env: INTERACTIVE: if true, then interactive mode is enabled
+export INTERACTIVE=
+
+# env: CONFIG_FILE: should contain the path to the config file
+export CONFIG_FILE=
+
+# env: CACHE_DIR: should contain the path to the cache directory
+export CACHE_DIR=
+
+# fun: prompt
+# txt: print prompt in interactive mode
+prompt ()
+{
+  format_compose prompt account "${ACCOUNT_NAME:-<none>}"
+  format_dumps prompt
+}
+
+# fun: main_interactive
+# txt: evaluate commands in interactive mode
+main_interactive ()
+{
+  local cmd
+  local -a args
+
+  history_load
+  complete_load
+  command_account_active "${ACCOUNT_NAME}"
+
+  while true; do
+    read -a args -e -r -p "$(T=true prompt)"
+    [ $? -eq 1 ] && break
+    cmd="${args[0]}"
+    local -a args=( "${args[@]:1}" )
+
+    [ "$cmd" ] || continue
+    history_append "$cmd ${args[*]}"
+    main_standalone "$cmd" "${args[@]}"
+  done
+  history_save
+}
+
+# fun: main_standalone <cmd> [args]...
+# txt: evaluate command passed as argument
+main_standalone ()
+{
+  local cmd="$1"; shift
+
+  if fun "command_$cmd"; then
+    "command_$cmd" "$@"
+  else
+    read -ra alias <<< "${CONFIG["alias.$cmd"]}"
+
+    if [[ "${alias[*]}" ]]; then
+      main_standalone "${alias[@]}" "$@"
+    else
+      E=2 fatal $"Invalid command '%s'." "$cmd"
+    fi
+  fi
+}
+
+# fun: main [args]...
+# txt: entry point :D
+main ()
+{
+  local config_path="$HOME/.config/tl/config:$HOME/.tl/config:$HOME/.tlrc"
+  local major minor ver
+
+  # check BASH
+  if [[ "${BASH_VERSINFO[0]}" -lt 5 ]]; then
+    E=1 error $"bash >= 5 is required"
+  fi
+  
+  CONFIG_FILE="$(try_path "$config_path")"
+  INTERACTIVE=false
+
+  reqs_eval
+
+  # check git version since it's a core requirement
+  read -r _ _ ver < <(git --version)
+  IFS=. read -r major minor _ <<<"$ver"
+
+  if [[ "$major" -lt "2" ]] || [[ "$minor" -lt 30 ]]; then
+    E=1 error $"git version >= 2.30 is required"
+  fi
+
+  # accept commands like tl-account as symlink to tl
+  case "${0##*/}" in
+    tl-*) set -- "${0##*/tl-}" "$@";;
+  esac
+
+  args_eval "$@" || shift $?
+
+  [[ -r "${CONFIG_FILE}" ]] && config_load "${CONFIG_FILE}"
+  [[ "$ACCOUNT_NAME" ]] && command_account_active "$ACCOUNT_NAME"
+
+
+  CACHE_DIR="$(try_path "$(config_get cache.path)")"
+  mkdir -p "${CACHE_DIR}"
+
+  # local the OID cache if enabled
+  oid_load
+
+  if [ $# -eq 0 ]; then
+    if [[ "${CONFIG[interactive.show-banner]}" = "true" ]]; then
+      info "timeline  Copyright (C) %(%Y)T Andrés J. Díaz" "$(timestamp)"
+      info "This program comes with ABSOLUTELY NO WARRANTY; for details"
+      info "type 'license'. This is free software, and you are welcome to"
+      info "redistribute it under certain conditions; type 'license' for"
+      info "details."
+    fi
+
+    INTERACTIVE=true
+    main_interactive "$@"
+  else
+    main_standalone "$@"
+  fi
+
+  oid_save
+}
+## vim:ft=sh
+
+# env: EID: store the last EID created
+export EID=
+
+# env: EVENT: associative array which contains parts of an event line.
+declare -A EVENTS_KIND=()
+declare -A EVENTS_DATE=()
+declare -A EVENTS_LINK=()
+declare -A EVENTS_TAGS=()
+declare -A EVENTS_MESG=()
+declare -A EVENTS_SIGN=()
+declare -A EVENTS_SCORE=()
+declare -A EVENTS_COMMIT=()
+
+declare -A EVENTS_CROSS_REPLY=()
+declare -A EVENTS_CROSS_TAGS=()
+declare -A EVENTS_CROSS_SCORE=()
+declare -a EVENTS_SORTED=()
+
+ERR_TIME_DUPLICATED=$"Duplicated timestamp for events %s and %s"
+
+# fun: event_load <account_id> <filename>
+# txt: given an content filename, parse it and store events in memory
+event_load ()
+{
+  local max_user_posts fname="$2" account="$1" key val
+  local commit line aname="${CONFIG["user.alias-$account"]:-$account}"
+  local -A gitlog
+
+  max_user_posts="${CONFIG["account.${aname}.max-posts"]:-${CONFIG[account.max-posts]:-20}}"
+
+  while read -r key val; do
+    gitlog["$key"]="$val"
+  done < <(
+    command git -C "${fname%/*}" log -s --pretty=format:"%H %G?" \
+      --no-color "$fname"
+  )
+
+  _i() {
+    case "${2}" in
+      ''|\#*) return
+    esac
+
+    commit="${2%% *}";
+    line="${2#$commit *) }";
+
+    event_load_line "$account" "${fname%/*}" "$commit" \
+      "${gitlog["$commit"]}" "${line}" "$1"
+  }
+
+  # shellcheck disable=SC2034
+  mapfile -c 1 -n "${max_user_posts}" -C _i < <(
+    command git -C "${fname%/*}" blame -s -l "$fname"
+  )
+}
+
+# fun: event_load_line <account_id> <commit> <flags> <content>
+# txt: parse a event line passed as argument and fill properly fields in
+#      a associative array called EVENT. The account id is the OID
+#      associated to the pull_url of the account.
+#
+#      The POST kind has the fields: timestamp,kind,message
+#      The REPLY kind has the fields: timestamp,kind,ref,message
+#      The TAG kind has the fields: timestamp,kind,ref,tags
+#      The SCORE kind has the fields: timestamp,kind,ref,score
+event_load_line ()
+{
+  local aid="$1" fname="$2" commit="$3" flags="$4" line="${5%$'\n'}"
+  local datet="${line%% *}" idx
+  local kind="${line#$datet }"; kind="${kind%% *}"
+  local rest="${line#$datet $kind }"
+  local link mesg tags score hmac='' eid show_untrusted
+
+  idx="$(( ${datet}000 + $6 ))"
+
+  show_untrusted="${CONFIG["timeline.show-untrusted-items"]}"
+
+  case "$kind" in
+    P|POST)
+      mesg="$rest"
+      kind='post'
+      oid "$mesg"
+      hmac="${OID_CACHE["$mesg"]}"
+      ;;
+    R|REPLY)
+      link="${rest%% *}"
+      mesg="${rest#$link }"
+      kind='reply'
+      oid "$mesg"
+      hmac="${OID_CACHE["$mesg"]}"
+      ;;
+    T|TAG)
+      link="${rest%% *}"
+      tags="${rest#$link }"
+      kind='tag'
+      oid "$link $tags"
+      hmac="${OID_CACHE["$link $tags"]}"
+      ;;
+    S|SCORE)
+      kind='score'
+      link="${rest%% *}"
+      score="${rest#$link }"
+      case "$score" in
+        -1) score="-1";;
+        *) score="1";;
+      esac
+      oid "$link $score"
+      hmac="${OID_CACHE["$link $score"]}"
+      ;;
+    *)
+      error $"Ignored malformed event: '$line'"
+      return 0
+      ;;
+  esac
+
+  if [[ "$show_untrusted" = "true" ]]; then
+    eid="$aid:$datet"
+    case "$link" in
+      *:*:*) flags+="*"; link="${link%:*}";;
+    esac
+  else
+    eid="$aid:$datet:$hmac"
+  fi
+
+  EVENTS_KIND["$eid"]="$kind"
+  EVENTS_DATE["$eid"]="$datet"
+  EVENTS_LINK["$eid"]="$link"
+  EVENTS_TAGS["$eid"]="$tags"
+  EVENTS_MESG["$eid"]="$mesg"
+  EVENTS_SIGN["$eid"]="$flags"
+  EVENTS_COMMIT["$eid"]="$fname $commit"
+
+  # XXX some array abused. Because arrays allows any index number, and are
+  # sorted by definition, we do not need to sort anything.
+  EVENTS_SORTED["$idx"]="$eid"
+
+  if [[ "$kind" = 'reply' ]]; then
+    EVENTS_CROSS_REPLY[$link]+=" $eid "
+  elif [[ "$kind" = 'tag' ]]; then
+    EVENTS_CROSS_TAGS[$link]+=" $eid "
+  elif [[ "$kind" = 'score' ]]; then
+    if ! [[ "${EVENTS_CROSS_SCORE[$aid:$link]}" ]]; then
+      EVENTS_CROSS_SCORE["$aid:$link"]=1
+      (( EVENTS_SCORE["$link"]+=score ))
+    fi
+  fi
+
+  [[ "$ACCOUNT_NAME" ]] && notify "$eid"
+}
+
+# fun: event_sign <eid>
+# txt: return true if EID is signed
+event_sign ()
+{
+  echo "${EVENTS_SIGN[$1]}"
+}
+
+# fun: event_replies <eid>
+# txt: given an specific eid return the eids of the replies of that post
+event_replies ()
+{
+  local -a sorted_replies=()
+  local idx
+
+  for reply in ${EVENTS_CROSS_REPLY["$1"]}; do
+    idx="${reply#*:}"; idx="${idx%%:*}$(printf %03d "$((RANDOM % 100))")"
+    [[ "$reply" = "$1" ]] && E=3 error "$ERR_TIME_DUPLICATED" "$label" "$1"
+    sorted_replies[$idx]="$reply"
+  done
+
+  echo "${sorted_replies[@]}"
+}
+
+# fun: event_labels <eid>
+# txt: given an specific eid return the eids of the tags of that post
+event_labels ()
+{
+  local -a sorted_labels=()
+  local idx
+
+  for label in ${EVENTS_CROSS_TAGS["$1"]}; do
+    idx="${label#*:}"; idx="${idx%%:*}$(printf %03d "$((RANDOM % 100))")"
+    [[ "$label" = "$1" ]] && E=3 error "$ERR_TIME_DUPLICATED" "$label" "$1"
+    sorted_labels[$idx]="$label"
+  done
+
+  echo "${sorted_labels[@]}"
+}
+
+# fun: event_score <eid>
+# txt: return the score of the specified event
+event_score ()
+{
+  echo "${EVENTS_SCORE[$1]:-0}"
+}
+
+# fun: event_iter
+# txt: print a list of events saved in memory
+event_iter ()
+{
+  echo "${EVENTS_SORTED[@]}"
+}
+
+# fun: event_kind <eid>
+# txt: given an event id, get the kind of the event
+event_kind ()
+{
+  echo "${EVENTS_KIND["$1"]}"
+}
+
+# fun: event_date <eid>
+# txt: given an event id, get the date of the event
+event_date ()
+{
+  echo "${EVENTS_DATE["$1"]}"
+}
+
+# fun: event_link <eid>
+# txt: given an event id, get the link of the event (only for TAGS and
+#      REPLIES)
+event_link ()
+{
+  echo "${EVENTS_LINK["$1"]}"
+}
+
+# fun: event_tags <eid>
+# txt: given an event id, get the tags of the event (only for TAGS)
+event_tags ()
+{
+  echo "${EVENTS_TAGS["$1"]}"
+}
+
+# fun: event_mesg <eid>
+# txt: given an event id, get the message of the event (only for REPLY and
+#      POST)
+event_mesg ()
+{
+  echo "${EVENTS_MESG["$1"]}"
+}
+
+# fun: event_create <args>
+# txt: create new event. Args can vary depends of event type, the order of
+#      the arguments should be:
+#      For posts: date kind mesg
+#      For reply: date kind link mesg
+#      For tags:  date kind link tags
+# env: EID: set this variable to the value of the EID to the created element.
+event_create ()
+{
+  local auto_push content_markdown mesg line l
+  local -a content
+
+  auto_push="${CONFIG["account.${ACCOUNT_NAME}.auto-push"]}"
+
+  if ! [[ "$auto_push" ]]; then
+    auto_push="$(config_get account.auto-push)"
+  fi
+
+  EID="$ACCOUNT_OID:$1"
+
+  case "$2" in
+    P) mesg="$3"; line="$*";;
+    R|T|S)
+      mesg="$4"
+      case "$3" in
+        *:*:*) line="$*" ;;
+        *:*)
+          if [[ "${EVENTS_MESG["$3"]}" ]]; then
+            oid "${EVENTS_MESG["$3"]}"
+            line="$1 $2 $3:${OID_CACHE["${EVENTS_MESG["$3"]}"]} $4"
+          else
+            E=1 error $"Try to reference a non-existant EID: $3"
+          fi;;
+        *) E=1 error $"Invalid EID reference: $*";;
+      esac;;
+  esac
+  oid "$mesg"
+  EID+=":${OID_CACHE["$mesg"]}"
+
+  mapfile -t content < "${ACCOUNT_PATH}/$TIMELINE_CONTENT"
+
+  echo "$line" > "${ACCOUNT_PATH}/$TIMELINE_CONTENT"
+  for l in "${content[@]}"; do
+    echo "$l" >> "${ACCOUNT_PATH}/$TIMELINE_CONTENT"
+  done
+
+  content_markdown="${CONFIG["account.${ACCOUNT_NAME}.content-markdown"]}"
+
+  if ! [[ "$content_markdown" ]]; then
+    content_markdown="${CONFIG[account.content-markdown]}"
+  fi
+
+  if [[ "$content_markdown" = "true" ]]; then
+    markdown_generate
+  fi
+
+  account_commit "event: $line"
+
+  if [[ "$auto_push" = "true" ]]; then
+    account_push
+  fi
+}
+
+# fun: event_info <eid>
+# txt: given an eid, print the infortmation related with this event
+event_info ()
+{
+  local eid="$1" date kind mesg tags reply link tag
+
+  date="${EVENTS_DATE["$1"]}"
+  kind="${EVENTS_KIND["$1"]}"
+
+  if [[ -z "$kind" ]]; then
+    E=1 error $"Not found information for EID '$eid'"
+    return 1
+  fi
+
+  mesg="${EVENTS_MESG["$eid"]}"
+  tags="${EVENTS_TAGS["$eid"]}"
+  link="${EVENTS_LINK["$eid"]}"
+  
+  printf $"%-10s %s\n" "EID:"   "$eid"
+  printf $"%-10s %s (%s)\n" "UID:"   "${eid%%:*}" "$(username "$eid")"
+  # shellcheck disable=SC2183
+  printf $"%-10s %s (%(%Y-%m-%d %H:%M:%S)T)\n" "Date:"  "$date" "$date"
+  printf $"%-10s %s\n" "Kind:"   "${kind^^}"
+  printf $"%-10s %s\n" "Link:"   "${link}"
+  printf $"%-10s %s\n" "Tags:"   "${tags}"
+  printf $"%-10s %s\n" "Mesg:"   "${mesg}"
+  printf $"Tagged by:\n"
+
+  local -A taggedas=()
+  for item in $(event_labels "$eid"); do
+    printf "  -  %s\n" "$item"
+    for tag in ${EVENTS_TAGS["$item"]}; do
+      taggedas["$tag"]=1
+    done
+  done
+  printf $"Tagged as:\n"
+  for item in "${!taggedas[@]}"; do
+    printf "  -  %s\n" "$item"
+  done
+  printf $"Replied by:\n"
+  for item in $(event_replies "$eid"); do
+    printf "  -  %s\n" "$item"
+  done
+
+  case "${EVENTS_SIGN["$eid"]}" in
+    G|B|U|X|Y|R|E)
+      printf "Signed: Yes\n"
+      printf "Signature information:\n"
+
+      command git -C "${EVENTS_COMMIT["$eid"]%% *}" \
+        verify-commit "${EVENTS_COMMIT["$eid"]##* }" 2>&1
+      ;;
+    *)
+      printf "Signed: No\n"
+      ;;
+  esac
+}
+## vim:ft=sh
+
+# env: ACCOUNT_NAME: A variable contains the name of the acctive account.
+export ACCOUNT_NAME=
+
+# env: ACCOUNT_PATH: A variable contains the path of the acctive account.
+export ACCOUNT_PATH=
+
+# env: ACCOUNT_OID: A variable contains the OID of the acctive account.
+export ACCOUNT_OID=
+
+# fun: account_list
+# txt: output a new-line separated list of defined accounts.
+account_list ()
+{
+  local account
+
+  for account in $(config_iter account.); do
+    case "$account" in
+      account.*.path)
+        account="${account#account.}"
+        account="${account%.path}"
+        echo "$account"
+      ;;
+    esac
+  done
+}
+
+# fun: account_load [name]
+# txt: load the account named as argument, if argument is omit, then try to
+#      load the account using the `account.default` configuration value or,
+#      if missing and there is only one configured account this one.
+#      Otherwise failed.
+account_load ()
+{
+  local name="$1" pull_url changes
+
+  name="${name:-${CONFIG[account.default]}}"
+
+  if [[ -z "$name" ]]; then
+
+    # try to infer the account name if none is provided
+    
+    read -ra all_accounts < <( account_list)
+
+    case "${#all_accounts[@]}" in
+      0) return 1;;
+      1) name="${all_accounts[0]}";;
+      *) E=1 fatal $"There are may accounts.";;
+    esac
+
+  fi
+
+  ACCOUNT_NAME="$name"
+  pull_url="$(config_get "account.$ACCOUNT_NAME.pull-url")"
+  oid "$pull_url"
+  ACCOUNT_OID="${OID_CACHE["$pull_url"]}"
+  ACCOUNT_PATH="$(config_get "account.$ACCOUNT_NAME.path")"
+
+  changes="$(command git -C "${ACCOUNT_PATH}" status --porcelain 2>&1)" ||
+    E=3 error $"Unable to check account status"
+  if [[ "$changes" ]]; then
+    error $"Account is dirty. Maybe you edit your account manually and badly."
+    error $"To repair just run: git reset --hard master in $ACCOUNT_PATH"
+    exit 100
+  fi
+}
+
+export NOACTIVE=$"There are no active accounts"
+
+# fun: account_exists [name]
+# txt: return true if the account name passed as argument is a initialized
+#      account. If name is omit, then use active account path.
+account_exists ()
+{
+  local path=
+  
+  [[ "$1" ]] && path="$(config_get "account.$1.path")"
+
+  if [[ -z "$path" ]]; then
+    path="${ACCOUNT_PATH}"
+  fi
+  [ -d "${path%.git}/.git" ]
+}
+
+# fun: account_create <name> <push_url> <pull_url> [keyid] [path]
+# txt: create a new account named as name, with specific push and pull url,
+#      if path is provided then set the account path to this one, otherwise,
+#      use the default path for accounts as prefix
+account_create ()
+{
+  local name="$1" push_url="$2" pull_url="$3" keyid="$4" path="$5"
+
+  if [[ "${CONFIG["account.$name.path"]}" ]]; then
+    E=1 fatal $"Another account already exists with that name"
+  else
+    path="${path:-$(try_path "$(config_get account.path)")/$name}"
+    config_set "account.$name.push-url" "$push_url"
+    config_set "account.$name.pull-url" "$pull_url"
+    config_set "account.$name.path" "$path"
+    config_set "account.$name.keyid" "$keyid"
+    oid "$pull_url"
+    config_set "user.alias-${OID_CACHE["$pull_url"]}" "$name"
+    account_init "$name"
+    config_save "${CONFIG_FILE}"
+  fi
+}
+
+# fun: account_clone <name> <push_url> <pull_url> [keyid] [path]
+# txt: clone new account named as name, from the specific push url,
+#      if path is provided then set the account path to this one, otherwise,
+#      use the default path for accounts as prefix
+account_clone ()
+{
+  if [[ "$1" = "--force" ]]; then
+    local force=true; shift
+  else
+    local force=false
+  fi
+
+  local name="$1" push_url="$2" pull_url="$3" keyid="$4" path="$5"
+
+  if ! $force && [[ "${CONFIG["account.$name.path"]}" ]]; then
+    E=1 fatal $"Another account already exists with that name"
+  else
+    path="${path:-$(try_path "$(config_get account.path)")/$name}"
+    config_set "account.$name.push-url" "$push_url"
+    config_set "account.$name.pull-url" "$pull_url"
+    config_set "account.$name.keyid" "$keyid"
+    config_set "account.$name.path" "$path"
+    oid "$pull_url"
+    config_set "user.alias-${OID_CACHE["$pull_url"]}" "$name"
+    command git clone "$push_url" "$path"
+    command git -C "$path" submodule init
+    account_config "$path" "$pull_url" "$keyid"
+    config_save "${CONFIG_FILE}"
+  fi
+}
+
+# fun: account_init <name>
+# txt: initialized the accoutn passed as argument
+account_init ()
+{
+  if account_exists "$1"; then
+    E=1 fatal $"Trying to initializating an already initialized account"
+  else
+    local path push_url pull_url keyid
+
+    path="$(config_get "account.$1.path")"
+    pull_url="$(config_get "account.$1.pull-url")"
+    push_url="$(config_get "account.$1.push-url")"
+    keyid="$(keyid "$1")"
+
+    # create empty dir for init
+    mkdir -p "$path" ||
+      E=1 fatal $"Unable to create account directory: %s" "$path"
+
+    command git -C "$path" init ${TIMELINE_EXPERIMENTAL_SHA256:+--object-format=sha256}
+    account_config "$path" "$pull_url" "$keyid"
+    command git -C "$path" add .
+    if [[ "$keyid" ]]; then
+      command git -C "$path" commit -S -m 'Initial commit'
+    else
+      command git -C "$path" commit -m 'Initial commit'
+    fi
+    command git -C "$path" remote add origin "$push_url"
+  fi
+}
+
+# fun: account_config <path> <pull_url> [keyid]
+# txt: configure user and other required things in the repo
+account_config ()
+{
+  local path="$1" pull_url="$2" keyid="$3"
+  oid "$pull_url"
+
+  command git -C "$path" config user.name "${OID_CACHE["$pull_url"]}"
+  command git -C "$path" config user.email "${OID_CACHE["$pull_url"]}@timeline"
+  [[ "$keyid" ]] &&
+    command git -C "$path" config user.signingkey "$keyid"
+  command touch "${path:?}/CONTENT"
+  command mkdir -p "${path:?}/FOLLOW"
+}
+
+# fun: account_commit [message]
+# txt: set a commit point into current active account
+account_commit ()
+{
+  [[ "$ACCOUNT_PATH" ]] || E=1 fatal $"No active account to commit"
+
+  command git -C "$ACCOUNT_PATH" add .
+  if [[ "$(keyid "${ACCOUNT_NAME}")" ]]; then
+    command git -C "$ACCOUNT_PATH" commit -S -m "${1:-autosave}"
+  else
+    command git -C "$ACCOUNT_PATH" commit -m "${1:-autosave}"
+  fi
+}
+
+# fun: account_push [remote]
+# txt: push active account content to remote passed as argument or, if
+#      missing, to `origin`.
+account_push ()
+{
+  # TODO Add support for multiple branches
+  command git -C "${ACCOUNT_PATH}" push "${1:-origin}" master
+}
+
+# fun: account_refresh <path> [remote]
+# txt: rebase changes to current account from remote passed as argument or,
+#     if missing, `origin`.
+account_refresh ()
+{
+  local path="$1"; shift
+
+  command git -C "$path" fetch --all
+  # TODO Add support for multiple branches
+  command git -C "$path" rebase "${1:-origin}/master"
+  command git -C "$path" submodule update --remote \
+    --jobs "${CONFIG[git.jobs]:-1}"
+
+  if [[ "$(command git -C "$path" status -s)" ]]; then
+    account_commit "FOLLOW updated"
+  fi
+}
+
+# fun: account_delete [name]
+# txt: delete account by name passed as argument or active account if none
+#      name is provided.
+account_delete ()
+{
+  local name="${1:-$ACCOUNT_NAME}" path pull_url
+
+  path="$(config_get "account.$name.path")"
+  pull_url="$(config_get "account.$name.pull-url")"
+  
+  oid "$pull_url"
+
+  if [[ -d "$path" ]]; then
+    rm -rf "$path"
+  fi
+
+  config_unset "account.$name"
+  config_unset "user.alias-${OID_CACHE["$pull_url"]}"
+
+  config_save "${CONFIG_FILE}"
+}
+
+# fun: account_set_keyid <name> <keyid>
+# txt: set keyid for an existant account
+account_set_keyid ()
+{
+  command git -C "$(config_get "account.$1.path")" config user.signingkey "$2"
+  config_set "account.$1.keyid" "$2"
+}
+
+# fun: account_preview <url> [filter]
+# txt: preview the contents of the specified url repo filtered with the
+#      specific if present.
+account_preview ()
+{
+  local tmpdir depth
+  tmpdir="$(temp_dir)"
+  depth="${CONFIG[account.preview-depth]}"
+
+  [[ "$depth" = "-1" ]] && depth=""
+
+  command git clone ${depth:+--depth "${depth}"} "$1" "${tmpdir}" 2>&1 |
+    info_multi ||
+      E=1 error $"Unable to clone remote repo"
+
+  oid "$1"
+  timeline_load "${tmpdir}" "${OID_CACHE["$1"]}"
+  shift
+  timeline_list "$@"
+}
+## vim: ft=sh
+
+# env: ABBR_TABLE
+# txt: abbreviation table, using to replace input
+declare -gxA ABBR_TABLE
+
+# fun: abbr_replace <str>
+# txt: given a text replace abbr occurencies and put the result in REPLY
+abbr_replace ()
+{
+  local word
+
+  REPLY=''
+  abbr_emoji_load
+  # shellcheck disable=SC2048
+  for word in $*; do
+    REPLY+="${ABBR_TABLE[$word]:-${CONFIG[abbr.$word]:-$word}} "
+  done
+  REPLY="${REPLY% }"
+}
+
+# fun: abbr_emoji_load
+# txt: load a well known set of emoji abbreviations into ABBR_TABLE. Due the
+#      size of this load, this function will be called on demand only if
+#      `input.emojis` config setting is true
+abbr_emoji_load ()
+{
+  [[ "${CONFIG["input.emojis"]}" != "true" ]] && return
+
+  # not reload if already loaded
+  [[ "${ABBR_TABLE[':+1:']}" ]] && return
+
+  ABBR_TABLE[':+1:']='👍'
+  ABBR_TABLE[':-1:']='👎'
+  ABBR_TABLE[':100:']='💯'
+  ABBR_TABLE[':1234:']='🔢'
+  ABBR_TABLE[':1st_place_medal:']='🥇'
+  ABBR_TABLE[':2nd_place_medal:']='🥈'
+  ABBR_TABLE[':3rd_place_medal:']='🥉'
+  ABBR_TABLE[':8ball:']='🎱'
+  ABBR_TABLE[':a:']='🅰️'
+  ABBR_TABLE[':ab:']='🆎'
+  ABBR_TABLE[':abacus:']='🧮'
+  ABBR_TABLE[':abc:']='🔤'
+  ABBR_TABLE[':abcd:']='🔡'
+  ABBR_TABLE[':accept:']='🉑'
+  ABBR_TABLE[':accordion:']='🪗'
+  ABBR_TABLE[':adhesive_bandage:']='🩹'
+  ABBR_TABLE[':adult:']='🧑'
+  ABBR_TABLE[':aerial_tramway:']='🚡'
+  ABBR_TABLE[':afghanistan:']='🇦🇫'
+  ABBR_TABLE[':airplane:']='✈️'
+  ABBR_TABLE[':aland_islands:']='🇦🇽'
+  ABBR_TABLE[':alarm_clock:']='⏰'
+  ABBR_TABLE[':albania:']='🇦🇱'
+  ABBR_TABLE[':alembic:']='⚗️'
+  ABBR_TABLE[':algeria:']='🇩🇿'
+  ABBR_TABLE[':alien:']='👽'
+  ABBR_TABLE[':ambulance:']='🚑'
+  ABBR_TABLE[':american_samoa:']='🇦🇸'
+  ABBR_TABLE[':amphora:']='🏺'
+  ABBR_TABLE[':anatomical_heart:']='🫀'
+  ABBR_TABLE[':anchor:']='⚓'
+  ABBR_TABLE[':andorra:']='🇦🇩'
+  ABBR_TABLE[':angel:']='👼'
+  ABBR_TABLE[':anger:']='💢'
+  ABBR_TABLE[':angola:']='🇦🇴'
+  ABBR_TABLE[':angry:']='😠'
+  ABBR_TABLE[':anguilla:']='🇦🇮'
+  ABBR_TABLE[':anguished:']='😧'
+  ABBR_TABLE[':ant:']='🐜'
+  ABBR_TABLE[':antarctica:']='🇦🇶'
+  ABBR_TABLE[':antigua_barbuda:']='🇦🇬'
+  ABBR_TABLE[':apple:']='🍎'
+  ABBR_TABLE[':aquarius:']='♒'
+  ABBR_TABLE[':argentina:']='🇦🇷'
+  ABBR_TABLE[':aries:']='♈'
+  ABBR_TABLE[':armenia:']='🇦🇲'
+  ABBR_TABLE[':arrow_backward:']='◀️'
+  ABBR_TABLE[':arrow_double_down:']='⏬'
+  ABBR_TABLE[':arrow_double_up:']='⏫'
+  ABBR_TABLE[':arrow_down:']='⬇️'
+  ABBR_TABLE[':arrow_down_small:']='🔽'
+  ABBR_TABLE[':arrow_forward:']='▶️'
+  ABBR_TABLE[':arrow_heading_down:']='⤵️'
+  ABBR_TABLE[':arrow_heading_up:']='⤴️'
+  ABBR_TABLE[':arrow_left:']='⬅️'
+  ABBR_TABLE[':arrow_lower_left:']='↙️'
+  ABBR_TABLE[':arrow_lower_right:']='↘️'
+  ABBR_TABLE[':arrow_right:']='➡️'
+  ABBR_TABLE[':arrow_right_hook:']='↪️'
+  ABBR_TABLE[':arrows_clockwise:']='🔃'
+  ABBR_TABLE[':arrows_counterclockwise:']='🔄'
+  ABBR_TABLE[':arrow_up:']='⬆️'
+  ABBR_TABLE[':arrow_up_down:']='↕️'
+  ABBR_TABLE[':arrow_upper_left:']='↖️'
+  ABBR_TABLE[':arrow_upper_right:']='↗️'
+  ABBR_TABLE[':arrow_up_small:']='🔼'
+  ABBR_TABLE[':art:']='🎨'
+  ABBR_TABLE[':articulated_lorry:']='🚛'
+  ABBR_TABLE[':artificial_satellite:']='🛰️'
+  ABBR_TABLE[':artist:']='🧑‍🎨'
+  ABBR_TABLE[':aruba:']='🇦🇼'
+  ABBR_TABLE[':ascension_island:']='🇦🇨'
+  ABBR_TABLE[':asterisk:']='*️⃣'
+  ABBR_TABLE[':astonished:']='😲'
+  ABBR_TABLE[':astronaut:']='🧑‍🚀'
+  ABBR_TABLE[':athletic_shoe:']='👟'
+  ABBR_TABLE[':atm:']='🏧'
+  ABBR_TABLE[':atom_symbol:']='⚛️'
+  ABBR_TABLE[':australia:']='🇦🇺'
+  ABBR_TABLE[':austria:']='🇦🇹'
+  ABBR_TABLE[':auto_rickshaw:']='🛺'
+  ABBR_TABLE[':avocado:']='🥑'
+  ABBR_TABLE[':axe:']='🪓'
+  ABBR_TABLE[':azerbaijan:']='🇦🇿'
+  ABBR_TABLE[':baby:']='👶'
+  ABBR_TABLE[':baby_bottle:']='🍼'
+  ABBR_TABLE[':baby_chick:']='🐤'
+  ABBR_TABLE[':baby_symbol:']='🚼'
+  ABBR_TABLE[':back:']='🔙'
+  ABBR_TABLE[':bacon:']='🥓'
+  ABBR_TABLE[':badger:']='🦡'
+  ABBR_TABLE[':badminton:']='🏸'
+  ABBR_TABLE[':bagel:']='🥯'
+  ABBR_TABLE[':baggage_claim:']='🛄'
+  ABBR_TABLE[':baguette_bread:']='🥖'
+  ABBR_TABLE[':bahamas:']='🇧🇸'
+  ABBR_TABLE[':bahrain:']='🇧🇭'
+  ABBR_TABLE[':balance_scale:']='⚖️'
+  ABBR_TABLE[':bald_man:']='👨‍🦲'
+  ABBR_TABLE[':bald_woman:']='👩‍🦲'
+  ABBR_TABLE[':ballet_shoes:']='🩰'
+  ABBR_TABLE[':balloon:']='🎈'
+  ABBR_TABLE[':ballot_box:']='🗳️'
+  ABBR_TABLE[':ballot_box_with_check:']='☑️'
+  ABBR_TABLE[':bamboo:']='🎍'
+  ABBR_TABLE[':banana:']='🍌'
+  ABBR_TABLE[':bangbang:']='‼️'
+  ABBR_TABLE[':bangladesh:']='🇧🇩'
+  ABBR_TABLE[':banjo:']='🪕'
+  ABBR_TABLE[':bank:']='🏦'
+  ABBR_TABLE[':barbados:']='🇧🇧'
+  ABBR_TABLE[':barber:']='💈'
+  ABBR_TABLE[':bar_chart:']='📊'
+  ABBR_TABLE[':baseball:']='⚾'
+  ABBR_TABLE[':basket:']='🧺'
+  ABBR_TABLE[':basketball:']='🏀'
+  ABBR_TABLE[':basketball_man:']='⛹️‍♂️'
+  ABBR_TABLE[':basketball_woman:']='⛹️‍♀️'
+  ABBR_TABLE[':bat:']='🦇'
+  ABBR_TABLE[':bath:']='🛀'
+  ABBR_TABLE[':bathtub:']='🛁'
+  ABBR_TABLE[':battery:']='🔋'
+  ABBR_TABLE[':b:']='🅱️'
+  ABBR_TABLE[':beach_umbrella:']='🏖️'
+  ABBR_TABLE[':bear:']='🐻'
+  ABBR_TABLE[':bearded_person:']='🧔'
+  ABBR_TABLE[':beaver:']='🦫'
+  ABBR_TABLE[':bed:']='🛏️'
+  ABBR_TABLE[':bee:']='🐝'
+  ABBR_TABLE[':beer:']='🍺'
+  ABBR_TABLE[':beers:']='🍻'
+  ABBR_TABLE[':beetle:']='🪲'
+  ABBR_TABLE[':beginner:']='🔰'
+  ABBR_TABLE[':belarus:']='🇧🇾'
+  ABBR_TABLE[':belgium:']='🇧🇪'
+  ABBR_TABLE[':belize:']='🇧🇿'
+  ABBR_TABLE[':bell:']='🔔'
+  ABBR_TABLE[':bellhop_bell:']='🛎️'
+  ABBR_TABLE[':bell_pepper:']='🫑'
+  ABBR_TABLE[':benin:']='🇧🇯'
+  ABBR_TABLE[':bento:']='🍱'
+  ABBR_TABLE[':bermuda:']='🇧🇲'
+  ABBR_TABLE[':beverage_box:']='🧃'
+  ABBR_TABLE[':bhutan:']='🇧🇹'
+  ABBR_TABLE[':bicyclist:']='🚴'
+  ABBR_TABLE[':bike:']='🚲'
+  ABBR_TABLE[':biking_man:']='🚴‍♂️'
+  ABBR_TABLE[':biking_woman:']='🚴‍♀️'
+  ABBR_TABLE[':bikini:']='👙'
+  ABBR_TABLE[':billed_cap:']='🧢'
+  ABBR_TABLE[':biohazard:']='☣️'
+  ABBR_TABLE[':bird:']='🐦'
+  ABBR_TABLE[':birthday:']='🎂'
+  ABBR_TABLE[':bison:']='🦬'
+  ABBR_TABLE[':black_cat:']='🐈‍⬛'
+  ABBR_TABLE[':black_circle:']='⚫'
+  ABBR_TABLE[':black_flag:']='🏴'
+  ABBR_TABLE[':black_heart:']='🖤'
+  ABBR_TABLE[':black_joker:']='🃏'
+  ABBR_TABLE[':black_large_square:']='⬛'
+  ABBR_TABLE[':black_medium_small_square:']='◾'
+  ABBR_TABLE[':black_medium_square:']='◼️'
+  ABBR_TABLE[':black_nib:']='✒️'
+  ABBR_TABLE[':black_small_square:']='▪️'
+  ABBR_TABLE[':black_square_button:']='🔲'
+  ABBR_TABLE[':blonde_woman:']='👱‍♀️'
+  ABBR_TABLE[':blond_haired_man:']='👱‍♂️'
+  ABBR_TABLE[':blond_haired_person:']='👱'
+  ABBR_TABLE[':blond_haired_woman:']='👱‍♀️'
+  ABBR_TABLE[':blossom:']='🌼'
+  ABBR_TABLE[':blowfish:']='🐡'
+  ABBR_TABLE[':blueberries:']='🫐'
+  ABBR_TABLE[':blue_book:']='📘'
+  ABBR_TABLE[':blue_car:']='🚙'
+  ABBR_TABLE[':blue_heart:']='💙'
+  ABBR_TABLE[':blue_square:']='🟦'
+  ABBR_TABLE[':blush:']='😊'
+  ABBR_TABLE[':boar:']='🐗'
+  ABBR_TABLE[':boat:']='⛵'
+  ABBR_TABLE[':bolivia:']='🇧🇴'
+  ABBR_TABLE[':bomb:']='💣'
+  ABBR_TABLE[':bone:']='🦴'
+  ABBR_TABLE[':book:']='📖'
+  ABBR_TABLE[':bookmark:']='🔖'
+  ABBR_TABLE[':bookmark_tabs:']='📑'
+  ABBR_TABLE[':books:']='📚'
+  ABBR_TABLE[':boom:']='💥'
+  ABBR_TABLE[':boomerang:']='🪃'
+  ABBR_TABLE[':boot:']='👢'
+  ABBR_TABLE[':bosnia_herzegovina:']='🇧🇦'
+  ABBR_TABLE[':botswana:']='🇧🇼'
+  ABBR_TABLE[':bouncing_ball_man:']='⛹️‍♂️'
+  ABBR_TABLE[':bouncing_ball_person:']='⛹️'
+  ABBR_TABLE[':bouncing_ball_woman:']='⛹️‍♀️'
+  ABBR_TABLE[':bouquet:']='💐'
+  ABBR_TABLE[':bouvet_island:']='🇧🇻'
+  ABBR_TABLE[':bow:']='🙇'
+  ABBR_TABLE[':bow_and_arrow:']='🏹'
+  ABBR_TABLE[':bowing_man:']='🙇‍♂️'
+  ABBR_TABLE[':bowing_woman:']='🙇‍♀️'
+  ABBR_TABLE[':bowling:']='🎳'
+  ABBR_TABLE[':bowl_with_spoon:']='🥣'
+  ABBR_TABLE[':boxing_glove:']='🥊'
+  ABBR_TABLE[':boy:']='👦'
+  ABBR_TABLE[':brain:']='🧠'
+  ABBR_TABLE[':brazil:']='🇧🇷'
+  ABBR_TABLE[':bread:']='🍞'
+  ABBR_TABLE[':breast_feeding:']='🤱'
+  ABBR_TABLE[':bricks:']='🧱'
+  ABBR_TABLE[':bride_with_veil:']='👰‍♀️'
+  ABBR_TABLE[':bridge_at_night:']='🌉'
+  ABBR_TABLE[':briefcase:']='💼'
+  ABBR_TABLE[':british_indian_ocean_territory:']='🇮🇴'
+  ABBR_TABLE[':british_virgin_islands:']='🇻🇬'
+  ABBR_TABLE[':broccoli:']='🥦'
+  ABBR_TABLE[':broken_heart:']='💔'
+  ABBR_TABLE[':broom:']='🧹'
+  ABBR_TABLE[':brown_circle:']='🟤'
+  ABBR_TABLE[':brown_heart:']='🤎'
+  ABBR_TABLE[':brown_square:']='🟫'
+  ABBR_TABLE[':brunei:']='🇧🇳'
+  ABBR_TABLE[':bubble_tea:']='🧋'
+  ABBR_TABLE[':bucket:']='🪣'
+  ABBR_TABLE[':bug:']='🐛'
+  ABBR_TABLE[':building_construction:']='🏗️'
+  ABBR_TABLE[':bulb:']='💡'
+  ABBR_TABLE[':bulgaria:']='🇧🇬'
+  ABBR_TABLE[':bullettrain_front:']='🚅'
+  ABBR_TABLE[':bullettrain_side:']='🚄'
+  ABBR_TABLE[':burkina_faso:']='🇧🇫'
+  ABBR_TABLE[':burrito:']='🌯'
+  ABBR_TABLE[':burundi:']='🇧🇮'
+  ABBR_TABLE[':bus:']='🚌'
+  ABBR_TABLE[':business_suit_levitating:']='🕴️'
+  ABBR_TABLE[':busstop:']='🚏'
+  ABBR_TABLE[':bust_in_silhouette:']='👤'
+  ABBR_TABLE[':busts_in_silhouette:']='👥'
+  ABBR_TABLE[':butter:']='🧈'
+  ABBR_TABLE[':butterfly:']='🦋'
+  ABBR_TABLE[':cactus:']='🌵'
+  ABBR_TABLE[':cake:']='🍰'
+  ABBR_TABLE[':calendar:']='📆'
+  ABBR_TABLE[':calling:']='📲'
+  ABBR_TABLE[':call_me_hand:']='🤙'
+  ABBR_TABLE[':cambodia:']='🇰🇭'
+  ABBR_TABLE[':camel:']='🐫'
+  ABBR_TABLE[':camera:']='📷'
+  ABBR_TABLE[':camera_flash:']='📸'
+  ABBR_TABLE[':cameroon:']='🇨🇲'
+  ABBR_TABLE[':camping:']='🏕️'
+  ABBR_TABLE[':canada:']='🇨🇦'
+  ABBR_TABLE[':canary_islands:']='🇮🇨'
+  ABBR_TABLE[':cancer:']='♋'
+  ABBR_TABLE[':candle:']='🕯️'
+  ABBR_TABLE[':candy:']='🍬'
+  ABBR_TABLE[':canned_food:']='🥫'
+  ABBR_TABLE[':canoe:']='🛶'
+  ABBR_TABLE[':cape_verde:']='🇨🇻'
+  ABBR_TABLE[':capital_abcd:']='🔠'
+  ABBR_TABLE[':capricorn:']='♑'
+  ABBR_TABLE[':car:']='🚗'
+  ABBR_TABLE[':card_file_box:']='🗃️'
+  ABBR_TABLE[':card_index:']='📇'
+  ABBR_TABLE[':card_index_dividers:']='🗂️'
+  ABBR_TABLE[':caribbean_netherlands:']='🇧🇶'
+  ABBR_TABLE[':carousel_horse:']='🎠'
+  ABBR_TABLE[':carpentry_saw:']='🪚'
+  ABBR_TABLE[':carrot:']='🥕'
+  ABBR_TABLE[':cartwheeling:']='🤸'
+  ABBR_TABLE[':cat:']='🐱'
+  ABBR_TABLE[':cat2:']='🐈'
+  ABBR_TABLE[':cayman_islands:']='🇰🇾'
+  ABBR_TABLE[':cd:']='💿'
+  ABBR_TABLE[':central_african_republic:']='🇨🇫'
+  ABBR_TABLE[':ceuta_melilla:']='🇪🇦'
+  ABBR_TABLE[':chad:']='🇹🇩'
+  ABBR_TABLE[':chains:']='⛓️'
+  ABBR_TABLE[':chair:']='🪑'
+  ABBR_TABLE[':champagne:']='🍾'
+  ABBR_TABLE[':chart:']='💹'
+  ABBR_TABLE[':chart_with_downwards_trend:']='📉'
+  ABBR_TABLE[':chart_with_upwards_trend:']='📈'
+  ABBR_TABLE[':checkered_flag:']='🏁'
+  ABBR_TABLE[':cheese:']='🧀'
+  ABBR_TABLE[':cherries:']='🍒'
+  ABBR_TABLE[':cherry_blossom:']='🌸'
+  ABBR_TABLE[':chess_pawn:']='♟️'
+  ABBR_TABLE[':chestnut:']='🌰'
+  ABBR_TABLE[':chicken:']='🐔'
+  ABBR_TABLE[':child:']='🧒'
+  ABBR_TABLE[':children_crossing:']='🚸'
+  ABBR_TABLE[':chile:']='🇨🇱'
+  ABBR_TABLE[':chipmunk:']='🐿️'
+  ABBR_TABLE[':chocolate_bar:']='🍫'
+  ABBR_TABLE[':chopsticks:']='🥢'
+  ABBR_TABLE[':christmas_island:']='🇨🇽'
+  ABBR_TABLE[':christmas_tree:']='🎄'
+  ABBR_TABLE[':church:']='⛪'
+  ABBR_TABLE[':cinema:']='🎦'
+  ABBR_TABLE[':circus_tent:']='🎪'
+  ABBR_TABLE[':cityscape:']='🏙️'
+  ABBR_TABLE[':city_sunrise:']='🌇'
+  ABBR_TABLE[':city_sunset:']='🌆'
+  ABBR_TABLE[':clamp:']='🗜️'
+  ABBR_TABLE[':clap:']='👏'
+  ABBR_TABLE[':clapper:']='🎬'
+  ABBR_TABLE[':classical_building:']='🏛️'
+  ABBR_TABLE[':cl:']='🆑'
+  ABBR_TABLE[':climbing:']='🧗'
+  ABBR_TABLE[':climbing_man:']='🧗‍♂️'
+  ABBR_TABLE[':climbing_woman:']='🧗‍♀️'
+  ABBR_TABLE[':clinking_glasses:']='🥂'
+  ABBR_TABLE[':clipboard:']='📋'
+  ABBR_TABLE[':clipperton_island:']='🇨🇵'
+  ABBR_TABLE[':clock1:']='🕐'
+  ABBR_TABLE[':clock10:']='🕙'
+  ABBR_TABLE[':clock1030:']='🕥'
+  ABBR_TABLE[':clock11:']='🕚'
+  ABBR_TABLE[':clock1130:']='🕦'
+  ABBR_TABLE[':clock12:']='🕛'
+  ABBR_TABLE[':clock1230:']='🕧'
+  ABBR_TABLE[':clock130:']='🕜'
+  ABBR_TABLE[':clock2:']='🕑'
+  ABBR_TABLE[':clock230:']='🕝'
+  ABBR_TABLE[':clock3:']='🕒'
+  ABBR_TABLE[':clock330:']='🕞'
+  ABBR_TABLE[':clock4:']='🕓'
+  ABBR_TABLE[':clock430:']='🕟'
+  ABBR_TABLE[':clock5:']='🕔'
+  ABBR_TABLE[':clock530:']='🕠'
+  ABBR_TABLE[':clock6:']='🕕'
+  ABBR_TABLE[':clock630:']='🕡'
+  ABBR_TABLE[':clock7:']='🕖'
+  ABBR_TABLE[':clock730:']='🕢'
+  ABBR_TABLE[':clock8:']='🕗'
+  ABBR_TABLE[':clock830:']='🕣'
+  ABBR_TABLE[':clock9:']='🕘'
+  ABBR_TABLE[':clock930:']='🕤'
+  ABBR_TABLE[':closed_book:']='📕'
+  ABBR_TABLE[':closed_lock_with_key:']='🔐'
+  ABBR_TABLE[':closed_umbrella:']='🌂'
+  ABBR_TABLE[':cloud:']='☁️'
+  ABBR_TABLE[':cloud_with_lightning:']='🌩️'
+  ABBR_TABLE[':cloud_with_lightning_and_rain:']='⛈️'
+  ABBR_TABLE[':cloud_with_rain:']='🌧️'
+  ABBR_TABLE[':cloud_with_snow:']='🌨️'
+  ABBR_TABLE[':clown_face:']='🤡'
+  ABBR_TABLE[':clubs:']='♣️'
+  ABBR_TABLE[':cn:']='🇨🇳'
+  ABBR_TABLE[':coat:']='🧥'
+  ABBR_TABLE[':cockroach:']='🪳'
+  ABBR_TABLE[':cocktail:']='🍸'
+  ABBR_TABLE[':coconut:']='🥥'
+  ABBR_TABLE[':cocos_islands:']='🇨🇨'
+  ABBR_TABLE[':coffee:']='☕'
+  ABBR_TABLE[':coffin:']='⚰️'
+  ABBR_TABLE[':coin:']='🪙'
+  ABBR_TABLE[':cold_face:']='🥶'
+  ABBR_TABLE[':cold_sweat:']='😰'
+  ABBR_TABLE[':collision:']='💥'
+  ABBR_TABLE[':colombia:']='🇨🇴'
+  ABBR_TABLE[':comet:']='☄️'
+  ABBR_TABLE[':comoros:']='🇰🇲'
+  ABBR_TABLE[':compass:']='🧭'
+  ABBR_TABLE[':computer:']='💻'
+  ABBR_TABLE[':computer_mouse:']='🖱️'
+  ABBR_TABLE[':confetti_ball:']='🎊'
+  ABBR_TABLE[':confounded:']='😖'
+  ABBR_TABLE[':confused:']='😕'
+  ABBR_TABLE[':congo_brazzaville:']='🇨🇬'
+  ABBR_TABLE[':congo_kinshasa:']='🇨🇩'
+  ABBR_TABLE[':congratulations:']='㊗️'
+  ABBR_TABLE[':construction:']='🚧'
+  ABBR_TABLE[':construction_worker:']='👷'
+  ABBR_TABLE[':construction_worker_man:']='👷‍♂️'
+  ABBR_TABLE[':construction_worker_woman:']='👷‍♀️'
+  ABBR_TABLE[':control_knobs:']='🎛️'
+  ABBR_TABLE[':convenience_store:']='🏪'
+  ABBR_TABLE[':cook:']='🧑‍🍳'
+  ABBR_TABLE[':cookie:']='🍪'
+  ABBR_TABLE[':cook_islands:']='🇨🇰'
+  ABBR_TABLE[':cool:']='🆒'
+  ABBR_TABLE[':cop:']='👮'
+  ABBR_TABLE[':copyright:']='©️'
+  ABBR_TABLE[':corn:']='🌽'
+  ABBR_TABLE[':costa_rica:']='🇨🇷'
+  ABBR_TABLE[':cote_divoire:']='🇨🇮'
+  ABBR_TABLE[':couch_and_lamp:']='🛋️'
+  ABBR_TABLE[':couple:']='👫'
+  ABBR_TABLE[':couplekiss:']='💏'
+  ABBR_TABLE[':couplekiss_man_man:']='👨‍❤️‍💋‍👨'
+  ABBR_TABLE[':couplekiss_man_woman:']='👩‍❤️‍💋‍👨'
+  ABBR_TABLE[':couplekiss_woman_woman:']='👩‍❤️‍💋‍👩'
+  ABBR_TABLE[':couple_with_heart:']='💑'
+  ABBR_TABLE[':couple_with_heart_man_man:']='👨‍❤️‍👨'
+  ABBR_TABLE[':couple_with_heart_woman_man:']='👩‍❤️‍👨'
+  ABBR_TABLE[':couple_with_heart_woman_woman:']='👩‍❤️‍👩'
+  ABBR_TABLE[':cow:']='🐮'
+  ABBR_TABLE[':cow2:']='🐄'
+  ABBR_TABLE[':cowboy_hat_face:']='🤠'
+  ABBR_TABLE[':crab:']='🦀'
+  ABBR_TABLE[':crayon:']='🖍️'
+  ABBR_TABLE[':credit_card:']='💳'
+  ABBR_TABLE[':crescent_moon:']='🌙'
+  ABBR_TABLE[':cricket:']='🦗'
+  ABBR_TABLE[':cricket_game:']='🏏'
+  ABBR_TABLE[':croatia:']='🇭🇷'
+  ABBR_TABLE[':crocodile:']='🐊'
+  ABBR_TABLE[':croissant:']='🥐'
+  ABBR_TABLE[':crossed_fingers:']='🤞'
+  ABBR_TABLE[':crossed_flags:']='🎌'
+  ABBR_TABLE[':crossed_swords:']='⚔️'
+  ABBR_TABLE[':crown:']='👑'
+  ABBR_TABLE[':cry:']='😢'
+  ABBR_TABLE[':crying_cat_face:']='😿'
+  ABBR_TABLE[':crystal_ball:']='🔮'
+  ABBR_TABLE[':cuba:']='🇨🇺'
+  ABBR_TABLE[':cucumber:']='🥒'
+  ABBR_TABLE[':cupcake:']='🧁'
+  ABBR_TABLE[':cupid:']='💘'
+  ABBR_TABLE[':cup_with_straw:']='🥤'
+  ABBR_TABLE[':curacao:']='🇨🇼'
+  ABBR_TABLE[':curling_stone:']='🥌'
+  ABBR_TABLE[':curly_haired_man:']='👨‍🦱'
+  ABBR_TABLE[':curly_haired_woman:']='👩‍🦱'
+  ABBR_TABLE[':curly_loop:']='➰'
+  ABBR_TABLE[':currency_exchange:']='💱'
+  ABBR_TABLE[':curry:']='🍛'
+  ABBR_TABLE[':cursing_face:']='🤬'
+  ABBR_TABLE[':custard:']='🍮'
+  ABBR_TABLE[':customs:']='🛃'
+  ABBR_TABLE[':cut_of_meat:']='🥩'
+  ABBR_TABLE[':cyclone:']='🌀'
+  ABBR_TABLE[':cyprus:']='🇨🇾'
+  ABBR_TABLE[':czech_republic:']='🇨🇿'
+  ABBR_TABLE[':dagger:']='🗡️'
+  ABBR_TABLE[':dancer:']='💃'
+  ABBR_TABLE[':dancers:']='👯'
+  ABBR_TABLE[':dancing_men:']='👯‍♂️'
+  ABBR_TABLE[':dancing_women:']='👯‍♀️'
+  ABBR_TABLE[':dango:']='🍡'
+  ABBR_TABLE[':dark_sunglasses:']='🕶️'
+  ABBR_TABLE[':dart:']='🎯'
+  ABBR_TABLE[':dash:']='💨'
+  ABBR_TABLE[':date:']='📅'
+  ABBR_TABLE[':de:']='🇩🇪'
+  ABBR_TABLE[':deaf_man:']='🧏‍♂️'
+  ABBR_TABLE[':deaf_person:']='🧏'
+  ABBR_TABLE[':deaf_woman:']='🧏‍♀️'
+  ABBR_TABLE[':deciduous_tree:']='🌳'
+  ABBR_TABLE[':deer:']='🦌'
+  ABBR_TABLE[':denmark:']='🇩🇰'
+  ABBR_TABLE[':department_store:']='🏬'
+  ABBR_TABLE[':derelict_house:']='🏚️'
+  ABBR_TABLE[':desert:']='🏜️'
+  ABBR_TABLE[':desert_island:']='🏝️'
+  ABBR_TABLE[':desktop_computer:']='🖥️'
+  ABBR_TABLE[':detective:']='🕵️'
+  ABBR_TABLE[':diamonds:']='♦️'
+  ABBR_TABLE[':diamond_shape_with_a_dot_inside:']='💠'
+  ABBR_TABLE[':diego_garcia:']='🇩🇬'
+  ABBR_TABLE[':disappointed:']='😞'
+  ABBR_TABLE[':disappointed_relieved:']='😥'
+  ABBR_TABLE[':disguised_face:']='🥸'
+  ABBR_TABLE[':diving_mask:']='🤿'
+  ABBR_TABLE[':diya_lamp:']='🪔'
+  ABBR_TABLE[':dizzy:']='💫'
+  ABBR_TABLE[':dizzy_face:']='😵'
+  ABBR_TABLE[':djibouti:']='🇩🇯'
+  ABBR_TABLE[':dna:']='🧬'
+  ABBR_TABLE[':dodo:']='🦤'
+  ABBR_TABLE[':dog:']='🐶'
+  ABBR_TABLE[':dog2:']='🐕'
+  ABBR_TABLE[':dollar:']='💵'
+  ABBR_TABLE[':dolls:']='🎎'
+  ABBR_TABLE[':dolphin:']='🐬'
+  ABBR_TABLE[':dominica:']='🇩🇲'
+  ABBR_TABLE[':dominican_republic:']='🇩🇴'
+  ABBR_TABLE[':do_not_litter:']='🚯'
+  ABBR_TABLE[':door:']='🚪'
+  ABBR_TABLE[':doughnut:']='🍩'
+  ABBR_TABLE[':dove:']='🕊️'
+  ABBR_TABLE[':dragon:']='🐉'
+  ABBR_TABLE[':dragon_face:']='🐲'
+  ABBR_TABLE[':dress:']='👗'
+  ABBR_TABLE[':dromedary_camel:']='🐪'
+  ABBR_TABLE[':drooling_face:']='🤤'
+  ABBR_TABLE[':droplet:']='💧'
+  ABBR_TABLE[':drop_of_blood:']='🩸'
+  ABBR_TABLE[':drum:']='🥁'
+  ABBR_TABLE[':duck:']='🦆'
+  ABBR_TABLE[':dumpling:']='🥟'
+  ABBR_TABLE[':dvd:']='📀'
+  ABBR_TABLE[':eagle:']='🦅'
+  ABBR_TABLE[':ear:']='👂'
+  ABBR_TABLE[':ear_of_rice:']='🌾'
+  ABBR_TABLE[':earth_africa:']='🌍'
+  ABBR_TABLE[':earth_americas:']='🌎'
+  ABBR_TABLE[':earth_asia:']='🌏'
+  ABBR_TABLE[':ear_with_hearing_aid:']='🦻'
+  ABBR_TABLE[':ecuador:']='🇪🇨'
+  ABBR_TABLE[':egg:']='🥚'
+  ABBR_TABLE[':eggplant:']='🍆'
+  ABBR_TABLE[':egypt:']='🇪🇬'
+  ABBR_TABLE[':eight:']='8️⃣'
+  ABBR_TABLE[':eight_pointed_black_star:']='✴️'
+  ABBR_TABLE[':eight_spoked_asterisk:']='✳️'
+  ABBR_TABLE[':eject_button:']='⏏️'
+  ABBR_TABLE[':electric_plug:']='🔌'
+  ABBR_TABLE[':elephant:']='🐘'
+  ABBR_TABLE[':elevator:']='🛗'
+  ABBR_TABLE[':elf:']='🧝'
+  ABBR_TABLE[':elf_man:']='🧝‍♂️'
+  ABBR_TABLE[':elf_woman:']='🧝‍♀️'
+  ABBR_TABLE[':el_salvador:']='🇸🇻'
+  ABBR_TABLE[':e-mail:']='📧'
+  ABBR_TABLE[':email:']='📧'
+  ABBR_TABLE[':end:']='🔚'
+  ABBR_TABLE[':england:']='🏴󠁧󠁢󠁥󠁮󠁧󠁿'
+  ABBR_TABLE[':envelope:']='✉️'
+  ABBR_TABLE[':envelope_with_arrow:']='📩'
+  ABBR_TABLE[':equatorial_guinea:']='🇬🇶'
+  ABBR_TABLE[':eritrea:']='🇪🇷'
+  ABBR_TABLE[':es:']='🇪🇸'
+  ABBR_TABLE[':estonia:']='🇪🇪'
+  ABBR_TABLE[':ethiopia:']='🇪🇹'
+  ABBR_TABLE[':eu:']='🇪🇺'
+  ABBR_TABLE[':euro:']='💶'
+  ABBR_TABLE[':european_castle:']='🏰'
+  ABBR_TABLE[':european_post_office:']='🏤'
+  ABBR_TABLE[':european_union:']='🇪🇺'
+  ABBR_TABLE[':evergreen_tree:']='🌲'
+  ABBR_TABLE[':exclamation:']='❗'
+  ABBR_TABLE[':exploding_head:']='🤯'
+  ABBR_TABLE[':expressionless:']='😑'
+  ABBR_TABLE[':eye:']='👁️'
+  ABBR_TABLE[':eyeglasses:']='👓'
+  ABBR_TABLE[':eyes:']='👀'
+  ABBR_TABLE[':eye_speech_bubble:']='👁️‍🗨️'
+  ABBR_TABLE[':facepalm:']='🤦'
+  ABBR_TABLE[':facepunch:']='👊'
+  ABBR_TABLE[':face_with_head_bandage:']='🤕'
+  ABBR_TABLE[':face_with_thermometer:']='🤒'
+  ABBR_TABLE[':factory:']='🏭'
+  ABBR_TABLE[':factory_worker:']='🧑‍🏭'
+  ABBR_TABLE[':fairy:']='🧚'
+  ABBR_TABLE[':fairy_man:']='🧚‍♂️'
+  ABBR_TABLE[':fairy_woman:']='🧚‍♀️'
+  ABBR_TABLE[':falafel:']='🧆'
+  ABBR_TABLE[':falkland_islands:']='🇫🇰'
+  ABBR_TABLE[':fallen_leaf:']='🍂'
+  ABBR_TABLE[':family:']='👪'
+  ABBR_TABLE[':family_man_boy:']='👨‍👦'
+  ABBR_TABLE[':family_man_boy_boy:']='👨‍👦‍👦'
+  ABBR_TABLE[':family_man_girl:']='👨‍👧'
+  ABBR_TABLE[':family_man_girl_boy:']='👨‍👧‍👦'
+  ABBR_TABLE[':family_man_girl_girl:']='👨‍👧‍👧'
+  ABBR_TABLE[':family_man_man_boy:']='👨‍👨‍👦'
+  ABBR_TABLE[':family_man_man_boy_boy:']='👨‍👨‍👦‍👦'
+  ABBR_TABLE[':family_man_man_girl:']='👨‍👨‍👧'
+  ABBR_TABLE[':family_man_man_girl_boy:']='👨‍👨‍👧‍👦'
+  ABBR_TABLE[':family_man_man_girl_girl:']='👨‍👨‍👧‍👧'
+  ABBR_TABLE[':family_man_woman_boy:']='👨‍👩‍👦'
+  ABBR_TABLE[':family_man_woman_boy_boy:']='👨‍👩‍👦‍👦'
+  ABBR_TABLE[':family_man_woman_girl:']='👨‍👩‍👧'
+  ABBR_TABLE[':family_man_woman_girl_boy:']='👨‍👩‍👧‍👦'
+  ABBR_TABLE[':family_man_woman_girl_girl:']='👨‍👩‍👧‍👧'
+  ABBR_TABLE[':family_woman_boy:']='👩‍👦'
+  ABBR_TABLE[':family_woman_boy_boy:']='👩‍👦‍👦'
+  ABBR_TABLE[':family_woman_girl:']='👩‍👧'
+  ABBR_TABLE[':family_woman_girl_boy:']='👩‍👧‍👦'
+  ABBR_TABLE[':family_woman_girl_girl:']='👩‍👧‍👧'
+  ABBR_TABLE[':family_woman_woman_boy:']='👩‍👩‍👦'
+  ABBR_TABLE[':family_woman_woman_boy_boy:']='👩‍👩‍👦‍👦'
+  ABBR_TABLE[':family_woman_woman_girl:']='👩‍👩‍👧'
+  ABBR_TABLE[':family_woman_woman_girl_boy:']='👩‍👩‍👧‍👦'
+  ABBR_TABLE[':family_woman_woman_girl_girl:']='👩‍👩‍👧‍👧'
+  ABBR_TABLE[':farmer:']='🧑‍🌾'
+  ABBR_TABLE[':faroe_islands:']='🇫🇴'
+  ABBR_TABLE[':fast_forward:']='⏩'
+  ABBR_TABLE[':fax:']='📠'
+  ABBR_TABLE[':fearful:']='😨'
+  ABBR_TABLE[':feather:']='🪶'
+  ABBR_TABLE[':feet:']='🐾'
+  ABBR_TABLE[':female_detective:']='🕵️‍♀️'
+  ABBR_TABLE[':female_sign:']='♀️'
+  ABBR_TABLE[':ferris_wheel:']='🎡'
+  ABBR_TABLE[':ferry:']='⛴️'
+  ABBR_TABLE[':field_hockey:']='🏑'
+  ABBR_TABLE[':fiji:']='🇫🇯'
+  ABBR_TABLE[':file_cabinet:']='🗄️'
+  ABBR_TABLE[':file_folder:']='📁'
+  ABBR_TABLE[':film_projector:']='📽️'
+  ABBR_TABLE[':film_strip:']='🎞️'
+  ABBR_TABLE[':finland:']='🇫🇮'
+  ABBR_TABLE[':fire:']='🔥'
+  ABBR_TABLE[':firecracker:']='🧨'
+  ABBR_TABLE[':fire_engine:']='🚒'
+  ABBR_TABLE[':fire_extinguisher:']='🧯'
+  ABBR_TABLE[':firefighter:']='🧑‍🚒'
+  ABBR_TABLE[':fireworks:']='🎆'
+  ABBR_TABLE[':first_quarter_moon:']='🌓'
+  ABBR_TABLE[':first_quarter_moon_with_face:']='🌛'
+  ABBR_TABLE[':fish:']='🐟'
+  ABBR_TABLE[':fish_cake:']='🍥'
+  ABBR_TABLE[':fishing_pole_and_fish:']='🎣'
+  ABBR_TABLE[':fist:']='✊'
+  ABBR_TABLE[':fist_left:']='🤛'
+  ABBR_TABLE[':fist_oncoming:']='👊'
+  ABBR_TABLE[':fist_raised:']='✊'
+  ABBR_TABLE[':fist_right:']='🤜'
+  ABBR_TABLE[':five:']='5️⃣'
+  ABBR_TABLE[':flags:']='🎏'
+  ABBR_TABLE[':flamingo:']='🦩'
+  ABBR_TABLE[':flashlight:']='🔦'
+  ABBR_TABLE[':flatbread:']='🫓'
+  ABBR_TABLE[':flat_shoe:']='🥿'
+  ABBR_TABLE[':fleur_de_lis:']='⚜️'
+  ABBR_TABLE[':flight_arrival:']='🛬'
+  ABBR_TABLE[':flight_departure:']='🛫'
+  ABBR_TABLE[':flipper:']='🐬'
+  ABBR_TABLE[':floppy_disk:']='💾'
+  ABBR_TABLE[':flower_playing_cards:']='🎴'
+  ABBR_TABLE[':flushed:']='😳'
+  ABBR_TABLE[':fly:']='🪰'
+  ABBR_TABLE[':flying_disc:']='🥏'
+  ABBR_TABLE[':flying_saucer:']='🛸'
+  ABBR_TABLE[':fog:']='🌫️'
+  ABBR_TABLE[':foggy:']='🌁'
+  ABBR_TABLE[':fondue:']='🫕'
+  ABBR_TABLE[':foot:']='🦶'
+  ABBR_TABLE[':football:']='🏈'
+  ABBR_TABLE[':footprints:']='👣'
+  ABBR_TABLE[':fork_and_knife:']='🍴'
+  ABBR_TABLE[':fortune_cookie:']='🥠'
+  ABBR_TABLE[':fountain:']='⛲'
+  ABBR_TABLE[':fountain_pen:']='🖋️'
+  ABBR_TABLE[':four:']='4️⃣'
+  ABBR_TABLE[':four_leaf_clover:']='🍀'
+  ABBR_TABLE[':fox_face:']='🦊'
+  ABBR_TABLE[':fr:']='🇫🇷'
+  ABBR_TABLE[':framed_picture:']='🖼️'
+  ABBR_TABLE[':free:']='🆓'
+  ABBR_TABLE[':french_guiana:']='🇬🇫'
+  ABBR_TABLE[':french_polynesia:']='🇵🇫'
+  ABBR_TABLE[':french_southern_territories:']='🇹🇫'
+  ABBR_TABLE[':fried_egg:']='🍳'
+  ABBR_TABLE[':fried_shrimp:']='🍤'
+  ABBR_TABLE[':fries:']='🍟'
+  ABBR_TABLE[':frog:']='🐸'
+  ABBR_TABLE[':frowning:']='😦'
+  ABBR_TABLE[':frowning_face:']='☹️'
+  ABBR_TABLE[':frowning_man:']='🙍‍♂️'
+  ABBR_TABLE[':frowning_person:']='🙍'
+  ABBR_TABLE[':frowning_woman:']='🙍‍♀️'
+  ABBR_TABLE[':fu:']='🖕'
+  ABBR_TABLE[':fuelpump:']='⛽'
+  ABBR_TABLE[':full_moon:']='🌕'
+  ABBR_TABLE[':full_moon_with_face:']='🌝'
+  ABBR_TABLE[':funeral_urn:']='⚱️'
+  ABBR_TABLE[':gabon:']='🇬🇦'
+  ABBR_TABLE[':gambia:']='🇬🇲'
+  ABBR_TABLE[':game_die:']='🎲'
+  ABBR_TABLE[':garlic:']='🧄'
+  ABBR_TABLE[':gb:']='🇬🇧'
+  ABBR_TABLE[':gear:']='⚙️'
+  ABBR_TABLE[':gem:']='💎'
+  ABBR_TABLE[':gemini:']='♊'
+  ABBR_TABLE[':genie:']='🧞'
+  ABBR_TABLE[':genie_man:']='🧞‍♂️'
+  ABBR_TABLE[':genie_woman:']='🧞‍♀️'
+  ABBR_TABLE[':georgia:']='🇬🇪'
+  ABBR_TABLE[':ghana:']='🇬🇭'
+  ABBR_TABLE[':ghost:']='👻'
+  ABBR_TABLE[':gibraltar:']='🇬🇮'
+  ABBR_TABLE[':gift:']='🎁'
+  ABBR_TABLE[':gift_heart:']='💝'
+  ABBR_TABLE[':giraffe:']='🦒'
+  ABBR_TABLE[':girl:']='👧'
+  ABBR_TABLE[':globe_with_meridians:']='🌐'
+  ABBR_TABLE[':gloves:']='🧤'
+  ABBR_TABLE[':goal_net:']='🥅'
+  ABBR_TABLE[':goat:']='🐐'
+  ABBR_TABLE[':goggles:']='🥽'
+  ABBR_TABLE[':golf:']='⛳'
+  ABBR_TABLE[':golfing:']='🏌️'
+  ABBR_TABLE[':golfing_man:']='🏌️‍♂️'
+  ABBR_TABLE[':golfing_woman:']='🏌️‍♀️'
+  ABBR_TABLE[':gorilla:']='🦍'
+  ABBR_TABLE[':grapes:']='🍇'
+  ABBR_TABLE[':greece:']='🇬🇷'
+  ABBR_TABLE[':green_apple:']='🍏'
+  ABBR_TABLE[':green_book:']='📗'
+  ABBR_TABLE[':green_circle:']='🟢'
+  ABBR_TABLE[':green_heart:']='💚'
+  ABBR_TABLE[':greenland:']='🇬🇱'
+  ABBR_TABLE[':green_salad:']='🥗'
+  ABBR_TABLE[':green_square:']='🟩'
+  ABBR_TABLE[':grenada:']='🇬🇩'
+  ABBR_TABLE[':grey_exclamation:']='❕'
+  ABBR_TABLE[':grey_question:']='❔'
+  ABBR_TABLE[':grimacing:']='😬'
+  ABBR_TABLE[':grin:']='😁'
+  ABBR_TABLE[':grinning:']='😀'
+  ABBR_TABLE[':guadeloupe:']='🇬🇵'
+  ABBR_TABLE[':guam:']='🇬🇺'
+  ABBR_TABLE[':guard:']='💂'
+  ABBR_TABLE[':guardsman:']='💂‍♂️'
+  ABBR_TABLE[':guardswoman:']='💂‍♀️'
+  ABBR_TABLE[':guatemala:']='🇬🇹'
+  ABBR_TABLE[':guernsey:']='🇬🇬'
+  ABBR_TABLE[':guide_dog:']='🦮'
+  ABBR_TABLE[':guinea:']='🇬🇳'
+  ABBR_TABLE[':guinea_bissau:']='🇬🇼'
+  ABBR_TABLE[':guitar:']='🎸'
+  ABBR_TABLE[':gun:']='🔫'
+  ABBR_TABLE[':guyana:']='🇬🇾'
+  ABBR_TABLE[':haircut:']='💇'
+  ABBR_TABLE[':haircut_man:']='💇‍♂️'
+  ABBR_TABLE[':haircut_woman:']='💇‍♀️'
+  ABBR_TABLE[':haiti:']='🇭🇹'
+  ABBR_TABLE[':hamburger:']='🍔'
+  ABBR_TABLE[':hammer:']='🔨'
+  ABBR_TABLE[':hammer_and_pick:']='⚒️'
+  ABBR_TABLE[':hammer_and_wrench:']='🛠️'
+  ABBR_TABLE[':hamster:']='🐹'
+  ABBR_TABLE[':hand:']='✋'
+  ABBR_TABLE[':handbag:']='👜'
+  ABBR_TABLE[':handball_person:']='🤾'
+  ABBR_TABLE[':hand_over_mouth:']='🤭'
+  ABBR_TABLE[':handshake:']='🤝'
+  ABBR_TABLE[':hankey:']='💩'
+  ABBR_TABLE[':hash:']='#️⃣'
+  ABBR_TABLE[':hatched_chick:']='🐥'
+  ABBR_TABLE[':hatching_chick:']='🐣'
+  ABBR_TABLE[':headphones:']='🎧'
+  ABBR_TABLE[':headstone:']='🪦'
+  ABBR_TABLE[':health_worker:']='🧑‍⚕️'
+  ABBR_TABLE[':heard_mcdonald_islands:']='🇭🇲'
+  ABBR_TABLE[':hear_no_evil:']='🙉'
+  ABBR_TABLE[':heart:']='❤️'
+  ABBR_TABLE[':heartbeat:']='💓'
+  ABBR_TABLE[':heart_decoration:']='💟'
+  ABBR_TABLE[':heart_eyes:']='😍'
+  ABBR_TABLE[':heart_eyes_cat:']='😻'
+  ABBR_TABLE[':heartpulse:']='💗'
+  ABBR_TABLE[':hearts:']='♥️'
+  ABBR_TABLE[':heavy_check_mark:']='✔️'
+  ABBR_TABLE[':heavy_division_sign:']='➗'
+  ABBR_TABLE[':heavy_dollar_sign:']='💲'
+  ABBR_TABLE[':heavy_exclamation_mark:']='❗'
+  ABBR_TABLE[':heavy_heart_exclamation:']='❣️'
+  ABBR_TABLE[':heavy_minus_sign:']='➖'
+  ABBR_TABLE[':heavy_multiplication_x:']='✖️'
+  ABBR_TABLE[':heavy_plus_sign:']='➕'
+  ABBR_TABLE[':hedgehog:']='🦔'
+  ABBR_TABLE[':helicopter:']='🚁'
+  ABBR_TABLE[':herb:']='🌿'
+  ABBR_TABLE[':hibiscus:']='🌺'
+  ABBR_TABLE[':high_brightness:']='🔆'
+  ABBR_TABLE[':high_heel:']='👠'
+  ABBR_TABLE[':hiking_boot:']='🥾'
+  ABBR_TABLE[':hindu_temple:']='🛕'
+  ABBR_TABLE[':hippopotamus:']='🦛'
+  ABBR_TABLE[':hocho:']='🔪'
+  ABBR_TABLE[':hole:']='🕳️'
+  ABBR_TABLE[':honduras:']='🇭🇳'
+  ABBR_TABLE[':honeybee:']='🐝'
+  ABBR_TABLE[':honey_pot:']='🍯'
+  ABBR_TABLE[':hong_kong:']='🇭🇰'
+  ABBR_TABLE[':hook:']='🪝'
+  ABBR_TABLE[':horse:']='🐴'
+  ABBR_TABLE[':horse_racing:']='🏇'
+  ABBR_TABLE[':hospital:']='🏥'
+  ABBR_TABLE[':hotdog:']='🌭'
+  ABBR_TABLE[':hotel:']='🏨'
+  ABBR_TABLE[':hot_face:']='🥵'
+  ABBR_TABLE[':hot_pepper:']='🌶️'
+  ABBR_TABLE[':hotsprings:']='♨️'
+  ABBR_TABLE[':hourglass:']='⌛'
+  ABBR_TABLE[':hourglass_flowing_sand:']='⏳'
+  ABBR_TABLE[':house:']='🏠'
+  ABBR_TABLE[':houses:']='🏘️'
+  ABBR_TABLE[':house_with_garden:']='🏡'
+  ABBR_TABLE[':hugs:']='🤗'
+  ABBR_TABLE[':hungary:']='🇭🇺'
+  ABBR_TABLE[':hushed:']='😯'
+  ABBR_TABLE[':hut:']='🛖'
+  ABBR_TABLE[':ice_cream:']='🍨'
+  ABBR_TABLE[':icecream:']='🍦'
+  ABBR_TABLE[':ice_cube:']='🧊'
+  ABBR_TABLE[':ice_hockey:']='🏒'
+  ABBR_TABLE[':iceland:']='🇮🇸'
+  ABBR_TABLE[':ice_skate:']='⛸️'
+  ABBR_TABLE[':ideograph_advantage:']='🉐'
+  ABBR_TABLE[':id:']='🆔'
+  ABBR_TABLE[':imp:']='👿'
+  ABBR_TABLE[':inbox_tray:']='📥'
+  ABBR_TABLE[':incoming_envelope:']='📨'
+  ABBR_TABLE[':india:']='🇮🇳'
+  ABBR_TABLE[':indonesia:']='🇮🇩'
+  ABBR_TABLE[':infinity:']='♾️'
+  ABBR_TABLE[':information_desk_person:']='💁'
+  ABBR_TABLE[':information_source:']='ℹ️'
+  ABBR_TABLE[':innocent:']='😇'
+  ABBR_TABLE[':interrobang:']='⁉️'
+  ABBR_TABLE[':iphone:']='📱'
+  ABBR_TABLE[':iran:']='🇮🇷'
+  ABBR_TABLE[':iraq:']='🇮🇶'
+  ABBR_TABLE[':ireland:']='🇮🇪'
+  ABBR_TABLE[':isle_of_man:']='🇮🇲'
+  ABBR_TABLE[':israel:']='🇮🇱'
+  ABBR_TABLE[':it:']='🇮🇹'
+  ABBR_TABLE[':izakaya_lantern:']='🏮'
+  ABBR_TABLE[':jack_o_lantern:']='🎃'
+  ABBR_TABLE[':jamaica:']='🇯🇲'
+  ABBR_TABLE[':japan:']='🗾'
+  ABBR_TABLE[':japanese_castle:']='🏯'
+  ABBR_TABLE[':japanese_goblin:']='👺'
+  ABBR_TABLE[':japanese_ogre:']='👹'
+  ABBR_TABLE[':jeans:']='👖'
+  ABBR_TABLE[':jersey:']='🇯🇪'
+  ABBR_TABLE[':jigsaw:']='🧩'
+  ABBR_TABLE[':jordan:']='🇯🇴'
+  ABBR_TABLE[':joy:']='😂'
+  ABBR_TABLE[':joy_cat:']='😹'
+  ABBR_TABLE[':joystick:']='🕹️'
+  ABBR_TABLE[':jp:']='🇯🇵'
+  ABBR_TABLE[':judge:']='🧑‍⚖️'
+  ABBR_TABLE[':juggling_person:']='🤹'
+  ABBR_TABLE[':kaaba:']='🕋'
+  ABBR_TABLE[':kangaroo:']='🦘'
+  ABBR_TABLE[':kazakhstan:']='🇰🇿'
+  ABBR_TABLE[':kenya:']='🇰🇪'
+  ABBR_TABLE[':key:']='🔑'
+  ABBR_TABLE[':keyboard:']='⌨️'
+  ABBR_TABLE[':keycap_ten:']='🔟'
+  ABBR_TABLE[':kick_scooter:']='🛴'
+  ABBR_TABLE[':kimono:']='👘'
+  ABBR_TABLE[':kiribati:']='🇰🇮'
+  ABBR_TABLE[':kiss:']='💋'
+  ABBR_TABLE[':kissing:']='😗'
+  ABBR_TABLE[':kissing_cat:']='😽'
+  ABBR_TABLE[':kissing_closed_eyes:']='😚'
+  ABBR_TABLE[':kissing_heart:']='😘'
+  ABBR_TABLE[':kissing_smiling_eyes:']='😙'
+  ABBR_TABLE[':kite:']='🪁'
+  ABBR_TABLE[':kiwi_fruit:']='🥝'
+  ABBR_TABLE[':kneeling_man:']='🧎‍♂️'
+  ABBR_TABLE[':kneeling_person:']='🧎'
+  ABBR_TABLE[':kneeling_woman:']='🧎‍♀️'
+  ABBR_TABLE[':knife:']='🔪'
+  ABBR_TABLE[':knot:']='🪢'
+  ABBR_TABLE[':koala:']='🐨'
+  ABBR_TABLE[':koko:']='🈁'
+  ABBR_TABLE[':kosovo:']='🇽🇰'
+  ABBR_TABLE[':kr:']='🇰🇷'
+  ABBR_TABLE[':kuwait:']='🇰🇼'
+  ABBR_TABLE[':kyrgyzstan:']='🇰🇬'
+  ABBR_TABLE[':lab_coat:']='🥼'
+  ABBR_TABLE[':label:']='🏷️'
+  ABBR_TABLE[':lacrosse:']='🥍'
+  ABBR_TABLE[':ladder:']='🪜'
+  ABBR_TABLE[':lady_beetle:']='🐞'
+  ABBR_TABLE[':lantern:']='🏮'
+  ABBR_TABLE[':laos:']='🇱🇦'
+  ABBR_TABLE[':large_blue_circle:']='🔵'
+  ABBR_TABLE[':large_blue_diamond:']='🔷'
+  ABBR_TABLE[':large_orange_diamond:']='🔶'
+  ABBR_TABLE[':last_quarter_moon:']='🌗'
+  ABBR_TABLE[':last_quarter_moon_with_face:']='🌜'
+  ABBR_TABLE[':latin_cross:']='✝️'
+  ABBR_TABLE[':latvia:']='🇱🇻'
+  ABBR_TABLE[':laughing:']='😆'
+  ABBR_TABLE[':leafy_green:']='🥬'
+  ABBR_TABLE[':leaves:']='🍃'
+  ABBR_TABLE[':lebanon:']='🇱🇧'
+  ABBR_TABLE[':ledger:']='📒'
+  ABBR_TABLE[':left_luggage:']='🛅'
+  ABBR_TABLE[':left_right_arrow:']='↔️'
+  ABBR_TABLE[':left_speech_bubble:']='🗨️'
+  ABBR_TABLE[':leftwards_arrow_with_hook:']='↩️'
+  ABBR_TABLE[':leg:']='🦵'
+  ABBR_TABLE[':lemon:']='🍋'
+  ABBR_TABLE[':leo:']='♌'
+  ABBR_TABLE[':leopard:']='🐆'
+  ABBR_TABLE[':lesotho:']='🇱🇸'
+  ABBR_TABLE[':level_slider:']='🎚️'
+  ABBR_TABLE[':liberia:']='🇱🇷'
+  ABBR_TABLE[':libra:']='♎'
+  ABBR_TABLE[':libya:']='🇱🇾'
+  ABBR_TABLE[':liechtenstein:']='🇱🇮'
+  ABBR_TABLE[':light_rail:']='🚈'
+  ABBR_TABLE[':link:']='🔗'
+  ABBR_TABLE[':lion:']='🦁'
+  ABBR_TABLE[':lips:']='👄'
+  ABBR_TABLE[':lipstick:']='💄'
+  ABBR_TABLE[':lithuania:']='🇱🇹'
+  ABBR_TABLE[':lizard:']='🦎'
+  ABBR_TABLE[':llama:']='🦙'
+  ABBR_TABLE[':lobster:']='🦞'
+  ABBR_TABLE[':lock:']='🔒'
+  ABBR_TABLE[':lock_with_ink_pen:']='🔏'
+  ABBR_TABLE[':lollipop:']='🍭'
+  ABBR_TABLE[':long_drum:']='🪘'
+  ABBR_TABLE[':loop:']='➿'
+  ABBR_TABLE[':lotion_bottle:']='🧴'
+  ABBR_TABLE[':lotus_position:']='🧘'
+  ABBR_TABLE[':lotus_position_man:']='🧘‍♂️'
+  ABBR_TABLE[':lotus_position_woman:']='🧘‍♀️'
+  ABBR_TABLE[':loud_sound:']='🔊'
+  ABBR_TABLE[':loudspeaker:']='📢'
+  ABBR_TABLE[':love:']='❤️'
+  ABBR_TABLE[':love_hotel:']='🏩'
+  ABBR_TABLE[':love_letter:']='💌'
+  ABBR_TABLE[':love_you_gesture:']='🤟'
+  ABBR_TABLE[':low_brightness:']='🔅'
+  ABBR_TABLE[':luggage:']='🧳'
+  ABBR_TABLE[':lungs:']='🫁'
+  ABBR_TABLE[':luxembourg:']='🇱🇺'
+  ABBR_TABLE[':lying_face:']='🤥'
+  ABBR_TABLE[':macau:']='🇲🇴'
+  ABBR_TABLE[':macedonia:']='🇲🇰'
+  ABBR_TABLE[':madagascar:']='🇲🇬'
+  ABBR_TABLE[':mag:']='🔍'
+  ABBR_TABLE[':mage:']='🧙'
+  ABBR_TABLE[':mage_man:']='🧙‍♂️'
+  ABBR_TABLE[':mage_woman:']='🧙‍♀️'
+  ABBR_TABLE[':magic_wand:']='🪄'
+  ABBR_TABLE[':magnet:']='🧲'
+  ABBR_TABLE[':mag_right:']='🔎'
+  ABBR_TABLE[':mahjong:']='🀄'
+  ABBR_TABLE[':mailbox:']='📫'
+  ABBR_TABLE[':mailbox_closed:']='📪'
+  ABBR_TABLE[':mailbox_with_mail:']='📬'
+  ABBR_TABLE[':mailbox_with_no_mail:']='📭'
+  ABBR_TABLE[':malawi:']='🇲🇼'
+  ABBR_TABLE[':malaysia:']='🇲🇾'
+  ABBR_TABLE[':maldives:']='🇲🇻'
+  ABBR_TABLE[':male_detective:']='🕵️‍♂️'
+  ABBR_TABLE[':male_sign:']='♂️'
+  ABBR_TABLE[':mali:']='🇲🇱'
+  ABBR_TABLE[':malta:']='🇲🇹'
+  ABBR_TABLE[':mammoth:']='🦣'
+  ABBR_TABLE[':man:']='👨'
+  ABBR_TABLE[':man_artist:']='👨‍🎨'
+  ABBR_TABLE[':man_astronaut:']='👨‍🚀'
+  ABBR_TABLE[':man_cartwheeling:']='🤸‍♂️'
+  ABBR_TABLE[':man_cook:']='👨‍🍳'
+  ABBR_TABLE[':man_dancing:']='🕺'
+  ABBR_TABLE[':mandarin:']='🍊'
+  ABBR_TABLE[':man_facepalming:']='🤦‍♂️'
+  ABBR_TABLE[':man_factory_worker:']='👨‍🏭'
+  ABBR_TABLE[':man_farmer:']='👨‍🌾'
+  ABBR_TABLE[':man_feeding_baby:']='👨‍🍼'
+  ABBR_TABLE[':man_firefighter:']='👨‍🚒'
+  ABBR_TABLE[':mango:']='🥭'
+  ABBR_TABLE[':man_health_worker:']='👨‍⚕️'
+  ABBR_TABLE[':man_in_manual_wheelchair:']='👨‍🦽'
+  ABBR_TABLE[':man_in_motorized_wheelchair:']='👨‍🦼'
+  ABBR_TABLE[':man_in_tuxedo:']='🤵‍♂️'
+  ABBR_TABLE[':man_judge:']='👨‍⚖️'
+  ABBR_TABLE[':man_juggling:']='🤹‍♂️'
+  ABBR_TABLE[':man_mechanic:']='👨‍🔧'
+  ABBR_TABLE[':man_office_worker:']='👨‍💼'
+  ABBR_TABLE[':man_pilot:']='👨‍✈️'
+  ABBR_TABLE[':man_playing_handball:']='🤾‍♂️'
+  ABBR_TABLE[':man_playing_water_polo:']='🤽‍♂️'
+  ABBR_TABLE[':man_scientist:']='👨‍🔬'
+  ABBR_TABLE[':man_shrugging:']='🤷‍♂️'
+  ABBR_TABLE[':man_singer:']='👨‍🎤'
+  ABBR_TABLE[':mans_shoe:']='👞'
+  ABBR_TABLE[':man_student:']='👨‍🎓'
+  ABBR_TABLE[':man_teacher:']='👨‍🏫'
+  ABBR_TABLE[':man_technologist:']='👨‍💻'
+  ABBR_TABLE[':mantelpiece_clock:']='🕰️'
+  ABBR_TABLE[':manual_wheelchair:']='🦽'
+  ABBR_TABLE[':man_with_gua_pi_mao:']='👲'
+  ABBR_TABLE[':man_with_probing_cane:']='👨‍🦯'
+  ABBR_TABLE[':man_with_turban:']='👳‍♂️'
+  ABBR_TABLE[':man_with_veil:']='👰‍♂️'
+  ABBR_TABLE[':maple_leaf:']='🍁'
+  ABBR_TABLE[':marshall_islands:']='🇲🇭'
+  ABBR_TABLE[':martial_arts_uniform:']='🥋'
+  ABBR_TABLE[':martinique:']='🇲🇶'
+  ABBR_TABLE[':mask:']='😷'
+  ABBR_TABLE[':massage:']='💆'
+  ABBR_TABLE[':massage_man:']='💆‍♂️'
+  ABBR_TABLE[':massage_woman:']='💆‍♀️'
+  ABBR_TABLE[':mate:']='🧉'
+  ABBR_TABLE[':mauritania:']='🇲🇷'
+  ABBR_TABLE[':mauritius:']='🇲🇺'
+  ABBR_TABLE[':mayotte:']='🇾🇹'
+  ABBR_TABLE[':meat_on_bone:']='🍖'
+  ABBR_TABLE[':mechanic:']='🧑‍🔧'
+  ABBR_TABLE[':mechanical_arm:']='🦾'
+  ABBR_TABLE[':mechanical_leg:']='🦿'
+  ABBR_TABLE[':medal_military:']='🎖️'
+  ABBR_TABLE[':medal_sports:']='🏅'
+  ABBR_TABLE[':medical_symbol:']='⚕️'
+  ABBR_TABLE[':mega:']='📣'
+  ABBR_TABLE[':melon:']='🍈'
+  ABBR_TABLE[':memo:']='📝'
+  ABBR_TABLE[':menorah:']='🕎'
+  ABBR_TABLE[':mens:']='🚹'
+  ABBR_TABLE[':men_wrestling:']='🤼‍♂️'
+  ABBR_TABLE[':mermaid:']='🧜‍♀️'
+  ABBR_TABLE[':merman:']='🧜‍♂️'
+  ABBR_TABLE[':merperson:']='🧜'
+  ABBR_TABLE[':metal:']='🤘'
+  ABBR_TABLE[':metro:']='🚇'
+  ABBR_TABLE[':mexico:']='🇲🇽'
+  ABBR_TABLE[':microbe:']='🦠'
+  ABBR_TABLE[':micronesia:']='🇫🇲'
+  ABBR_TABLE[':microphone:']='🎤'
+  ABBR_TABLE[':microscope:']='🔬'
+  ABBR_TABLE[':middle_finger:']='🖕'
+  ABBR_TABLE[':military_helmet:']='🪖'
+  ABBR_TABLE[':milk_glass:']='🥛'
+  ABBR_TABLE[':milky_way:']='🌌'
+  ABBR_TABLE[':minibus:']='🚐'
+  ABBR_TABLE[':minidisc:']='💽'
+  ABBR_TABLE[':mirror:']='🪞'
+  ABBR_TABLE[':m:']='Ⓜ️'
+  ABBR_TABLE[':mobile_phone_off:']='📴'
+  ABBR_TABLE[':moldova:']='🇲🇩'
+  ABBR_TABLE[':monaco:']='🇲🇨'
+  ABBR_TABLE[':moneybag:']='💰'
+  ABBR_TABLE[':money_mouth_face:']='🤑'
+  ABBR_TABLE[':money_with_wings:']='💸'
+  ABBR_TABLE[':mongolia:']='🇲🇳'
+  ABBR_TABLE[':monkey:']='🐒'
+  ABBR_TABLE[':monkey_face:']='🐵'
+  ABBR_TABLE[':monocle_face:']='🧐'
+  ABBR_TABLE[':monorail:']='🚝'
+  ABBR_TABLE[':montenegro:']='🇲🇪'
+  ABBR_TABLE[':montserrat:']='🇲🇸'
+  ABBR_TABLE[':moon:']='🌔'
+  ABBR_TABLE[':moon_cake:']='🥮'
+  ABBR_TABLE[':morocco:']='🇲🇦'
+  ABBR_TABLE[':mortar_board:']='🎓'
+  ABBR_TABLE[':mosque:']='🕌'
+  ABBR_TABLE[':mosquito:']='🦟'
+  ABBR_TABLE[':motor_boat:']='🛥️'
+  ABBR_TABLE[':motorcycle:']='🏍️'
+  ABBR_TABLE[':motorized_wheelchair:']='🦼'
+  ABBR_TABLE[':motor_scooter:']='🛵'
+  ABBR_TABLE[':motorway:']='🛣️'
+  ABBR_TABLE[':mountain:']='⛰️'
+  ABBR_TABLE[':mountain_bicyclist:']='🚵'
+  ABBR_TABLE[':mountain_biking_man:']='🚵‍♂️'
+  ABBR_TABLE[':mountain_biking_woman:']='🚵‍♀️'
+  ABBR_TABLE[':mountain_cableway:']='🚠'
+  ABBR_TABLE[':mountain_railway:']='🚞'
+  ABBR_TABLE[':mountain_snow:']='🏔️'
+  ABBR_TABLE[':mount_fuji:']='🗻'
+  ABBR_TABLE[':mouse:']='🐭'
+  ABBR_TABLE[':mouse2:']='🐁'
+  ABBR_TABLE[':mouse_trap:']='🪤'
+  ABBR_TABLE[':movie_camera:']='🎥'
+  ABBR_TABLE[':moyai:']='🗿'
+  ABBR_TABLE[':mozambique:']='🇲🇿'
+  ABBR_TABLE[':mrs_claus:']='🤶'
+  ABBR_TABLE[':muscle:']='💪'
+  ABBR_TABLE[':mushroom:']='🍄'
+  ABBR_TABLE[':musical_keyboard:']='🎹'
+  ABBR_TABLE[':musical_note:']='🎵'
+  ABBR_TABLE[':musical_score:']='🎼'
+  ABBR_TABLE[':mute:']='🔇'
+  ABBR_TABLE[':mx_claus:']='🧑‍🎄'
+  ABBR_TABLE[':myanmar:']='🇲🇲'
+  ABBR_TABLE[':nail_care:']='💅'
+  ABBR_TABLE[':name_badge:']='📛'
+  ABBR_TABLE[':namibia:']='🇳🇦'
+  ABBR_TABLE[':national_park:']='🏞️'
+  ABBR_TABLE[':nauru:']='🇳🇷'
+  ABBR_TABLE[':nauseated_face:']='🤢'
+  ABBR_TABLE[':nazar_amulet:']='🧿'
+  ABBR_TABLE[':necktie:']='👔'
+  ABBR_TABLE[':negative_squared_cross_mark:']='❎'
+  ABBR_TABLE[':nepal:']='🇳🇵'
+  ABBR_TABLE[':nerd_face:']='🤓'
+  ABBR_TABLE[':nesting_dolls:']='🪆'
+  ABBR_TABLE[':netherlands:']='🇳🇱'
+  ABBR_TABLE[':neutral_face:']='😐'
+  ABBR_TABLE[':new_caledonia:']='🇳🇨'
+  ABBR_TABLE[':new_moon:']='🌑'
+  ABBR_TABLE[':new_moon_with_face:']='🌚'
+  ABBR_TABLE[':new:']='🆕'
+  ABBR_TABLE[':newspaper:']='📰'
+  ABBR_TABLE[':newspaper_roll:']='🗞️'
+  ABBR_TABLE[':new_zealand:']='🇳🇿'
+  ABBR_TABLE[':next_track_button:']='⏭️'
+  ABBR_TABLE[':ng_man:']='🙅‍♂️'
+  ABBR_TABLE[':ng:']='🆖'
+  ABBR_TABLE[':ng_woman:']='🙅‍♀️'
+  ABBR_TABLE[':nicaragua:']='🇳🇮'
+  ABBR_TABLE[':niger:']='🇳🇪'
+  ABBR_TABLE[':nigeria:']='🇳🇬'
+  ABBR_TABLE[':night_with_stars:']='🌃'
+  ABBR_TABLE[':nine:']='9️⃣'
+  ABBR_TABLE[':ninja:']='🥷'
+  ABBR_TABLE[':niue:']='🇳🇺'
+  ABBR_TABLE[':no_bell:']='🔕'
+  ABBR_TABLE[':no_bicycles:']='🚳'
+  ABBR_TABLE[':no_entry:']='⛔'
+  ABBR_TABLE[':no_entry_sign:']='🚫'
+  ABBR_TABLE[':no_good:']='🙅'
+  ABBR_TABLE[':no_good_man:']='🙅‍♂️'
+  ABBR_TABLE[':no_good_woman:']='🙅‍♀️'
+  ABBR_TABLE[':no_mobile_phones:']='📵'
+  ABBR_TABLE[':no_mouth:']='😶'
+  ABBR_TABLE[':non-potable_water:']='🚱'
+  ABBR_TABLE[':no_pedestrians:']='🚷'
+  ABBR_TABLE[':norfolk_island:']='🇳🇫'
+  ABBR_TABLE[':northern_mariana_islands:']='🇲🇵'
+  ABBR_TABLE[':north_korea:']='🇰🇵'
+  ABBR_TABLE[':norway:']='🇳🇴'
+  ABBR_TABLE[':nose:']='👃'
+  ABBR_TABLE[':no_smoking:']='🚭'
+  ABBR_TABLE[':notebook:']='📓'
+  ABBR_TABLE[':notebook_with_decorative_cover:']='📔'
+  ABBR_TABLE[':notes:']='🎶'
+  ABBR_TABLE[':nut_and_bolt:']='🔩'
+  ABBR_TABLE[':o:']='⭕'
+  ABBR_TABLE[':o2:']='🅾️'
+  ABBR_TABLE[':ocean:']='🌊'
+  ABBR_TABLE[':octopus:']='🐙'
+  ABBR_TABLE[':oden:']='🍢'
+  ABBR_TABLE[':office:']='🏢'
+  ABBR_TABLE[':office_worker:']='🧑‍💼'
+  ABBR_TABLE[':oil_drum:']='🛢️'
+  ABBR_TABLE[':ok_hand:']='👌'
+  ABBR_TABLE[':ok_man:']='🙆‍♂️'
+  ABBR_TABLE[':ok:']='🆗'
+  ABBR_TABLE[':ok_person:']='🙆'
+  ABBR_TABLE[':ok_woman:']='🙆‍♀️'
+  ABBR_TABLE[':older_adult:']='🧓'
+  ABBR_TABLE[':older_man:']='👴'
+  ABBR_TABLE[':older_woman:']='👵'
+  ABBR_TABLE[':old_key:']='🗝️'
+  ABBR_TABLE[':olive:']='🫒'
+  ABBR_TABLE[':om:']='🕉️'
+  ABBR_TABLE[':oman:']='🇴🇲'
+  ABBR_TABLE[':on:']='🔛'
+  ABBR_TABLE[':oncoming_automobile:']='🚘'
+  ABBR_TABLE[':oncoming_bus:']='🚍'
+  ABBR_TABLE[':oncoming_police_car:']='🚔'
+  ABBR_TABLE[':oncoming_taxi:']='🚖'
+  ABBR_TABLE[':one:']='1️⃣'
+  ABBR_TABLE[':one_piece_swimsuit:']='🩱'
+  ABBR_TABLE[':onion:']='🧅'
+  ABBR_TABLE[':open_book:']='📖'
+  ABBR_TABLE[':open_file_folder:']='📂'
+  ABBR_TABLE[':open_hands:']='👐'
+  ABBR_TABLE[':open_mouth:']='😮'
+  ABBR_TABLE[':open_umbrella:']='☂️'
+  ABBR_TABLE[':ophiuchus:']='⛎'
+  ABBR_TABLE[':orange:']='🍊'
+  ABBR_TABLE[':orange_book:']='📙'
+  ABBR_TABLE[':orange_circle:']='🟠'
+  ABBR_TABLE[':orange_heart:']='🧡'
+  ABBR_TABLE[':orange_square:']='🟧'
+  ABBR_TABLE[':orangutan:']='🦧'
+  ABBR_TABLE[':orthodox_cross:']='☦️'
+  ABBR_TABLE[':otter:']='🦦'
+  ABBR_TABLE[':outbox_tray:']='📤'
+  ABBR_TABLE[':owl:']='🦉'
+  ABBR_TABLE[':ox:']='🐂'
+  ABBR_TABLE[':oyster:']='🦪'
+  ABBR_TABLE[':package:']='📦'
+  ABBR_TABLE[':page_facing_up:']='📄'
+  ABBR_TABLE[':pager:']='📟'
+  ABBR_TABLE[':page_with_curl:']='📃'
+  ABBR_TABLE[':paintbrush:']='🖌️'
+  ABBR_TABLE[':pakistan:']='🇵🇰'
+  ABBR_TABLE[':palau:']='🇵🇼'
+  ABBR_TABLE[':palestinian_territories:']='🇵🇸'
+  ABBR_TABLE[':palms_up_together:']='🤲'
+  ABBR_TABLE[':palm_tree:']='🌴'
+  ABBR_TABLE[':panama:']='🇵🇦'
+  ABBR_TABLE[':pancakes:']='🥞'
+  ABBR_TABLE[':panda_face:']='🐼'
+  ABBR_TABLE[':paperclip:']='📎'
+  ABBR_TABLE[':paperclips:']='🖇️'
+  ABBR_TABLE[':papua_new_guinea:']='🇵🇬'
+  ABBR_TABLE[':parachute:']='🪂'
+  ABBR_TABLE[':paraguay:']='🇵🇾'
+  ABBR_TABLE[':parasol_on_ground:']='⛱️'
+  ABBR_TABLE[':parking:']='🅿️'
+  ABBR_TABLE[':parrot:']='🦜'
+  ABBR_TABLE[':part_alternation_mark:']='〽️'
+  ABBR_TABLE[':partly_sunny:']='⛅'
+  ABBR_TABLE[':partying_face:']='🥳'
+  ABBR_TABLE[':passenger_ship:']='🛳️'
+  ABBR_TABLE[':passport_control:']='🛂'
+  ABBR_TABLE[':pause_button:']='⏸️'
+  ABBR_TABLE[':paw_prints:']='🐾'
+  ABBR_TABLE[':peace_symbol:']='☮️'
+  ABBR_TABLE[':peach:']='🍑'
+  ABBR_TABLE[':peacock:']='🦚'
+  ABBR_TABLE[':peanuts:']='🥜'
+  ABBR_TABLE[':pear:']='🍐'
+  ABBR_TABLE[':pen:']='🖊️'
+  ABBR_TABLE[':pencil:']='📝'
+  ABBR_TABLE[':pencil2:']='✏️'
+  ABBR_TABLE[':penguin:']='🐧'
+  ABBR_TABLE[':pensive:']='😔'
+  ABBR_TABLE[':people_holding_hands:']='🧑‍🤝‍🧑'
+  ABBR_TABLE[':people_hugging:']='🫂'
+  ABBR_TABLE[':performing_arts:']='🎭'
+  ABBR_TABLE[':persevere:']='😣'
+  ABBR_TABLE[':person_bald:']='🧑‍🦲'
+  ABBR_TABLE[':person_curly_hair:']='🧑‍🦱'
+  ABBR_TABLE[':person_feeding_baby:']='🧑‍🍼'
+  ABBR_TABLE[':person_fencing:']='🤺'
+  ABBR_TABLE[':person_in_manual_wheelchair:']='🧑‍🦽'
+  ABBR_TABLE[':person_in_motorized_wheelchair:']='🧑‍🦼'
+  ABBR_TABLE[':person_in_tuxedo:']='🤵'
+  ABBR_TABLE[':person_red_hair:']='🧑‍🦰'
+  ABBR_TABLE[':person_white_hair:']='🧑‍🦳'
+  ABBR_TABLE[':person_with_probing_cane:']='🧑‍🦯'
+  ABBR_TABLE[':person_with_turban:']='👳'
+  ABBR_TABLE[':person_with_veil:']='👰'
+  ABBR_TABLE[':peru:']='🇵🇪'
+  ABBR_TABLE[':petri_dish:']='🧫'
+  ABBR_TABLE[':philippines:']='🇵🇭'
+  ABBR_TABLE[':phone:']='☎️'
+  ABBR_TABLE[':pick:']='⛏️'
+  ABBR_TABLE[':pickup_truck:']='🛻'
+  ABBR_TABLE[':pie:']='🥧'
+  ABBR_TABLE[':pig:']='🐷'
+  ABBR_TABLE[':pig2:']='🐖'
+  ABBR_TABLE[':pig_nose:']='🐽'
+  ABBR_TABLE[':pill:']='💊'
+  ABBR_TABLE[':pilot:']='🧑‍✈️'
+  ABBR_TABLE[':pinata:']='🪅'
+  ABBR_TABLE[':pinched_fingers:']='🤌'
+  ABBR_TABLE[':pinching_hand:']='🤏'
+  ABBR_TABLE[':pineapple:']='🍍'
+  ABBR_TABLE[':ping_pong:']='🏓'
+  ABBR_TABLE[':pirate_flag:']='🏴‍☠️'
+  ABBR_TABLE[':pisces:']='♓'
+  ABBR_TABLE[':pitcairn_islands:']='🇵🇳'
+  ABBR_TABLE[':pizza:']='🍕'
+  ABBR_TABLE[':placard:']='🪧'
+  ABBR_TABLE[':place_of_worship:']='🛐'
+  ABBR_TABLE[':plate_with_cutlery:']='🍽️'
+  ABBR_TABLE[':play_or_pause_button:']='⏯️'
+  ABBR_TABLE[':pleading_face:']='🥺'
+  ABBR_TABLE[':plunger:']='🪠'
+  ABBR_TABLE[':point_down:']='👇'
+  ABBR_TABLE[':point_left:']='👈'
+  ABBR_TABLE[':point_right:']='👉'
+  ABBR_TABLE[':point_up:']='☝️'
+  ABBR_TABLE[':point_up_2:']='👆'
+  ABBR_TABLE[':poland:']='🇵🇱'
+  ABBR_TABLE[':polar_bear:']='🐻‍❄️'
+  ABBR_TABLE[':police_car:']='🚓'
+  ABBR_TABLE[':policeman:']='👮‍♂️'
+  ABBR_TABLE[':police_officer:']='👮'
+  ABBR_TABLE[':policewoman:']='👮‍♀️'
+  ABBR_TABLE[':poodle:']='🐩'
+  ABBR_TABLE[':poop:']='💩'
+  ABBR_TABLE[':popcorn:']='🍿'
+  ABBR_TABLE[':portugal:']='🇵🇹'
+  ABBR_TABLE[':postal_horn:']='📯'
+  ABBR_TABLE[':postbox:']='📮'
+  ABBR_TABLE[':post_office:']='🏣'
+  ABBR_TABLE[':potable_water:']='🚰'
+  ABBR_TABLE[':potato:']='🥔'
+  ABBR_TABLE[':potted_plant:']='🪴'
+  ABBR_TABLE[':pouch:']='👝'
+  ABBR_TABLE[':poultry_leg:']='🍗'
+  ABBR_TABLE[':pound:']='💷'
+  ABBR_TABLE[':pout:']='😡'
+  ABBR_TABLE[':pouting_cat:']='😾'
+  ABBR_TABLE[':pouting_face:']='🙎'
+  ABBR_TABLE[':pouting_man:']='🙎‍♂️'
+  ABBR_TABLE[':pouting_woman:']='🙎‍♀️'
+  ABBR_TABLE[':pray:']='🙏'
+  ABBR_TABLE[':prayer_beads:']='📿'
+  ABBR_TABLE[':pregnant_woman:']='🤰'
+  ABBR_TABLE[':pretzel:']='🥨'
+  ABBR_TABLE[':previous_track_button:']='⏮️'
+  ABBR_TABLE[':prince:']='🤴'
+  ABBR_TABLE[':princess:']='👸'
+  ABBR_TABLE[':printer:']='🖨️'
+  ABBR_TABLE[':probing_cane:']='🦯'
+  ABBR_TABLE[':puerto_rico:']='🇵🇷'
+  ABBR_TABLE[':punch:']='👊'
+  ABBR_TABLE[':purple_circle:']='🟣'
+  ABBR_TABLE[':purple_heart:']='💜'
+  ABBR_TABLE[':purple_square:']='🟪'
+  ABBR_TABLE[':purse:']='👛'
+  ABBR_TABLE[':pushpin:']='📌'
+  ABBR_TABLE[':put_litter_in_its_place:']='🚮'
+  ABBR_TABLE[':qatar:']='🇶🇦'
+  ABBR_TABLE[':question:']='❓'
+  ABBR_TABLE[':rabbit:']='🐰'
+  ABBR_TABLE[':rabbit2:']='🐇'
+  ABBR_TABLE[':raccoon:']='🦝'
+  ABBR_TABLE[':racehorse:']='🐎'
+  ABBR_TABLE[':racing_car:']='🏎️'
+  ABBR_TABLE[':radio:']='📻'
+  ABBR_TABLE[':radioactive:']='☢️'
+  ABBR_TABLE[':radio_button:']='🔘'
+  ABBR_TABLE[':rage:']='😡'
+  ABBR_TABLE[':railway_car:']='🚃'
+  ABBR_TABLE[':railway_track:']='🛤️'
+  ABBR_TABLE[':rainbow:']='🌈'
+  ABBR_TABLE[':rainbow_flag:']='🏳️‍🌈'
+  ABBR_TABLE[':raised_back_of_hand:']='🤚'
+  ABBR_TABLE[':raised_eyebrow:']='🤨'
+  ABBR_TABLE[':raised_hand:']='✋'
+  ABBR_TABLE[':raised_hands:']='🙌'
+  ABBR_TABLE[':raised_hand_with_fingers_splayed:']='🖐️'
+  ABBR_TABLE[':raising_hand:']='🙋'
+  ABBR_TABLE[':raising_hand_man:']='🙋‍♂️'
+  ABBR_TABLE[':raising_hand_woman:']='🙋‍♀️'
+  ABBR_TABLE[':ram:']='🐏'
+  ABBR_TABLE[':ramen:']='🍜'
+  ABBR_TABLE[':rat:']='🐀'
+  ABBR_TABLE[':razor:']='🪒'
+  ABBR_TABLE[':receipt:']='🧾'
+  ABBR_TABLE[':record_button:']='⏺️'
+  ABBR_TABLE[':recycle:']='♻️'
+  ABBR_TABLE[':red_car:']='🚗'
+  ABBR_TABLE[':red_circle:']='🔴'
+  ABBR_TABLE[':red_envelope:']='🧧'
+  ABBR_TABLE[':red_haired_man:']='👨‍🦰'
+  ABBR_TABLE[':red_haired_woman:']='👩‍🦰'
+  ABBR_TABLE[':red_square:']='🟥'
+  ABBR_TABLE[':registered:']='®️'
+  ABBR_TABLE[':relaxed:']='☺️'
+  ABBR_TABLE[':relieved:']='😌'
+  ABBR_TABLE[':reminder_ribbon:']='🎗️'
+  ABBR_TABLE[':repeat:']='🔁'
+  ABBR_TABLE[':repeat_one:']='🔂'
+  ABBR_TABLE[':rescue_worker_helmet:']='⛑️'
+  ABBR_TABLE[':restroom:']='🚻'
+  ABBR_TABLE[':reunion:']='🇷🇪'
+  ABBR_TABLE[':revolving_hearts:']='💞'
+  ABBR_TABLE[':rewind:']='⏪'
+  ABBR_TABLE[':rhinoceros:']='🦏'
+  ABBR_TABLE[':ribbon:']='🎀'
+  ABBR_TABLE[':rice:']='🍚'
+  ABBR_TABLE[':rice_ball:']='🍙'
+  ABBR_TABLE[':rice_cracker:']='🍘'
+  ABBR_TABLE[':rice_scene:']='🎑'
+  ABBR_TABLE[':right_anger_bubble:']='🗯️'
+  ABBR_TABLE[':ring:']='💍'
+  ABBR_TABLE[':ringed_planet:']='🪐'
+  ABBR_TABLE[':robot:']='🤖'
+  ABBR_TABLE[':rock:']='🪨'
+  ABBR_TABLE[':rocket:']='🚀'
+  ABBR_TABLE[':rofl:']='🤣'
+  ABBR_TABLE[':roller_coaster:']='🎢'
+  ABBR_TABLE[':roller_skate:']='🛼'
+  ABBR_TABLE[':roll_eyes:']='🙄'
+  ABBR_TABLE[':roll_of_paper:']='🧻'
+  ABBR_TABLE[':romania:']='🇷🇴'
+  ABBR_TABLE[':rooster:']='🐓'
+  ABBR_TABLE[':rose:']='🌹'
+  ABBR_TABLE[':rosette:']='🏵️'
+  ABBR_TABLE[':rotating_light:']='🚨'
+  ABBR_TABLE[':round_pushpin:']='📍'
+  ABBR_TABLE[':rowboat:']='🚣'
+  ABBR_TABLE[':rowing_man:']='🚣‍♂️'
+  ABBR_TABLE[':rowing_woman:']='🚣‍♀️'
+  ABBR_TABLE[':ru:']='🇷🇺'
+  ABBR_TABLE[':rugby_football:']='🏉'
+  ABBR_TABLE[':runner:']='🏃'
+  ABBR_TABLE[':running:']='🏃'
+  ABBR_TABLE[':running_man:']='🏃‍♂️'
+  ABBR_TABLE[':running_shirt_with_sash:']='🎽'
+  ABBR_TABLE[':running_woman:']='🏃‍♀️'
+  ABBR_TABLE[':rwanda:']='🇷🇼'
+  ABBR_TABLE[':safety_pin:']='🧷'
+  ABBR_TABLE[':safety_vest:']='🦺'
+  ABBR_TABLE[':sagittarius:']='♐'
+  ABBR_TABLE[':sailboat:']='⛵'
+  ABBR_TABLE[':sake:']='🍶'
+  ABBR_TABLE[':salt:']='🧂'
+  ABBR_TABLE[':samoa:']='🇼🇸'
+  ABBR_TABLE[':sandal:']='👡'
+  ABBR_TABLE[':sandwich:']='🥪'
+  ABBR_TABLE[':san_marino:']='🇸🇲'
+  ABBR_TABLE[':santa:']='🎅'
+  ABBR_TABLE[':sao_tome_principe:']='🇸🇹'
+  ABBR_TABLE[':sari:']='🥻'
+  ABBR_TABLE[':sassy_man:']='💁‍♂️'
+  ABBR_TABLE[':sassy_woman:']='💁‍♀️'
+  ABBR_TABLE[':satellite:']='📡'
+  ABBR_TABLE[':satisfied:']='😆'
+  ABBR_TABLE[':saudi_arabia:']='🇸🇦'
+  ABBR_TABLE[':sauna_man:']='🧖‍♂️'
+  ABBR_TABLE[':sauna_person:']='🧖'
+  ABBR_TABLE[':sauna_woman:']='🧖‍♀️'
+  ABBR_TABLE[':sauropod:']='🦕'
+  ABBR_TABLE[':saxophone:']='🎷'
+  ABBR_TABLE[':sa:']='🈂️'
+  ABBR_TABLE[':scarf:']='🧣'
+  ABBR_TABLE[':school:']='🏫'
+  ABBR_TABLE[':school_satchel:']='🎒'
+  ABBR_TABLE[':scientist:']='🧑‍🔬'
+  ABBR_TABLE[':scissors:']='✂️'
+  ABBR_TABLE[':scorpion:']='🦂'
+  ABBR_TABLE[':scorpius:']='♏'
+  ABBR_TABLE[':scotland:']='🏴󠁧󠁢󠁳󠁣󠁴󠁿'
+  ABBR_TABLE[':scream:']='😱'
+  ABBR_TABLE[':scream_cat:']='🙀'
+  ABBR_TABLE[':screwdriver:']='🪛'
+  ABBR_TABLE[':scroll:']='📜'
+  ABBR_TABLE[':seal:']='🦭'
+  ABBR_TABLE[':seat:']='💺'
+  ABBR_TABLE[':secret:']='㊙️'
+  ABBR_TABLE[':seedling:']='🌱'
+  ABBR_TABLE[':see_no_evil:']='🙈'
+  ABBR_TABLE[':selfie:']='🤳'
+  ABBR_TABLE[':senegal:']='🇸🇳'
+  ABBR_TABLE[':serbia:']='🇷🇸'
+  ABBR_TABLE[':service_dog:']='🐕‍🦺'
+  ABBR_TABLE[':seven:']='7️⃣'
+  ABBR_TABLE[':sewing_needle:']='🪡'
+  ABBR_TABLE[':seychelles:']='🇸🇨'
+  ABBR_TABLE[':shallow_pan_of_food:']='🥘'
+  ABBR_TABLE[':shamrock:']='☘️'
+  ABBR_TABLE[':shark:']='🦈'
+  ABBR_TABLE[':shaved_ice:']='🍧'
+  ABBR_TABLE[':sheep:']='🐑'
+  ABBR_TABLE[':shell:']='🐚'
+  ABBR_TABLE[':shield:']='🛡️'
+  ABBR_TABLE[':shinto_shrine:']='⛩️'
+  ABBR_TABLE[':ship:']='🚢'
+  ABBR_TABLE[':shirt:']='👕'
+  ABBR_TABLE[':shit:']='💩'
+  ABBR_TABLE[':shoe:']='👞'
+  ABBR_TABLE[':shopping:']='🛍️'
+  ABBR_TABLE[':shopping_cart:']='🛒'
+  ABBR_TABLE[':shorts:']='🩳'
+  ABBR_TABLE[':shower:']='🚿'
+  ABBR_TABLE[':shrimp:']='🦐'
+  ABBR_TABLE[':shrug:']='🤷'
+  ABBR_TABLE[':shushing_face:']='🤫'
+  ABBR_TABLE[':sierra_leone:']='🇸🇱'
+  ABBR_TABLE[':signal_strength:']='📶'
+  ABBR_TABLE[':singapore:']='🇸🇬'
+  ABBR_TABLE[':singer:']='🧑‍🎤'
+  ABBR_TABLE[':sint_maarten:']='🇸🇽'
+  ABBR_TABLE[':six:']='6️⃣'
+  ABBR_TABLE[':six_pointed_star:']='🔯'
+  ABBR_TABLE[':skateboard:']='🛹'
+  ABBR_TABLE[':ski:']='🎿'
+  ABBR_TABLE[':skier:']='⛷️'
+  ABBR_TABLE[':skull:']='💀'
+  ABBR_TABLE[':skull_and_crossbones:']='☠️'
+  ABBR_TABLE[':skunk:']='🦨'
+  ABBR_TABLE[':sled:']='🛷'
+  ABBR_TABLE[':sleeping:']='😴'
+  ABBR_TABLE[':sleeping_bed:']='🛌'
+  ABBR_TABLE[':sleepy:']='😪'
+  ABBR_TABLE[':slightly_frowning_face:']='🙁'
+  ABBR_TABLE[':slightly_smiling_face:']='🙂'
+  ABBR_TABLE[':sloth:']='🦥'
+  ABBR_TABLE[':slot_machine:']='🎰'
+  ABBR_TABLE[':slovakia:']='🇸🇰'
+  ABBR_TABLE[':slovenia:']='🇸🇮'
+  ABBR_TABLE[':small_airplane:']='🛩️'
+  ABBR_TABLE[':small_blue_diamond:']='🔹'
+  ABBR_TABLE[':small_orange_diamond:']='🔸'
+  ABBR_TABLE[':small_red_triangle:']='🔺'
+  ABBR_TABLE[':small_red_triangle_down:']='🔻'
+  ABBR_TABLE[':smile:']='😄'
+  ABBR_TABLE[':smile_cat:']='😸'
+  ABBR_TABLE[':smiley:']='😃'
+  ABBR_TABLE[':smiley_cat:']='😺'
+  ABBR_TABLE[':smiling_face_with_tear:']='🥲'
+  ABBR_TABLE[':smiling_face_with_three_hearts:']='🥰'
+  ABBR_TABLE[':smiling_imp:']='😈'
+  ABBR_TABLE[':smirk:']='😏'
+  ABBR_TABLE[':smirk_cat:']='😼'
+  ABBR_TABLE[':smoking:']='🚬'
+  ABBR_TABLE[':snail:']='🐌'
+  ABBR_TABLE[':snake:']='🐍'
+  ABBR_TABLE[':sneezing_face:']='🤧'
+  ABBR_TABLE[':snowboarder:']='🏂'
+  ABBR_TABLE[':snowflake:']='❄️'
+  ABBR_TABLE[':snowman:']='⛄'
+  ABBR_TABLE[':snowman_with_snow:']='☃️'
+  ABBR_TABLE[':soap:']='🧼'
+  ABBR_TABLE[':sob:']='😭'
+  ABBR_TABLE[':soccer:']='⚽'
+  ABBR_TABLE[':socks:']='🧦'
+  ABBR_TABLE[':softball:']='🥎'
+  ABBR_TABLE[':solomon_islands:']='🇸🇧'
+  ABBR_TABLE[':somalia:']='🇸🇴'
+  ABBR_TABLE[':soon:']='🔜'
+  ABBR_TABLE[':sos:']='🆘'
+  ABBR_TABLE[':sound:']='🔉'
+  ABBR_TABLE[':south_africa:']='🇿🇦'
+  ABBR_TABLE[':south_georgia_south_sandwich_islands:']='🇬🇸'
+  ABBR_TABLE[':south_sudan:']='🇸🇸'
+  ABBR_TABLE[':space_invader:']='👾'
+  ABBR_TABLE[':spades:']='♠️'
+  ABBR_TABLE[':spaghetti:']='🍝'
+  ABBR_TABLE[':sparkle:']='❇️'
+  ABBR_TABLE[':sparkler:']='🎇'
+  ABBR_TABLE[':sparkles:']='✨'
+  ABBR_TABLE[':sparkling_heart:']='💖'
+  ABBR_TABLE[':speaker:']='🔈'
+  ABBR_TABLE[':speaking_head:']='🗣️'
+  ABBR_TABLE[':speak_no_evil:']='🙊'
+  ABBR_TABLE[':speech_balloon:']='💬'
+  ABBR_TABLE[':speedboat:']='🚤'
+  ABBR_TABLE[':spider:']='🕷️'
+  ABBR_TABLE[':spider_web:']='🕸️'
+  ABBR_TABLE[':spiral_calendar:']='🗓️'
+  ABBR_TABLE[':spiral_notepad:']='🗒️'
+  ABBR_TABLE[':sponge:']='🧽'
+  ABBR_TABLE[':spoon:']='🥄'
+  ABBR_TABLE[':squid:']='🦑'
+  ABBR_TABLE[':sri_lanka:']='🇱🇰'
+  ABBR_TABLE[':stadium:']='🏟️'
+  ABBR_TABLE[':standing_man:']='🧍‍♂️'
+  ABBR_TABLE[':standing_person:']='🧍'
+  ABBR_TABLE[':standing_woman:']='🧍‍♀️'
+  ABBR_TABLE[':star:']='⭐'
+  ABBR_TABLE[':star2:']='🌟'
+  ABBR_TABLE[':star_and_crescent:']='☪️'
+  ABBR_TABLE[':star_of_david:']='✡️'
+  ABBR_TABLE[':stars:']='🌠'
+  ABBR_TABLE[':star_struck:']='🤩'
+  ABBR_TABLE[':station:']='🚉'
+  ABBR_TABLE[':statue_of_liberty:']='🗽'
+  ABBR_TABLE[':st_barthelemy:']='🇧🇱'
+  ABBR_TABLE[':steam_locomotive:']='🚂'
+  ABBR_TABLE[':stethoscope:']='🩺'
+  ABBR_TABLE[':stew:']='🍲'
+  ABBR_TABLE[':st_helena:']='🇸🇭'
+  ABBR_TABLE[':st_kitts_nevis:']='🇰🇳'
+  ABBR_TABLE[':st_lucia:']='🇱🇨'
+  ABBR_TABLE[':st_martin:']='🇲🇫'
+  ABBR_TABLE[':stop_button:']='⏹️'
+  ABBR_TABLE[':stop_sign:']='🛑'
+  ABBR_TABLE[':stopwatch:']='⏱️'
+  ABBR_TABLE[':st_pierre_miquelon:']='🇵🇲'
+  ABBR_TABLE[':straight_ruler:']='📏'
+  ABBR_TABLE[':strawberry:']='🍓'
+  ABBR_TABLE[':stuck_out_tongue:']='😛'
+  ABBR_TABLE[':stuck_out_tongue_closed_eyes:']='😝'
+  ABBR_TABLE[':stuck_out_tongue_winking_eye:']='😜'
+  ABBR_TABLE[':student:']='🧑‍🎓'
+  ABBR_TABLE[':studio_microphone:']='🎙️'
+  ABBR_TABLE[':stuffed_flatbread:']='🥙'
+  ABBR_TABLE[':st_vincent_grenadines:']='🇻🇨'
+  ABBR_TABLE[':sudan:']='🇸🇩'
+  ABBR_TABLE[':sun_behind_large_cloud:']='🌥️'
+  ABBR_TABLE[':sun_behind_rain_cloud:']='🌦️'
+  ABBR_TABLE[':sun_behind_small_cloud:']='🌤️'
+  ABBR_TABLE[':sunflower:']='🌻'
+  ABBR_TABLE[':sunglasses:']='😎'
+  ABBR_TABLE[':sunny:']='☀️'
+  ABBR_TABLE[':sunrise:']='🌅'
+  ABBR_TABLE[':sunrise_over_mountains:']='🌄'
+  ABBR_TABLE[':sun_with_face:']='🌞'
+  ABBR_TABLE[':superhero:']='🦸'
+  ABBR_TABLE[':superhero_man:']='🦸‍♂️'
+  ABBR_TABLE[':superhero_woman:']='🦸‍♀️'
+  ABBR_TABLE[':supervillain:']='🦹'
+  ABBR_TABLE[':supervillain_man:']='🦹‍♂️'
+  ABBR_TABLE[':supervillain_woman:']='🦹‍♀️'
+  ABBR_TABLE[':surfer:']='🏄'
+  ABBR_TABLE[':surfing_man:']='🏄‍♂️'
+  ABBR_TABLE[':surfing_woman:']='🏄‍♀️'
+  ABBR_TABLE[':suriname:']='🇸🇷'
+  ABBR_TABLE[':sushi:']='🍣'
+  ABBR_TABLE[':suspension_railway:']='🚟'
+  ABBR_TABLE[':svalbard_jan_mayen:']='🇸🇯'
+  ABBR_TABLE[':swan:']='🦢'
+  ABBR_TABLE[':swaziland:']='🇸🇿'
+  ABBR_TABLE[':sweat:']='😓'
+  ABBR_TABLE[':sweat_drops:']='💦'
+  ABBR_TABLE[':sweat_smile:']='😅'
+  ABBR_TABLE[':sweden:']='🇸🇪'
+  ABBR_TABLE[':sweet_potato:']='🍠'
+  ABBR_TABLE[':swim_brief:']='🩲'
+  ABBR_TABLE[':swimmer:']='🏊'
+  ABBR_TABLE[':swimming_man:']='🏊‍♂️'
+  ABBR_TABLE[':swimming_woman:']='🏊‍♀️'
+  ABBR_TABLE[':switzerland:']='🇨🇭'
+  ABBR_TABLE[':symbols:']='🔣'
+  ABBR_TABLE[':synagogue:']='🕍'
+  ABBR_TABLE[':syria:']='🇸🇾'
+  ABBR_TABLE[':syringe:']='💉'
+  ABBR_TABLE[':taco:']='🌮'
+  ABBR_TABLE[':tada:']='🎉'
+  ABBR_TABLE[':taiwan:']='🇹🇼'
+  ABBR_TABLE[':tajikistan:']='🇹🇯'
+  ABBR_TABLE[':takeout_box:']='🥡'
+  ABBR_TABLE[':tamale:']='🫔'
+  ABBR_TABLE[':tanabata_tree:']='🎋'
+  ABBR_TABLE[':tangerine:']='🍊'
+  ABBR_TABLE[':tanzania:']='🇹🇿'
+  ABBR_TABLE[':taurus:']='♉'
+  ABBR_TABLE[':taxi:']='🚕'
+  ABBR_TABLE[':tea:']='🍵'
+  ABBR_TABLE[':teacher:']='🧑‍🏫'
+  ABBR_TABLE[':teapot:']='🫖'
+  ABBR_TABLE[':technologist:']='🧑‍💻'
+  ABBR_TABLE[':teddy_bear:']='🧸'
+  ABBR_TABLE[':telephone:']='☎️'
+  ABBR_TABLE[':telephone_receiver:']='📞'
+  ABBR_TABLE[':telescope:']='🔭'
+  ABBR_TABLE[':tennis:']='🎾'
+  ABBR_TABLE[':tent:']='⛺'
+  ABBR_TABLE[':test_tube:']='🧪'
+  ABBR_TABLE[':thailand:']='🇹🇭'
+  ABBR_TABLE[':thermometer:']='🌡️'
+  ABBR_TABLE[':thinking:']='🤔'
+  ABBR_TABLE[':thong_sandal:']='🩴'
+  ABBR_TABLE[':thought_balloon:']='💭'
+  ABBR_TABLE[':thread:']='🧵'
+  ABBR_TABLE[':three:']='3️⃣'
+  ABBR_TABLE[':thumbsdown:']='👎'
+  ABBR_TABLE[':thumbsup:']='👍'
+  ABBR_TABLE[':ticket:']='🎫'
+  ABBR_TABLE[':tickets:']='🎟️'
+  ABBR_TABLE[':tiger:']='🐯'
+  ABBR_TABLE[':tiger2:']='🐅'
+  ABBR_TABLE[':timer_clock:']='⏲️'
+  ABBR_TABLE[':timor_leste:']='🇹🇱'
+  ABBR_TABLE[':tipping_hand_man:']='💁‍♂️'
+  ABBR_TABLE[':tipping_hand_person:']='💁'
+  ABBR_TABLE[':tipping_hand_woman:']='💁‍♀️'
+  ABBR_TABLE[':tired_face:']='😫'
+  ABBR_TABLE[':tm:']='™️'
+  ABBR_TABLE[':togo:']='🇹🇬'
+  ABBR_TABLE[':toilet:']='🚽'
+  ABBR_TABLE[':tokelau:']='🇹🇰'
+  ABBR_TABLE[':tokyo_tower:']='🗼'
+  ABBR_TABLE[':tomato:']='🍅'
+  ABBR_TABLE[':tonga:']='🇹🇴'
+  ABBR_TABLE[':tongue:']='👅'
+  ABBR_TABLE[':toolbox:']='🧰'
+  ABBR_TABLE[':tooth:']='🦷'
+  ABBR_TABLE[':toothbrush:']='🪥'
+  ABBR_TABLE[':top:']='🔝'
+  ABBR_TABLE[':tophat:']='🎩'
+  ABBR_TABLE[':tornado:']='🌪️'
+  ABBR_TABLE[':tr:']='🇹🇷'
+  ABBR_TABLE[':trackball:']='🖲️'
+  ABBR_TABLE[':tractor:']='🚜'
+  ABBR_TABLE[':traffic_light:']='🚥'
+  ABBR_TABLE[':train:']='🚋'
+  ABBR_TABLE[':train2:']='🚆'
+  ABBR_TABLE[':tram:']='🚊'
+  ABBR_TABLE[':transgender_flag:']='🏳️‍⚧️'
+  ABBR_TABLE[':transgender_symbol:']='⚧️'
+  ABBR_TABLE[':t-rex:']='🦖'
+  ABBR_TABLE[':triangular_flag_on_post:']='🚩'
+  ABBR_TABLE[':triangular_ruler:']='📐'
+  ABBR_TABLE[':trident:']='🔱'
+  ABBR_TABLE[':trinidad_tobago:']='🇹🇹'
+  ABBR_TABLE[':tristan_da_cunha:']='🇹🇦'
+  ABBR_TABLE[':triumph:']='😤'
+  ABBR_TABLE[':trolleybus:']='🚎'
+  ABBR_TABLE[':trophy:']='🏆'
+  ABBR_TABLE[':tropical_drink:']='🍹'
+  ABBR_TABLE[':tropical_fish:']='🐠'
+  ABBR_TABLE[':truck:']='🚚'
+  ABBR_TABLE[':trumpet:']='🎺'
+  ABBR_TABLE[':tshirt:']='👕'
+  ABBR_TABLE[':tulip:']='🌷'
+  ABBR_TABLE[':tumbler_glass:']='🥃'
+  ABBR_TABLE[':tunisia:']='🇹🇳'
+  ABBR_TABLE[':turkey:']='🦃'
+  ABBR_TABLE[':turkmenistan:']='🇹🇲'
+  ABBR_TABLE[':turks_caicos_islands:']='🇹🇨'
+  ABBR_TABLE[':turtle:']='🐢'
+  ABBR_TABLE[':tuvalu:']='🇹🇻'
+  ABBR_TABLE[':tv:']='📺'
+  ABBR_TABLE[':twisted_rightwards_arrows:']='🔀'
+  ABBR_TABLE[':two:']='2️⃣'
+  ABBR_TABLE[':two_hearts:']='💕'
+  ABBR_TABLE[':two_men_holding_hands:']='👬'
+  ABBR_TABLE[':two_women_holding_hands:']='👭'
+  ABBR_TABLE[':u5272:']='🈹'
+  ABBR_TABLE[':u5408:']='🈴'
+  ABBR_TABLE[':u55b6:']='🈺'
+  ABBR_TABLE[':u6307:']='🈯'
+  ABBR_TABLE[':u6708:']='🈷️'
+  ABBR_TABLE[':u6709:']='🈶'
+  ABBR_TABLE[':u6e80:']='🈵'
+  ABBR_TABLE[':u7121:']='🈚'
+  ABBR_TABLE[':u7533:']='🈸'
+  ABBR_TABLE[':u7981:']='🈲'
+  ABBR_TABLE[':u7a7a:']='🈳'
+  ABBR_TABLE[':uganda:']='🇺🇬'
+  ABBR_TABLE[':uk:']='🇬🇧'
+  ABBR_TABLE[':ukraine:']='🇺🇦'
+  ABBR_TABLE[':umbrella:']='☔'
+  ABBR_TABLE[':unamused:']='😒'
+  ABBR_TABLE[':underage:']='🔞'
+  ABBR_TABLE[':unicorn:']='🦄'
+  ABBR_TABLE[':united_arab_emirates:']='🇦🇪'
+  ABBR_TABLE[':united_nations:']='🇺🇳'
+  ABBR_TABLE[':unlock:']='🔓'
+  ABBR_TABLE[':upside_down_face:']='🙃'
+  ABBR_TABLE[':up:']='🆙'
+  ABBR_TABLE[':uruguay:']='🇺🇾'
+  ABBR_TABLE[':us:']='🇺🇸'
+  ABBR_TABLE[':us_outlying_islands:']='🇺🇲'
+  ABBR_TABLE[':us_virgin_islands:']='🇻🇮'
+  ABBR_TABLE[':uzbekistan:']='🇺🇿'
+  ABBR_TABLE[':v:']='✌️'
+  ABBR_TABLE[':vampire:']='🧛'
+  ABBR_TABLE[':vampire_man:']='🧛‍♂️'
+  ABBR_TABLE[':vampire_woman:']='🧛‍♀️'
+  ABBR_TABLE[':vanuatu:']='🇻🇺'
+  ABBR_TABLE[':vatican_city:']='🇻🇦'
+  ABBR_TABLE[':venezuela:']='🇻🇪'
+  ABBR_TABLE[':vertical_traffic_light:']='🚦'
+  ABBR_TABLE[':vhs:']='📼'
+  ABBR_TABLE[':vibration_mode:']='📳'
+  ABBR_TABLE[':video_camera:']='📹'
+  ABBR_TABLE[':video_game:']='🎮'
+  ABBR_TABLE[':vietnam:']='🇻🇳'
+  ABBR_TABLE[':violin:']='🎻'
+  ABBR_TABLE[':virgo:']='♍'
+  ABBR_TABLE[':volcano:']='🌋'
+  ABBR_TABLE[':volleyball:']='🏐'
+  ABBR_TABLE[':vomiting_face:']='🤮'
+  ABBR_TABLE[':vs:']='🆚'
+  ABBR_TABLE[':vulcan_salute:']='🖖'
+  ABBR_TABLE[':waffle:']='🧇'
+  ABBR_TABLE[':wales:']='🏴󠁧󠁢󠁷󠁬󠁳󠁿'
+  ABBR_TABLE[':walking:']='🚶'
+  ABBR_TABLE[':walking_man:']='🚶‍♂️'
+  ABBR_TABLE[':walking_woman:']='🚶‍♀️'
+  ABBR_TABLE[':wallis_futuna:']='🇼🇫'
+  ABBR_TABLE[':waning_crescent_moon:']='🌘'
+  ABBR_TABLE[':waning_gibbous_moon:']='🌖'
+  ABBR_TABLE[':warning:']='⚠️'
+  ABBR_TABLE[':wastebasket:']='🗑️'
+  ABBR_TABLE[':watch:']='⌚'
+  ABBR_TABLE[':water_buffalo:']='🐃'
+  ABBR_TABLE[':watermelon:']='🍉'
+  ABBR_TABLE[':water_polo:']='🤽'
+  ABBR_TABLE[':wave:']='👋'
+  ABBR_TABLE[':wavy_dash:']='〰️'
+  ABBR_TABLE[':waxing_crescent_moon:']='🌒'
+  ABBR_TABLE[':waxing_gibbous_moon:']='🌔'
+  ABBR_TABLE[':wc:']='🚾'
+  ABBR_TABLE[':weary:']='😩'
+  ABBR_TABLE[':wedding:']='💒'
+  ABBR_TABLE[':weight_lifting:']='🏋️'
+  ABBR_TABLE[':weight_lifting_man:']='🏋️‍♂️'
+  ABBR_TABLE[':weight_lifting_woman:']='🏋️‍♀️'
+  ABBR_TABLE[':western_sahara:']='🇪🇭'
+  ABBR_TABLE[':whale:']='🐳'
+  ABBR_TABLE[':whale2:']='🐋'
+  ABBR_TABLE[':wheelchair:']='♿'
+  ABBR_TABLE[':wheel_of_dharma:']='☸️'
+  ABBR_TABLE[':white_check_mark:']='✅'
+  ABBR_TABLE[':white_circle:']='⚪'
+  ABBR_TABLE[':white_flag:']='🏳️'
+  ABBR_TABLE[':white_flower:']='💮'
+  ABBR_TABLE[':white_haired_man:']='👨‍🦳'
+  ABBR_TABLE[':white_haired_woman:']='👩‍🦳'
+  ABBR_TABLE[':white_heart:']='🤍'
+  ABBR_TABLE[':white_large_square:']='⬜'
+  ABBR_TABLE[':white_medium_small_square:']='◽'
+  ABBR_TABLE[':white_medium_square:']='◻️'
+  ABBR_TABLE[':white_small_square:']='▫️'
+  ABBR_TABLE[':white_square_button:']='🔳'
+  ABBR_TABLE[':wilted_flower:']='🥀'
+  ABBR_TABLE[':wind_chime:']='🎐'
+  ABBR_TABLE[':wind_face:']='🌬️'
+  ABBR_TABLE[':window:']='🪟'
+  ABBR_TABLE[':wine_glass:']='🍷'
+  ABBR_TABLE[':wink:']='😉'
+  ABBR_TABLE[':wolf:']='🐺'
+  ABBR_TABLE[':woman:']='👩'
+  ABBR_TABLE[':woman_artist:']='👩‍🎨'
+  ABBR_TABLE[':woman_astronaut:']='👩‍🚀'
+  ABBR_TABLE[':woman_cartwheeling:']='🤸‍♀️'
+  ABBR_TABLE[':woman_cook:']='👩‍🍳'
+  ABBR_TABLE[':woman_dancing:']='💃'
+  ABBR_TABLE[':woman_facepalming:']='🤦‍♀️'
+  ABBR_TABLE[':woman_factory_worker:']='👩‍🏭'
+  ABBR_TABLE[':woman_farmer:']='👩‍🌾'
+  ABBR_TABLE[':woman_feeding_baby:']='👩‍🍼'
+  ABBR_TABLE[':woman_firefighter:']='👩‍🚒'
+  ABBR_TABLE[':woman_health_worker:']='👩‍⚕️'
+  ABBR_TABLE[':woman_in_manual_wheelchair:']='👩‍🦽'
+  ABBR_TABLE[':woman_in_motorized_wheelchair:']='👩‍🦼'
+  ABBR_TABLE[':woman_in_tuxedo:']='🤵‍♀️'
+  ABBR_TABLE[':woman_judge:']='👩‍⚖️'
+  ABBR_TABLE[':woman_juggling:']='🤹‍♀️'
+  ABBR_TABLE[':woman_mechanic:']='👩‍🔧'
+  ABBR_TABLE[':woman_office_worker:']='👩‍💼'
+  ABBR_TABLE[':woman_pilot:']='👩‍✈️'
+  ABBR_TABLE[':woman_playing_handball:']='🤾‍♀️'
+  ABBR_TABLE[':woman_playing_water_polo:']='🤽‍♀️'
+  ABBR_TABLE[':woman_scientist:']='👩‍🔬'
+  ABBR_TABLE[':womans_clothes:']='👚'
+  ABBR_TABLE[':womans_hat:']='👒'
+  ABBR_TABLE[':woman_shrugging:']='🤷‍♀️'
+  ABBR_TABLE[':woman_singer:']='👩‍🎤'
+  ABBR_TABLE[':woman_student:']='👩‍🎓'
+  ABBR_TABLE[':woman_teacher:']='👩‍🏫'
+  ABBR_TABLE[':woman_technologist:']='👩‍💻'
+  ABBR_TABLE[':woman_with_headscarf:']='🧕'
+  ABBR_TABLE[':woman_with_probing_cane:']='👩‍🦯'
+  ABBR_TABLE[':woman_with_turban:']='👳‍♀️'
+  ABBR_TABLE[':woman_with_veil:']='👰‍♀️'
+  ABBR_TABLE[':womens:']='🚺'
+  ABBR_TABLE[':women_wrestling:']='🤼‍♀️'
+  ABBR_TABLE[':wood:']='🪵'
+  ABBR_TABLE[':woozy_face:']='🥴'
+  ABBR_TABLE[':world_map:']='🗺️'
+  ABBR_TABLE[':worm:']='🪱'
+  ABBR_TABLE[':worried:']='😟'
+  ABBR_TABLE[':wrench:']='🔧'
+  ABBR_TABLE[':wrestling:']='🤼'
+  ABBR_TABLE[':writing_hand:']='✍️'
+  ABBR_TABLE[':x:']='❌'
+  ABBR_TABLE[':yarn:']='🧶'
+  ABBR_TABLE[':yawning_face:']='🥱'
+  ABBR_TABLE[':yellow_circle:']='🟡'
+  ABBR_TABLE[':yellow_heart:']='💛'
+  ABBR_TABLE[':yellow_square:']='🟨'
+  ABBR_TABLE[':yemen:']='🇾🇪'
+  ABBR_TABLE[':yen:']='💴'
+  ABBR_TABLE[':yin_yang:']='☯️'
+  ABBR_TABLE[':yo_yo:']='🪀'
+  ABBR_TABLE[':yum:']='😋'
+  ABBR_TABLE[':zambia:']='🇿🇲'
+  ABBR_TABLE[':zany_face:']='🤪'
+  ABBR_TABLE[':zap:']='⚡'
+  ABBR_TABLE[':zebra:']='🦓'
+  ABBR_TABLE[':zero:']='0️⃣'
+  ABBR_TABLE[':zimbabwe:']='🇿🇼'
+  ABBR_TABLE[':zipper_mouth_face:']='🤐'
+  ABBR_TABLE[':zombie:']='🧟'
+  ABBR_TABLE[':zombie_man:']='🧟‍♂️'
+  ABBR_TABLE[':zombie_woman:']='🧟‍♀️'
+  ABBR_TABLE[':zzz:']='💤'
+}
+## vim:ft=sh
+
 NOSUBCMD=$"No valid subcomand '%s' for command '%s'"
 INVALIDURL=$"Invalid URL '%s'"
 
@@ -1222,6 +4595,26 @@ command_alias ()
   esac
 }
 
+# help:fun: abbr [<name> <value>]
+# help:txt: Show abbreviatures (if no argument provided) or created a new one
+# help:txt  identified by name, and replaced by value.
+command_abbr ()
+{
+  case $# in
+    0)
+      for key in $(config_iter abbr.); do
+        info "%s=%s" "${key}" "$(config_get "${key}")"
+      done
+      ;;
+    2)
+      local name="$1"; shift
+      command_config_set "abbr.$name" "$*"
+      ;;
+    *)
+      E=2 error $"Abbr command requires zero or two arguments"
+      ;;
+  esac
+}
 
 # help:fun: user [<name> <uid>]
 # help:txt: Show user aliases registered in configuration if not arguments
@@ -1268,7 +4661,8 @@ command_event_post ()
     command_account_active "${ACCOUNT_NAME}"
     command_account_refresh
     {
-      event_create "$ts" P "$msg" 2>&1
+      abbr_replace "$msg"
+      event_create "$ts" P "$REPLY" 2>&1
       eid="$EID"
       for tag in "$@"; do
         sleep 1  # Because we can only post one event per second.
@@ -1314,7 +4708,8 @@ command_event_reply ()
   if [[ $# -eq 0 ]]; then
     E=2 error $"Event reply required an argument: message"
   else
-    local tag mesg="$1" ts; ts="$(timestamp)"; shift
+    abbr_replace "$1"
+    local tag mesg="$REPLY" ts; ts="$(timestamp)"; shift
     command_account_refresh
     {
       timeline_load
@@ -2393,1222 +5788,6 @@ Public License instead of this License.  But first, please read
 <https://www.gnu.org/licenses/why-not-lgpl.html>.
 EOF
 }
-#! /usr/bin/env bash
-# 
-# Copyright (C) 2016  Andrés J. Díaz <ajdiaz@ajdiaz.me>
-# 
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-# 
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-# 
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <http://www.gnu.org/licenses/>.
-
-# env: INTERACTIVE: if true, then interactive mode is enabled
-export INTERACTIVE=
-
-# env: CONFIG_FILE: should contain the path to the config file
-export CONFIG_FILE=
-
-# env: CACHE_DIR: should contain the path to the cache directory
-export CACHE_DIR=
-
-# fun: prompt
-# txt: print prompt in interactive mode
-prompt ()
-{
-  format_compose prompt account "${ACCOUNT_NAME:-<none>}"
-  format_dumps prompt
-}
-
-# fun: main_interactive
-# txt: evaluate commands in interactive mode
-main_interactive ()
-{
-  local cmd
-  local -a args
-
-  history_load
-  complete_load
-  command_account_active "${ACCOUNT_NAME}"
-
-  while true; do
-    read -a args -e -r -p "$(T=true prompt)"
-    [ $? -eq 1 ] && break
-    cmd="${args[0]}"
-    local -a args=( "${args[@]:1}" )
-
-    [ "$cmd" ] || continue
-    history_append "$cmd ${args[*]}"
-    main_standalone "$cmd" "${args[@]}"
-  done
-  history_save
-}
-
-# fun: main_standalone <cmd> [args]...
-# txt: evaluate command passed as argument
-main_standalone ()
-{
-  local cmd="$1"; shift
-
-  if fun "command_$cmd"; then
-    "command_$cmd" "$@"
-  else
-    read -ra alias <<< "${CONFIG["alias.$cmd"]}"
-
-    if [[ "${alias[*]}" ]]; then
-      main_standalone "${alias[@]}" "$@"
-    else
-      E=2 fatal $"Invalid command '%s'." "$cmd"
-    fi
-  fi
-}
-
-# fun: main [args]...
-# txt: entry point :D
-main ()
-{
-  local config_path="$HOME/.config/tl/config:$HOME/.tl/config:$HOME/.tlrc"
-  local major minor ver
-
-  # check BASH
-  if [[ "${BASH_VERSINFO[0]}" -lt 5 ]]; then
-    E=1 error $"bash >= 5 is required"
-  fi
-  
-  CONFIG_FILE="$(try_path "$config_path")"
-  INTERACTIVE=false
-
-  reqs_eval
-
-  # check git version since it's a core requirement
-  read -r _ _ ver < <(git --version)
-  IFS=. read -r major minor _ <<<"$ver"
-
-  if [[ "$major" -lt "2" ]] || [[ "$minor" -lt 30 ]]; then
-    E=1 error $"git version >= 2.30 is required"
-  fi
-
-  # accept commands like tl-account as symlink to tl
-  case "${0##*/}" in
-    tl-*) set -- "${0##*/tl-}" "$@";;
-  esac
-
-  args_eval "$@" || shift $?
-
-  [[ -r "${CONFIG_FILE}" ]] && config_load "${CONFIG_FILE}"
-  [[ "$ACCOUNT_NAME" ]] && command_account_active "$ACCOUNT_NAME"
-
-
-  CACHE_DIR="$(try_path "$(config_get cache.path)")"
-  mkdir -p "${CACHE_DIR}"
-
-  # local the OID cache if enabled
-  oid_load
-
-  if [ $# -eq 0 ]; then
-    if [[ "${CONFIG[interactive.show-banner]}" = "true" ]]; then
-      info "timeline  Copyright (C) %(%Y)T Andrés J. Díaz" "$(timestamp)"
-      info "This program comes with ABSOLUTELY NO WARRANTY; for details"
-      info "type 'license'. This is free software, and you are welcome to"
-      info "redistribute it under certain conditions; type 'license' for"
-      info "details."
-    fi
-
-    INTERACTIVE=true
-    main_interactive "$@"
-  else
-    main_standalone "$@"
-  fi
-
-  oid_save
-}
-## vim:ft=sh
-
-# env: EID: store the last EID created
-export EID=
-
-# env: EVENT: associative array which contains parts of an event line.
-declare -A EVENTS_KIND=()
-declare -A EVENTS_DATE=()
-declare -A EVENTS_LINK=()
-declare -A EVENTS_TAGS=()
-declare -A EVENTS_MESG=()
-declare -A EVENTS_SIGN=()
-declare -A EVENTS_SCORE=()
-declare -A EVENTS_COMMIT=()
-
-declare -A EVENTS_CROSS_REPLY=()
-declare -A EVENTS_CROSS_TAGS=()
-declare -A EVENTS_CROSS_SCORE=()
-declare -a EVENTS_SORTED=()
-
-ERR_TIME_DUPLICATED=$"Duplicated timestamp for events %s and %s"
-
-# fun: event_load <account_id> <filename>
-# txt: given an content filename, parse it and store events in memory
-event_load ()
-{
-  local max_user_posts fname="$2" account="$1" key val
-  local commit line aname="${CONFIG["user.alias-$account"]:-$account}"
-  local -A gitlog
-
-  max_user_posts="${CONFIG["account.${aname}.max-posts"]:-${CONFIG[account.max-posts]:-20}}"
-
-  while read -r key val; do
-    gitlog["$key"]="$val"
-  done < <(
-    command git -C "${fname%/*}" log -s --pretty=format:"%H %G?" \
-      --no-color "$fname"
-  )
-
-  _i() {
-    case "${2}" in
-      ''|\#*) return
-    esac
-
-    commit="${2%% *}";
-    line="${2#$commit *) }";
-
-    event_load_line "$account" "${fname%/*}" "$commit" \
-      "${gitlog["$commit"]}" "${line}" "$1"
-  }
-
-  # shellcheck disable=SC2034
-  mapfile -c 1 -n "${max_user_posts}" -C _i < <(
-    command git -C "${fname%/*}" blame -s -l "$fname"
-  )
-}
-
-# fun: event_load_line <account_id> <commit> <flags> <content>
-# txt: parse a event line passed as argument and fill properly fields in
-#      a associative array called EVENT. The account id is the OID
-#      associated to the pull_url of the account.
-#
-#      The POST kind has the fields: timestamp,kind,message
-#      The REPLY kind has the fields: timestamp,kind,ref,message
-#      The TAG kind has the fields: timestamp,kind,ref,tags
-#      The SCORE kind has the fields: timestamp,kind,ref,score
-event_load_line ()
-{
-  local aid="$1" fname="$2" commit="$3" flags="$4" line="${5%$'\n'}"
-  local datet="${line%% *}" idx
-  local kind="${line#$datet }"; kind="${kind%% *}"
-  local rest="${line#$datet $kind }"
-  local link mesg tags score hmac='' eid show_untrusted
-
-  idx="$(( ${datet}000 + $6 ))"
-
-  show_untrusted="${CONFIG["timeline.show-untrusted-items"]}"
-
-  case "$kind" in
-    P|POST)
-      mesg="$rest"
-      kind='post'
-      oid "$mesg"
-      hmac="${OID_CACHE["$mesg"]}"
-      ;;
-    R|REPLY)
-      link="${rest%% *}"
-      mesg="${rest#$link }"
-      kind='reply'
-      oid "$mesg"
-      hmac="${OID_CACHE["$mesg"]}"
-      ;;
-    T|TAG)
-      link="${rest%% *}"
-      tags="${rest#$link }"
-      kind='tag'
-      oid "$link $tags"
-      hmac="${OID_CACHE["$link $tags"]}"
-      ;;
-    S|SCORE)
-      kind='score'
-      link="${rest%% *}"
-      score="${rest#$link }"
-      case "$score" in
-        -1) score="-1";;
-        *) score="1";;
-      esac
-      oid "$link $score"
-      hmac="${OID_CACHE["$link $score"]}"
-      ;;
-    *)
-      error $"Ignored malformed event: '$line'"
-      return 0
-      ;;
-  esac
-
-  if [[ "$show_untrusted" = "true" ]]; then
-    eid="$aid:$datet"
-    case "$link" in
-      *:*:*) flags+="*"; link="${link%:*}";;
-    esac
-  else
-    eid="$aid:$datet:$hmac"
-  fi
-
-  EVENTS_KIND["$eid"]="$kind"
-  EVENTS_DATE["$eid"]="$datet"
-  EVENTS_LINK["$eid"]="$link"
-  EVENTS_TAGS["$eid"]="$tags"
-  EVENTS_MESG["$eid"]="$mesg"
-  EVENTS_SIGN["$eid"]="$flags"
-  EVENTS_COMMIT["$eid"]="$fname $commit"
-
-  # XXX some array abused. Because arrays allows any index number, and are
-  # sorted by definition, we do not need to sort anything.
-  EVENTS_SORTED["$idx"]="$eid"
-
-  if [[ "$kind" = 'reply' ]]; then
-    EVENTS_CROSS_REPLY[$link]+=" $eid "
-  elif [[ "$kind" = 'tag' ]]; then
-    EVENTS_CROSS_TAGS[$link]+=" $eid "
-  elif [[ "$kind" = 'score' ]]; then
-    if ! [[ "${EVENTS_CROSS_SCORE[$aid:$link]}" ]]; then
-      EVENTS_CROSS_SCORE["$aid:$link"]=1
-      (( EVENTS_SCORE["$link"]+=score ))
-    fi
-  fi
-
-  [[ "$ACCOUNT_NAME" ]] && notify "$eid"
-}
-
-# fun: event_sign <eid>
-# txt: return true if EID is signed
-event_sign ()
-{
-  echo "${EVENTS_SIGN[$1]}"
-}
-
-# fun: event_replies <eid>
-# txt: given an specific eid return the eids of the replies of that post
-event_replies ()
-{
-  local -a sorted_replies=()
-  local idx
-
-  for reply in ${EVENTS_CROSS_REPLY["$1"]}; do
-    idx="${reply#*:}"; idx="${idx%%:*}$(printf %03d "$((RANDOM % 100))")"
-    [[ "$reply" = "$1" ]] && E=3 error "$ERR_TIME_DUPLICATED" "$label" "$1"
-    sorted_replies[$idx]="$reply"
-  done
-
-  echo "${sorted_replies[@]}"
-}
-
-# fun: event_labels <eid>
-# txt: given an specific eid return the eids of the tags of that post
-event_labels ()
-{
-  local -a sorted_labels=()
-  local idx
-
-  for label in ${EVENTS_CROSS_TAGS["$1"]}; do
-    idx="${label#*:}"; idx="${idx%%:*}$(printf %03d "$((RANDOM % 100))")"
-    [[ "$label" = "$1" ]] && E=3 error "$ERR_TIME_DUPLICATED" "$label" "$1"
-    sorted_labels[$idx]="$label"
-  done
-
-  echo "${sorted_labels[@]}"
-}
-
-# fun: event_score <eid>
-# txt: return the score of the specified event
-event_score ()
-{
-  echo "${EVENTS_SCORE[$1]:-0}"
-}
-
-# fun: event_iter
-# txt: print a list of events saved in memory
-event_iter ()
-{
-  echo "${EVENTS_SORTED[@]}"
-}
-
-# fun: event_kind <eid>
-# txt: given an event id, get the kind of the event
-event_kind ()
-{
-  echo "${EVENTS_KIND["$1"]}"
-}
-
-# fun: event_date <eid>
-# txt: given an event id, get the date of the event
-event_date ()
-{
-  echo "${EVENTS_DATE["$1"]}"
-}
-
-# fun: event_link <eid>
-# txt: given an event id, get the link of the event (only for TAGS and
-#      REPLIES)
-event_link ()
-{
-  echo "${EVENTS_LINK["$1"]}"
-}
-
-# fun: event_tags <eid>
-# txt: given an event id, get the tags of the event (only for TAGS)
-event_tags ()
-{
-  echo "${EVENTS_TAGS["$1"]}"
-}
-
-# fun: event_mesg <eid>
-# txt: given an event id, get the message of the event (only for REPLY and
-#      POST)
-event_mesg ()
-{
-  echo "${EVENTS_MESG["$1"]}"
-}
-
-# fun: event_create <args>
-# txt: create new event. Args can vary depends of event type, the order of
-#      the arguments should be:
-#      For posts: date kind mesg
-#      For reply: date kind link mesg
-#      For tags:  date kind link tags
-# env: EID: set this variable to the value of the EID to the created element.
-event_create ()
-{
-  local auto_push content_markdown mesg line l
-  local -a content
-
-  auto_push="${CONFIG["account.${ACCOUNT_NAME}.auto-push"]}"
-
-  if ! [[ "$auto_push" ]]; then
-    auto_push="$(config_get account.auto-push)"
-  fi
-
-  EID="$ACCOUNT_OID:$1"
-
-  case "$2" in
-    P) mesg="$3"; line="$*";;
-    R|T|S)
-      mesg="$4"
-      case "$3" in
-        *:*:*) line="$*" ;;
-        *:*)
-          if [[ "${EVENTS_MESG["$3"]}" ]]; then
-            oid "${EVENTS_MESG["$3"]}"
-            line="$1 $2 $3:${OID_CACHE["${EVENTS_MESG["$3"]}"]} $4"
-          else
-            E=1 error $"Try to reference a non-existant EID: $3"
-          fi;;
-        *) E=1 error $"Invalid EID reference: $*";;
-      esac;;
-  esac
-  oid "$mesg"
-  EID+=":${OID_CACHE["$mesg"]}"
-
-  mapfile -t content < "${ACCOUNT_PATH}/$TIMELINE_CONTENT"
-
-  echo "$line" > "${ACCOUNT_PATH}/$TIMELINE_CONTENT"
-  for l in "${content[@]}"; do
-    echo "$l" >> "${ACCOUNT_PATH}/$TIMELINE_CONTENT"
-  done
-
-  content_markdown="${CONFIG["account.${ACCOUNT_NAME}.content-markdown"]}"
-
-  if ! [[ "$content_markdown" ]]; then
-    content_markdown="${CONFIG[account.content-markdown]}"
-  fi
-
-  if [[ "$content_markdown" = "true" ]]; then
-    markdown_generate
-  fi
-
-  account_commit "event: $line"
-
-  if [[ "$auto_push" = "true" ]]; then
-    account_push
-  fi
-}
-
-# fun: event_info <eid>
-# txt: given an eid, print the infortmation related with this event
-event_info ()
-{
-  local eid="$1" date kind mesg tags reply link tag
-
-  date="${EVENTS_DATE["$1"]}"
-  kind="${EVENTS_KIND["$1"]}"
-
-  if [[ -z "$kind" ]]; then
-    E=1 error $"Not found information for EID '$eid'"
-    return 1
-  fi
-
-  mesg="${EVENTS_MESG["$eid"]}"
-  tags="${EVENTS_TAGS["$eid"]}"
-  link="${EVENTS_LINK["$eid"]}"
-  
-  printf $"%-10s %s\n" "EID:"   "$eid"
-  printf $"%-10s %s (%s)\n" "UID:"   "${eid%%:*}" "$(username "$eid")"
-  # shellcheck disable=SC2183
-  printf $"%-10s %s (%(%Y-%m-%d %H:%M:%S)T)\n" "Date:"  "$date" "$date"
-  printf $"%-10s %s\n" "Kind:"   "${kind^^}"
-  printf $"%-10s %s\n" "Link:"   "${link}"
-  printf $"%-10s %s\n" "Tags:"   "${tags}"
-  printf $"%-10s %s\n" "Mesg:"   "${mesg}"
-  printf $"Tagged by:\n"
-
-  local -A taggedas=()
-  for item in $(event_labels "$eid"); do
-    printf "  -  %s\n" "$item"
-    for tag in ${EVENTS_TAGS["$item"]}; do
-      taggedas["$tag"]=1
-    done
-  done
-  printf $"Tagged as:\n"
-  for item in "${!taggedas[@]}"; do
-    printf "  -  %s\n" "$item"
-  done
-  printf $"Replied by:\n"
-  for item in $(event_replies "$eid"); do
-    printf "  -  %s\n" "$item"
-  done
-
-  case "${EVENTS_SIGN["$eid"]}" in
-    G|B|U|X|Y|R|E)
-      printf "Signed: Yes\n"
-      printf "Signature information:\n"
-
-      command git -C "${EVENTS_COMMIT["$eid"]%% *}" \
-        verify-commit "${EVENTS_COMMIT["$eid"]##* }" 2>&1
-      ;;
-    *)
-      printf "Signed: No\n"
-      ;;
-  esac
-}
-## vim:ft=sh
-
-# fun: notify <eid>
-# txt: send notification for specified eid if match the notification filter.
-notify ()
-{
-  local user uid="${1%%:*}" date="${1#*:}"
-  local date="${date%%:*}" last_date=0
-  local fexpr ncommand="${CONFIG[notify.command]}"
-
-  [[ "$ncommand" ]] || return 0
-
-  last_date_file="${CONFIG[notify.cache-file]:-${HOME}/.cache/tl/notify.cache}"
-  [[ -r "${last_date_file}" ]] && 
-    last_date="$(< "$last_date_file")"
-
-  # discard old events
-  [[ "$date" -le "${last_date}" ]] &&
-    return
-
-  # discard own events
-  user="${ACCOUNT_OID}"
-  [[ "$uid" = "$user" ]] &&
-    return
-
-  fexpr="${CONFIG[notify.filter]}"
-
-  if [[ "$fexpr" ]] && filter_eval "$1" "$fexpr"; then
-    # shellcheck disable=SC2059
-    "$ncommand" "$(printf "${CONFIG[notify.format]:-%s %s}" \
-      "$(username "$uid")")" \
-      "${EVENTS_MESG[$eid]}"
-
-    echo "$date" > "${last_date_file}"
-  fi
-}
-## vim: ft=sh
-
-# env: OID_CACHE
-# txt: save a generated oids to avoid recalculation
-declare -gA OID_CACHE
-
-# fun: fun <function_name>
-# txt: return true if function is defined
-fun ()
-{
-  declare -f "$1" >/dev/null 2>&1
-}
-
-# fun: mute <command> [args]
-# txt: run command quietly
-mute ()
-{
-  "$@" >/dev/null 2>&1
-}
-
-# fun: timestamp
-# txt: print current timestamp in UTC
-timestamp ()
-{
-  # shellcheck disable=SC2183
-  printf "%(%s)T"
-}
-
-# fun: join <delim> <array_items>
-# txt: return a delim separated list of array_items
-join ()
-{
-  local delim="$1"; shift
-  for x in "$@"; do
-    printf "%s%s" "$x" "$delim"
-  done
-}
-
-# fun: oid <string>
-# txt: create a unique object id for the string passed as argument
-oid ()
-{
-  if [[ -z "${OID_CACHE["$1"]}" ]]; then
-    OID_CACHE["$1"]="$(command git hash-object --stdin <<<"${1%.git}")"
-  fi
-}
-
-# fun: oid_save
-# txt: save the list of OIDs to a cache file
-oid_save ()
-{
-  local i=0
-  [[ "${CONFIG[oid.use-cache]}" != "true" ]] && return
-  {
-    echo "declare -Axg OID_CACHE=("
-    for key in "${!OID_CACHE[@]}"; do
-      echo "[\"$key\"]=\"${OID_CACHE[$key]}\""
-      [[ $((++i)) -gt ${CONFIG[oid.max-cache-size]:-1000} ]] && break
-    done
-    echo ")"
-  } > "${CACHE_DIR}/oid.cache"
-}
-
-# fun: oid_load
-# txt: load precalculated OIDs from cache file
-oid_load ()
-{
-  [[ "${CONFIG[oid.use-cache]}" != "true" ]] && return
-
-  # shellcheck source=/dev/null
-  [[ -r "${CACHE_DIR}/oid.cache" ]] &&
-    source "${CACHE_DIR}/oid.cache"
-}
-
-# fun: try_path <path_list>
-# txt: given a path list, return the first existant item in the list, or, if
-#      none exists, the first one. NOTE: this function does not allow colons
-#      in path items.
-try_path ()
-{
-  local IFS=':'
-  for path in $1; do
-    if [ -d "$path" ]; then
-      echo "$path"
-      return
-    fi
-  done
-  echo "${1%%:*}"
-}
-
-# fun: valid_url <url>
-# txt: return true if url is valid, otherwise return false
-valid_url ()
-{
-  case "$1" in
-    ssh://*|http://*|https://*) return 0
-  esac
-  return 1
-}
-
-# fun: has_hmac <eid>
-# txt: return true if the eid has an hmac
-has_hmac ()
-{
-  local hmac; hmac="${1#*:}"
-  [[ "${hmac}" != "${hmac#*:}" ]]
-}
-
-# fun: username <eid|account_id>
-# txt: return username from a event_id or account_id using alias defined in
-#      configuration and short form if 'timeline.use-short-ids' is true.
-username ()
-{
-  local uname="$1"
-  
-  uname="${uname%%:*}" # remove timestamp if present
-  uname="${uname#@}"  # remove trail @ if present
-
-  alias_name="${CONFIG["user.alias-$uname"]}"
-  short_ids="${CONFIG["timeline.use-short-ids"]}"
-
-  if [[ "$alias_name" ]]; then
-    uname="$alias_name"
-  elif [[ "$short_ids" = "true" ]]; then
-    uname="${uname:0:8}"
-  fi
-
-  echo "@${uname}"
-}
-
-# fun: is_decimal <num>
-# txt: return true if num is a decimal based number.
-is_decimal () {
-  [[ "$1" = "0" ]] && return 0
-  mute let i="10#${1#-}" 2>/dev/null
-}
-
-# fun: keyid <name>
-# txt: get the keyid configured for account name passed as argument
-keyid ()
-{
-  echo "${CONFIG[account.$1.keyid]:-${CONFIG[account.keyid]}}"
-}
-
-# fun: any <list> <list>
-# txt: return true if any element of the first list is also in the second
-#      list.
-any ()
-{
-  case "$1" in
-    '*'|"$2") return 0;;
-    '') return 1;;
-  esac
-
-  local -A list
-
-  for item in $1; do
-    list["$item"]=1
-  done
-
-  for item in $2; do
-    [[ "${list["$item"]}" ]] && return 0
-  done
-  return 1
-}
-
-# fun: on_exit <callback>
-# txt: run callback on exit
-declare -a _on_exit=()
-trap _handler_on_exit EXIT
-_handler_on_exit ()
-{
-  local fun
-  for fun in "${_on_exit[@]}"; do
-    "$fun";
-  done
-}
-on_exit ()
-{
-  _on_exit+=( "$1" )
-}
-
-# fun: temp_file
-# txt: outputs a temporary file which will ensure that will be eliminated
-#      when exectution ends.
-temp_file ()
-{
-  local name="${TMPDIR:-/tmp}/temp_$$.$RANDOM"
-  : > "$name"
-  echo "$name"
-}
-_temp_file_exit ()
-{
-  rm -f "${TMPDIR:-/tmp}/temp_$$".*
-}
-on_exit _temp_file_exit
-
-# fun: temp_dir
-# txt: outputs a temporary directory which will be removed when tl dies
-temp_dir ()
-{
-  local name="${TMPDIR:-/tmp}/tempdir_$$.$RANDOM"
-  mkdir -p "$name"
-  echo "$name"
-}
-_temp_dir_exit ()
-{
-  rm -rf "${TMPDIR:-/tmp}/tempdir_$$".*
-}
-on_exit _temp_dir_exit
-## vim:ft=sh
-
-# env: TIMELINE_OLD: a $IFS separated line contains the last load
-#      indexes.
-TIMELINE_OLD=
-
-# env: TIMELINE_CONTENT: The path relative to the account root, where
-#      CONTENT file is stored.
-TIMELINE_CONTENT="CONTENT"
-
-# env: TIMELINE_FOLLOW The path relative to the account root, where
-#      FOLLOW dir is located.
-TIMELINE_FOLLOW="FOLLOW"
-
-# env: TIMELINE_PRINTED: Internal associative array which contains the EID
-#      of events alredy printed to avoid duplicates.
-declare -A TIMELINE_PRINTED=()
-
-# env: TIMELINE_INDEX: Internal array used to print an index in timeline to
-#      easy refer to an event
-declare -a TIMELINE_INDEX=()
-
-# fun: timeline_load [path] [oid]
-# txt: load the timeline from current active account into memory
-timeline_load ()
-{
-  local oid="$2" content_path follow_path show_own path="$1"
-
-  if [[ -z "$path" ]]; then
-    path="${ACCOUNT_PATH}"
-    oid="${ACCOUNT_OID}"
-  fi
-
-  content_path="$path/$TIMELINE_CONTENT"
-  follow_path="$path/$TIMELINE_FOLLOW"
-  show_own="${CONFIG["timeline.own-posts"]}"
-  pattern=("⣾" "⣽" "⣻" "⢿" "⡿" "⣟" "⣯" "⣷")
-
-  if ! [[ -r "$content_path" ]]; then
-    error $"Content path does not exists."
-    error $"Maybe you delete your account data?"
-    E=1 error $"Try $0 account rebuild ${ACCOUNT_NAME} to recreate it automatically"
-  fi
-
-  # Load our account timeline
-  [[ "$show_own" = "false" ]] ||
-    event_load "$oid" "${content_path}"
-
-  local dir i=0
-
-  if [[ -d "${follow_path}" ]]; then
-    for dir in "${follow_path}"/*; do
-      [[ -d "$dir" ]] || continue  # ignore non-dir files
-      [[ -r "$dir/$TIMELINE_CONTENT" ]] || continue # ignore non initialized
-
-      dir="${dir%/}"
-      echo -en "\r${pattern[$((i % ${#pattern[@]}))]}\r"
-      event_load "${dir##*/}" "${dir}/$TIMELINE_CONTENT"
-    done
-  fi
-}
-
-# fun: timeline_hide_thread <eid>
-# txt: hide the thread of the specific EID
-timeline_hide_thread ()
-{
-  TIMELINE_PRINTED["$1"]=1
-  for event in $(event_labels "$1"); do
-    timeline_hide_thread "$event"
-  done
-  for event in $(event_replies "$1"); do
-    timeline_hide_thread "$event"
-  done
-  return 0
-}
-
-# fun: timeline_show_thread <eid>
-# txt: show the thread of the specific EID
-timeline_show_thread ()
-{
-  unset TIMELINE_PRINTED["$1"]
-  for event in $(event_labels "$1"); do
-    timeline_show_thread "$event"
-  done
-  for event in $(event_replies "$1"); do
-    timeline_show_thread "$event"
-  done
-  return 0
-}
-
-# fun: timeline_list_thread <eid>
-# txt: print thread for specific eid passed as argument
-timeline_list_thread ()
-{
-  local prefix indent date kind mesg tags link name eid="$1"
-  local flag show_tags show_replies flags=''
-
-  # item is already printed? then do nothing
-  [[ "${TIMELINE_PRINTED["$eid"]}" ]] && return
-
-  date="${EVENTS_DATE["$eid"]}"
-  kind="${EVENTS_KIND["$eid"]}"
-  name="$(username "$eid")"
-  sign="${EVENTS_SIGN["$eid"]}"
-
-  case "$kind" in
-    post)
-      mesg="${EVENTS_MESG["$eid"]}"
-      ;;
-    tag)
-      tags="${EVENTS_TAGS["$eid"]// /, }"
-      # shellcheck disable=SC2153
-      link="${EVENTS_LINK["$eid"]}"
-      ;;
-    reply)
-      mesg="${EVENTS_MESG["$eid"]}"
-      link="${EVENTS_LINK["$eid"]}"
-      ;;
-  esac
-
-  indent="${CONFIG["timeline.$kind.indent"]}"
-  prefix="${CONFIG["timeline.$kind.prefix"]}"
-
-  case "${sign}" in
-    G*) flags+="${CONFIG["timeline.$kind.flag-signed-good"]}";;
-    B*) flags+="${CONFIG["timeline.$kind.flag-signed-bad"]}";;
-    U*) flags+="${CONFIG["timeline.$kind.flag-signed-unknown"]}";;
-    X*|Y*) flags+="${CONFIG["timeline.$kind.flag-signed-expired"]}";;
-    R*) flags+="${CONFIG["timeline.$kind.flag-signed-revoked"]}";;
-    E*) flags+="${CONFIG["timeline.$kind.flag-signed-missing"]}";;
-    *) flags+="${CONFIG["timeline.$kind.flag-signed-none"]}";;
-  esac
-
-  if [[ "${CONFIG["timeline.show-untrusted-items"]}" = "true" ]]; then
-    [[ "${sign//\*/}" != "${sign}" ]] &&
-      flags+="${CONFIG["timeline.$kind.flag-trusted"]}" ||
-      flags+=' '
-  fi
-
-  if [[ "${TIMELINE_OLD//$eid/}" = "${TIMELINE_OLD}" ]]; then
-    flags+="${CONFIG["timeline.$kind.flag-new"]}"
-  else
-    flags+=" "
-  fi
-
-  # composing the output
-  format_compose "timeline.$kind" index "${#TIMELINE_INDEX[@]}"
-  format_compose "timeline.$kind" name "$name"
-  format_compose "timeline.$kind" date "$date"
-  format_compose "timeline.$kind" tags "${2}${indent}${prefix}${tags}"
-  format_compose "timeline.$kind" link "$link"
-  format_compose "timeline.$kind" score "${EVENTS_SCORE["$eid"]}"
-  format_compose "timeline.$kind" mesg "${2}${indent}${prefix}${mesg}"
-
-  TIMELINE_PRINTED["$eid"]=1
-  TIMELINE_INDEX+=( "$eid" )
-
-  show_tags="${CONFIG["timeline.show-tags"]}"
-  show_replies="${CONFIG["timeline.show-replies"]}"
-
-  if [[ "$show_tags" != "true" ]]; then
-    if [[ "$(event_labels "$eid")" ]]; then
-      flags+="${CONFIG["timeline.$kind.flag-tagged"]}"
-    else
-      flags+=" "
-    fi
-  fi
-
-  if [[ "$show_replies" != "true" ]]; then
-    if [[ "$(event_replies "$eid")" ]]; then
-      flags+="${CONFIG["timeline.$kind.flag-replied"]}"
-    else
-      flags+=" "
-    fi
-  fi
-
-  if filter_eval "$eid"; then
-    format_compose "timeline.$kind" flags "${flags}"
-    format_dumps "timeline.$kind"
-  fi
-
-  if [[ "$show_tags" = "true" ]]; then
-    for tags in $(event_labels "$eid"); do
-      timeline_list_thread "$tags" "$2${indent}"
-    done
-  fi
-
-  if [[ "$show_replies" = "true" ]]; then
-    for reply in $(event_replies "$eid"); do
-      timeline_list_thread "$reply" "$2${indent}"
-    done
-  fi
-}
-
-# fun: timeline_list [filter]
-# txt: print the entire timelist
-timeline_list ()
-{
-  local eid
-  local -a filter_list
-
-  TIMELINE_PRINTED=()
-  TIMELINE_INDEX=()
-
-  if [[ $# -eq 0 ]]; then
-    read -ra filter_list <<< "${CONFIG[timeline.filter]}"
-    filter_add "${filter_list[@]}"
-  else
-    filter_add "$@"
-  fi
-
-  for eid in "${EVENTS_SORTED[@]}"; do
-    if [[ "${EVENTS_KIND["$eid"]}" = "post" ]]; then
-      timeline_list_thread "$eid" ''
-    fi
-  done
-
-  timeline_index_save
-}
-
-# fun: timeline_index_save
-# txt: dumps TIMELINE_INDEX to a sourceable file to be loaded before any
-#      input to identify an event easily.
-timeline_index_save ()
-{
-  local var
-  {
-    echo "declare -ag TIMELINE_INDEX=("
-    for var in "${TIMELINE_INDEX[@]}"; do
-      echo "'$var'"
-    done
-    echo ")"
-  } > "${CACHE_DIR}/index.${ACCOUNT_OID}.cache"
-}
-
-# fun: timeline_index_load
-# txt: source index saved file with timeline_index_save
-timeline_index_load ()
-{
-  # shellcheck source=/dev/null
-  if [[ -r "${CACHE_DIR}/index.${ACCOUNT_OID}.cache" ]]; then
-    source "${CACHE_DIR}/index.${ACCOUNT_OID}.cache" 
-    TIMELINE_OLD="${TIMELINE_INDEX[*]}"
-  fi
-}
-
-# fun: timeline_index_get <num>
-# txt: return the EID of the event indexed by number passed as argument
-timeline_index_get ()
-{
-  if [[ "$1" -ge ${#TIMELINE_INDEX[@]} ]]; then
-    E=1 error $"Index out of bounds: %s in %s" "$1" "TIMELINE_INDEX"
-  else
-    echo "${TIMELINE_INDEX[$1]}"
-  fi
-}
-
-# fun: timeline_edit
-# txt: interactively edit your timeline
-timeline_edit ()
-{
-  local content auto_push
-  content="${ACCOUNT_PATH}/CONTENT"
-
-  if [[ -w "$content" ]]; then
-
-    auto_push="${CONFIG["account.${ACCOUNT_NAME}.auto-push"]}"
-
-    if ! [[ "$auto_push" ]]; then
-      auto_push="$(config_get account.auto-push)"
-    fi
-
-    ${EDITOR:-nano} "$content"
-
-    account_commit "manual: timeline edit command" | info_multi
-
-    if [[ "$auto_push" = "true" ]]; then
-      account_push | info_multi
-    fi
-
-  else
-    fatal $"Unable to edit CONTENT file"
-  fi
-}
-
-# fun: timeline_orphans
-# txt: show orphan events in the timeline
-timeline_orphans ()
-{
-  for eids in "${EVENTS_CROSS_REPLY[@]}" "${EVENTS_CROSS_TAGS[@]}" \
-    "${EVENTS_CROSS_SCORE[@]}"
-  do
-    for eid in $eids; do
-      if [[ -z "${EVENTS_KIND["$eid"]}" ]]; then
-        timeline_list_thread "$eid"
-      fi
-    done
-  done
-  timeline_index_save
-}
-## vim:ft=sh
-
-FILTER_LIST=()
-
-# fun: filter <tags_to_filter> <eid>
-# txt: return true if EID need to be filtered
-filter_tag ()
-{
-  local fpattern="$1" eid="$2"
-  local event tag
-
-  [[ "$fpattern" = "*" ]] && return 0
-
-  for event in $(event_labels "$eid"); do
-    for tag in $(event_tags "$event"); do
-      if any "$fpattern" "$tag"; then
-        return 0
-      fi
-    done
-  done
-  return 1
-}
-
-# fun: filter <view> <eid>
-# txt: return true if EID need to be filtered
-filter_view ()
-{
-  local fpattern="$1" eid="$2"
-  read -ra view <<< "${CONFIG["views.$fpattern"]}"
-
-  if [[ "${#view[@]}" -ne 0 ]]; then
-    filter_eval "$eid" "${view[@]}"
-  else
-    E=1 fatal $"No view named: %s" "$fpattern"
-  fi
-}
-
-# fun: filter {score-min|score-max} <value> <eid>
-# txt: return true if EID need to be filtered according to score values
-#      passsed as argument.
-filter_score ()
-{
-  local kind="$1" value="$2" eid="$3"
-  local score
-
-  score="$(event_score "$eid")"
-
-  case "$kind" in
-    score-min)
-      [[ "${score:-0}" -lt "${value}" ]] && return 0
-    ;;
-    score-max)
-      [[ "${score:-0}" -gt "${value}" ]] && return 0
-    ;;
-    *)
-      E=1 fatal $"Invalid score filter: %s" "$kind"
-    ;;
-  esac
-
-  return 1
-}
-
-# fun: filter_text <pattern> <eid>
-# txt: return true if especified eid contains text which match with pattern
-#      passed as argument (glob pattern supported only).
-filter_text ()
-{
-  local fpattern="$1" eid="$2"
-
-  # shellcheck disable=SC2254
-  case "${EVENTS_MESG["$eid"]}" in
-    *$fpattern*) return 0;;
-  esac
-  return 1
-}
-
-# fun: filter_mention <eid>
-# txt: return true if myself is mentioned in eid
-filter_mention ()
-{
-  local eid="$1" uid pattern
-  uid="${ACCOUNT_OID}"
-  local -a reat=()
-
-  # no acctive account
-  [[ "$uid" ]] || return 1
-
-  reat=( "@$uid" "@${uid:0:8}" "$(username "$uid")" )
-
-  if [[ "${CONFIG[timeline.react-on-all]}" = "true" ]]; then
-    reat+=( "@all" "@here" )
-  fi
-
-  for pattern in "${reat[@]}"; do
-    filter_text "*${pattern}*" "$eid" && return 0
-  done
-
-  return 1
-}
-
-# fun: filter_engagement <eid>
-# txt: return true if the event has engagement with your account
-filter_engagement ()
-{
-  local eid="$1" uid="${ACCOUNT_OID}" link
-
-  # no acctive account
-  [[ "$uid" ]] || return 1
-
-  case "${EVENTS_KIND["$eid"]}" in
-    P) return 1;;
-    R|T|S)
-      link="${EVENTS_LINK["$eid"]}"
-      link="${link#*:}"; link="${link%:*}"
-      [[ "$link" = "$uid" ]] && return 0
-      ;;
-  esac
-  return 1
-}
-
-# fun: filter_add <expr>
-# txt: Add an expression filter
-filter_add ()
-{
-  FILTER_LIST+=( "$@" )
-}
-
-# fun: filter_eval <eid> [<expr>...]
-# txt: evaluate filtering of the eid for the specified mode. If this funcion
-#      return 0, means that the item is filtered, otherwise is not filtered.
-filter_eval ()
-{
-  local eid="$1" ret=0; shift
-
-  [[ "$#" -eq 0 ]] && set -- "${FILTER_LIST[@]}"
-  for exp in "$@"; do
-    case "$exp" in
-      -*) filter_eval_expr "$eid" "${exp#-}" && ret=1 || ret=0;;
-      *) filter_eval_expr "$eid" "${exp#+}" && ret=0 || ret=1;;
-    esac
-  done
-  return $ret
-}
-
-# fun: filter_eval_expr <eid> <expr>
-# txt: eval an expression and return true if filtered or false if not
-filter_eval_expr ()
-{
-  local eid="$1" expr="$2"
-
-  case "$expr" in
-    '') ;;
-    tag:*)
-      filter_tag "${expr#tag:}" "$eid" && return 0
-      ;;
-    score-min:*|score-max:*)
-      filter_score "${expr%%:*}" "${expr#*:}" "$eid" && return 0
-      ;;
-    view:*)
-      filter_view "${expr#view:}" "$eid" && return 0
-      ;;
-    mention)
-      filter_mention "$eid" && return 0
-      ;;
-    engagement)
-      filter_engagement "$eid" && return 0
-      ;;
-    *)
-      filter_text "${expr#text:}" "$eid" && return 0
-      ;;
-  esac
-  return 1
-}
 ## vim:ft=sh
 
 # env: CONFIG: associative array contains the configuration values. This
@@ -3807,6 +5986,7 @@ declare -xA CONFIG=(
   [alias.dir]='directory'
   [alias.ds]='directory search'
   [alias.pre]='account preview'
+  [input.emojis]=false
 )
 
 export NO_COLORS=0
@@ -3992,276 +6172,5 @@ config_list ()
   for var in "${!CONFIG[@]}"; do
     echo "${var}=${CONFIG[$var]}"
   done
-}
-## vim:ft=sh
-
-# env: ACCOUNT_NAME: A variable contains the name of the acctive account.
-export ACCOUNT_NAME=
-
-# env: ACCOUNT_PATH: A variable contains the path of the acctive account.
-export ACCOUNT_PATH=
-
-# env: ACCOUNT_OID: A variable contains the OID of the acctive account.
-export ACCOUNT_OID=
-
-# fun: account_list
-# txt: output a new-line separated list of defined accounts.
-account_list ()
-{
-  local account
-
-  for account in $(config_iter account.); do
-    case "$account" in
-      account.*.path)
-        account="${account#account.}"
-        account="${account%.path}"
-        echo "$account"
-      ;;
-    esac
-  done
-}
-
-# fun: account_load [name]
-# txt: load the account named as argument, if argument is omit, then try to
-#      load the account using the `account.default` configuration value or,
-#      if missing and there is only one configured account this one.
-#      Otherwise failed.
-account_load ()
-{
-  local name="$1" pull_url changes
-
-  name="${name:-${CONFIG[account.default]}}"
-
-  if [[ -z "$name" ]]; then
-
-    # try to infer the account name if none is provided
-    
-    read -ra all_accounts < <( account_list)
-
-    case "${#all_accounts[@]}" in
-      0) return 1;;
-      1) name="${all_accounts[0]}";;
-      *) E=1 fatal $"There are may accounts.";;
-    esac
-
-  fi
-
-  ACCOUNT_NAME="$name"
-  pull_url="$(config_get "account.$ACCOUNT_NAME.pull-url")"
-  oid "$pull_url"
-  ACCOUNT_OID="${OID_CACHE["$pull_url"]}"
-  ACCOUNT_PATH="$(config_get "account.$ACCOUNT_NAME.path")"
-
-  changes="$(command git -C "${ACCOUNT_PATH}" status --porcelain 2>&1)" ||
-    E=3 error $"Unable to check account status"
-  if [[ "$changes" ]]; then
-    error $"Account is dirty. Maybe you edit your account manually and badly."
-    error $"To repair just run: git reset --hard master in $ACCOUNT_PATH"
-    exit 100
-  fi
-}
-
-export NOACTIVE=$"There are no active accounts"
-
-# fun: account_exists [name]
-# txt: return true if the account name passed as argument is a initialized
-#      account. If name is omit, then use active account path.
-account_exists ()
-{
-  local path=
-  
-  [[ "$1" ]] && path="$(config_get "account.$1.path")"
-
-  if [[ -z "$path" ]]; then
-    path="${ACCOUNT_PATH}"
-  fi
-  [ -d "${path%.git}/.git" ]
-}
-
-# fun: account_create <name> <push_url> <pull_url> [keyid] [path]
-# txt: create a new account named as name, with specific push and pull url,
-#      if path is provided then set the account path to this one, otherwise,
-#      use the default path for accounts as prefix
-account_create ()
-{
-  local name="$1" push_url="$2" pull_url="$3" keyid="$4" path="$5"
-
-  if [[ "${CONFIG["account.$name.path"]}" ]]; then
-    E=1 fatal $"Another account already exists with that name"
-  else
-    path="${path:-$(try_path "$(config_get account.path)")/$name}"
-    config_set "account.$name.push-url" "$push_url"
-    config_set "account.$name.pull-url" "$pull_url"
-    config_set "account.$name.path" "$path"
-    config_set "account.$name.keyid" "$keyid"
-    oid "$pull_url"
-    config_set "user.alias-${OID_CACHE["$pull_url"]}" "$name"
-    account_init "$name"
-    config_save "${CONFIG_FILE}"
-  fi
-}
-
-# fun: account_clone <name> <push_url> <pull_url> [keyid] [path]
-# txt: clone new account named as name, from the specific push url,
-#      if path is provided then set the account path to this one, otherwise,
-#      use the default path for accounts as prefix
-account_clone ()
-{
-  if [[ "$1" = "--force" ]]; then
-    local force=true; shift
-  else
-    local force=false
-  fi
-
-  local name="$1" push_url="$2" pull_url="$3" keyid="$4" path="$5"
-
-  if ! $force && [[ "${CONFIG["account.$name.path"]}" ]]; then
-    E=1 fatal $"Another account already exists with that name"
-  else
-    path="${path:-$(try_path "$(config_get account.path)")/$name}"
-    config_set "account.$name.push-url" "$push_url"
-    config_set "account.$name.pull-url" "$pull_url"
-    config_set "account.$name.keyid" "$keyid"
-    config_set "account.$name.path" "$path"
-    oid "$pull_url"
-    config_set "user.alias-${OID_CACHE["$pull_url"]}" "$name"
-    command git clone "$push_url" "$path"
-    command git -C "$path" submodule init
-    account_config "$path" "$pull_url" "$keyid"
-    config_save "${CONFIG_FILE}"
-  fi
-}
-
-# fun: account_init <name>
-# txt: initialized the accoutn passed as argument
-account_init ()
-{
-  if account_exists "$1"; then
-    E=1 fatal $"Trying to initializating an already initialized account"
-  else
-    local path push_url pull_url keyid
-
-    path="$(config_get "account.$1.path")"
-    pull_url="$(config_get "account.$1.pull-url")"
-    push_url="$(config_get "account.$1.push-url")"
-    keyid="$(keyid "$1")"
-
-    # create empty dir for init
-    mkdir -p "$path" ||
-      E=1 fatal $"Unable to create account directory: %s" "$path"
-
-    command git -C "$path" init ${TIMELINE_EXPERIMENTAL_SHA256:+--object-format=sha256}
-    account_config "$path" "$pull_url" "$keyid"
-    command git -C "$path" add .
-    if [[ "$keyid" ]]; then
-      command git -C "$path" commit -S -m 'Initial commit'
-    else
-      command git -C "$path" commit -m 'Initial commit'
-    fi
-    command git -C "$path" remote add origin "$push_url"
-  fi
-}
-
-# fun: account_config <path> <pull_url> [keyid]
-# txt: configure user and other required things in the repo
-account_config ()
-{
-  local path="$1" pull_url="$2" keyid="$3"
-  oid "$pull_url"
-
-  command git -C "$path" config user.name "${OID_CACHE["$pull_url"]}"
-  command git -C "$path" config user.email "${OID_CACHE["$pull_url"]}@timeline"
-  [[ "$keyid" ]] &&
-    command git -C "$path" config user.signingkey "$keyid"
-  command touch "${path:?}/CONTENT"
-  command mkdir -p "${path:?}/FOLLOW"
-}
-
-# fun: account_commit [message]
-# txt: set a commit point into current active account
-account_commit ()
-{
-  [[ "$ACCOUNT_PATH" ]] || E=1 fatal $"No active account to commit"
-
-  command git -C "$ACCOUNT_PATH" add .
-  if [[ "$(keyid "${ACCOUNT_NAME}")" ]]; then
-    command git -C "$ACCOUNT_PATH" commit -S -m "${1:-autosave}"
-  else
-    command git -C "$ACCOUNT_PATH" commit -m "${1:-autosave}"
-  fi
-}
-
-# fun: account_push [remote]
-# txt: push active account content to remote passed as argument or, if
-#      missing, to `origin`.
-account_push ()
-{
-  # TODO Add support for multiple branches
-  command git -C "${ACCOUNT_PATH}" push "${1:-origin}" master
-}
-
-# fun: account_refresh <path> [remote]
-# txt: rebase changes to current account from remote passed as argument or,
-#     if missing, `origin`.
-account_refresh ()
-{
-  local path="$1"; shift
-
-  command git -C "$path" fetch --all
-  # TODO Add support for multiple branches
-  command git -C "$path" rebase "${1:-origin}/master"
-  command git -C "$path" submodule update --remote \
-    --jobs "${CONFIG[git.jobs]:-1}"
-}
-
-# fun: account_delete [name]
-# txt: delete account by name passed as argument or active account if none
-#      name is provided.
-account_delete ()
-{
-  local name="${1:-$ACCOUNT_NAME}" path pull_url
-
-  path="$(config_get "account.$name.path")"
-  pull_url="$(config_get "account.$name.pull-url")"
-  
-  oid "$pull_url"
-
-  if [[ -d "$path" ]]; then
-    rm -rf "$path"
-  fi
-
-  config_unset "account.$name"
-  config_unset "user.alias-${OID_CACHE["$pull_url"]}"
-
-  config_save "${CONFIG_FILE}"
-}
-
-# fun: account_set_keyid <name> <keyid>
-# txt: set keyid for an existant account
-account_set_keyid ()
-{
-  command git -C "$(config_get "account.$1.path")" config user.signingkey "$2"
-  config_set "account.$1.keyid" "$2"
-}
-
-# fun: account_preview <url> [filter]
-# txt: preview the contents of the specified url repo filtered with the
-#      specific if present.
-account_preview ()
-{
-  local tmpdir depth
-  tmpdir="$(temp_dir)"
-  depth="${CONFIG[account.preview-depth]}"
-
-  [[ "$depth" = "-1" ]] && depth=""
-
-  command git clone ${depth:+--depth "${depth}"} "$1" "${tmpdir}" 2>&1 |
-    info_multi ||
-      E=1 error $"Unable to clone remote repo"
-
-  oid "$1"
-  timeline_load "${tmpdir}" "${OID_CACHE["$1"]}"
-  shift
-  timeline_list "$@"
 }
 main "$@"

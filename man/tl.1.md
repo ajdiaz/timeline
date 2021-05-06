@@ -80,6 +80,10 @@ filter the output.
 show or hide posts from timeline. You can think a view like a
 name for a filter.
 
+**tl-abbr**(1)
+
+: Manage abbreviations. See **tl-event**(1) for more information.
+
 **tl-alias**(1)
 
 : Manage command alias. Just a commodity to type less.
