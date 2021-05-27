@@ -21,14 +21,14 @@ The following subcommands are accepted with timeline command:
 : Show current available timeline, but not refresh it from
 the internet. Usually you want ot use this if you are
 offline, else use **refresh** subcommand instead.
-For known more about filters read the **FILTER** section below
+For known more about filters read the **FILTER** section below.
 
 **refresh** [filter]
 
 : Pull changes in the current enabled timeline and show the results.
 The filter passed as argument are used in the later display of the results,
 not in the refresh. For known more about filters read the **FILTER** section
-below
+below.
 
 **edit**
 
@@ -38,7 +38,7 @@ below
 **orphans**
 
 :  Show the events in the timeline which are marked as orphans, usually these
-are events that hmac does not match. Find out more about orphaned events
+are events that HMAC does not match. Find out more about orphaned events
 in **timeline**(7) manual page.
 
 
@@ -47,7 +47,7 @@ in **timeline**(7) manual page.
 *timeline.show-untrusted-events*=*true*
 
 : If true (by default) show events that cannot be verified that are related with
-another one. This can happend when HMAC verification of a reply/tag/score fails.
+another one. This can happened when HMAC verification of a reply/tag/score fails.
 Read more about HMAC signatures in **timeline**(7) manual page.
 
 *timeline.show-replies*=*true*
@@ -60,19 +60,19 @@ Read more about HMAC signatures in **timeline**(7) manual page.
 
 *timeline.react-on-all*=*true*
 
-: If true (by default) timeline wil react (usually run a notification) when
+: If true (by default) timeline will react (usually run a notification) when
 found *@all* or *@everyone* mentions. See **tl-daemon**(1) for more
 information about notifications.
 
 *timeline.filter.show*=*''*
 
-: When non empty only events that matches the filter will be displayed. Read more
+: When nonempty only events that matches the filter will be displayed. Read more
 about filters in **FILTER** section below.
 
 *timeline.filter.hide*=*'tag:spam score-min:0'*
 
-: When non empty remove from the display all events that match with that filter.
-Read more about filtes in **FILTER** section below.
+: When nonempty remove from the display all events that match with that filter.
+Read more about filters in **FILTER** section below.
 
 *timeline.own-posts*=*true*
 
@@ -80,7 +80,7 @@ Read more about filtes in **FILTER** section below.
 
 *timeline.use-shorts-ids*=*true*
 
-: Whem *true* (by default) if the account has no user name assigned, then
+: Whem *true* (by default) if the account has no username assigned, then
 instead of show the entire OID number, display a short version. Read **timeline**(7)
 and **tl-account**(1) page to known more about OIDs.
 
@@ -169,14 +169,22 @@ events that are trusted.
 
 # FILTER
 
-The filters are a way to simplify the output of the timeline. Filters allows you
-to discard or show events according to some criterias. In general a filter is
-really a list (white-separated) of criterias. The following criterias are available:
+The filters are a way to simplify the output of the timeline. Filters allow you
+to discard or show events according to some criteria. In general a filter is
+really a list (white-separated) of criteria. The following criteria are available:
 
 **tag:\<tag\>**
 
 : Show (or hide if you are using the filter in *timeline.filter.hide*) the
 events with the tag *tag*.
+
+**flag:{trust|new|signed|sign-good|sign-bad|sign-unknown|sign-revoked|sign-missing|sign-expired}**
+
+: Show (or hide) the events when the specific flag set. Valid flags are
+*trust* (for trusted replies and all posts), *new* (for not already displayed
+events), *signed* (for events signed, no matters the signature validation),
+or specific *signed-\<status\>* (for only signed events which this particular
+signature status).
 
 **score-min:\<score\>**
 
@@ -194,14 +202,14 @@ more information about views.
 **text:\<string\>**
 
 : Show (or hide) events that match with the specified text. You can use
-shell globs here, like *\** or *?*, but not regular expressions. Also this
+shell globs here, like *\** or *?*, but not regular expressions. Also, this
 is the default filter, which means that if the filter expression does
 not match with anyone in this list, then timeline will understand a text
 filter with the *string* provided as filter.
 
 **mention**
 
-: Show events that mentions you, using the user name that you provided to
+: Show events that mentions you, using the username that you provided to
 your account. Please note that if someone mentions you with different
 name this filter is useless.
 

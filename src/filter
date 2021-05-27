@@ -2,7 +2,7 @@
 
 FILTER_LIST=()
 
-# fun: filter <tags_to_filter> <eid>
+# fun: filter_tag <tags_to_filter> <eid>
 # txt: return true if EID need to be filtered
 filter_tag ()
 {
@@ -21,7 +21,48 @@ filter_tag ()
   return 1
 }
 
-# fun: filter <view> <eid>
+# fun: filter_flag <flag_to_filter> <eid>
+# txt: return true if EID need to be filtered
+filter_flag ()
+{
+  local flag="$1" eid="$2"
+
+  [[ "${flag}" ]] || return 0
+
+  case "$flag" in
+    new) [[ "${TIMELINE_WAS_PRINTED[$eid]}" ]] || return 0;;
+    trust)
+      [[ "${EVENTS_SIGN["$eid"]//\*/}" != "${EVENTS_SIGN["$eid"]}" ]] &&
+        return 0;;
+    signed-good)
+      [[ "${EVENTS_SIGN["$eid"]//G/}" != "${EVENTS_SIGN["$eid"]}" ]] &&
+        return 0;;
+    signed-bad)
+      [[ "${EVENTS_SIGN["$eid"]//B/}" != "${EVENTS_SIGN["$eid"]}" ]] &&
+        return 0;;
+    signed-unknown)
+      [[ "${EVENTS_SIGN["$eid"]//U/}" != "${EVENTS_SIGN["$eid"]}" ]] &&
+        return 0;;
+    signed-expired)
+      [[ "${EVENTS_SIGN["$eid"]//X/}" != "${EVENTS_SIGN["$eid"]}" ]] &&
+        return 0
+      [[ "${EVENTS_SIGN["$eid"]//Y/}" != "${EVENTS_SIGN["$eid"]}" ]] &&
+        return 0;;
+    signed-revoked)
+      [[ "${EVENTS_SIGN["$eid"]//R/}" != "${EVENTS_SIGN["$eid"]}" ]] &&
+        return 0;;
+    signed-missing)
+      [[ "${EVENTS_SIGN["$eid"]//E/}" != "${EVENTS_SIGN["$eid"]}" ]] &&
+        return 0;;
+    signed)
+      case "${EVENTS_SIGN["$eid"]}" in
+        G*|B*|U*|X*|Y*|R*|E*) return 0;;
+      esac;;
+  esac
+  return 1
+}
+
+# fun: filter_view <view> <eid>
 # txt: return true if EID need to be filtered
 filter_view ()
 {
@@ -35,7 +76,7 @@ filter_view ()
   fi
 }
 
-# fun: filter {score-min|score-max} <value> <eid>
+# fun: filter_score {score-min|score-max} <value> <eid>
 # txt: return true if EID need to be filtered according to score values
 #      passsed as argument.
 filter_score ()
@@ -155,6 +196,9 @@ filter_eval_expr ()
       ;;
     score-min:*|score-max:*)
       filter_score "${expr%%:*}" "${expr#*:}" "$eid" && return 0
+      ;;
+    flag:*)
+      filter_flag "${expr#flag:}" "$eid" && return 0
       ;;
     view:*)
       filter_view "${expr#view:}" "$eid" && return 0

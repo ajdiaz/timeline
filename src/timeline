@@ -1,9 +1,5 @@
 ## vim:ft=sh
 
-# env: TIMELINE_OLD: a $IFS separated line contains the last load
-#      indexes.
-TIMELINE_OLD=
-
 # env: TIMELINE_CONTENT: The path relative to the account root, where
 #      CONTENT file is stored.
 TIMELINE_CONTENT="CONTENT"
@@ -13,8 +9,12 @@ TIMELINE_CONTENT="CONTENT"
 TIMELINE_FOLLOW="FOLLOW"
 
 # env: TIMELINE_PRINTED: Internal associative array which contains the EID
-#      of events alredy printed to avoid duplicates.
+#      of events alredy printed to avoid duplicates in the current execution.
 declare -A TIMELINE_PRINTED=()
+
+# env: TIMELINE_WAS_PRINTED: Internal associative array which contains the EID
+#      of events printed in some previous execution.
+declare -A TIMELINE_WAS_PRINTED=()
 
 # env: TIMELINE_INDEX: Internal array used to print an index in timeline to
 #      easy refer to an event
@@ -123,10 +123,10 @@ timeline_list_thread ()
       flags+=' '
   fi
 
-  if [[ "${TIMELINE_OLD//$eid/}" = "${TIMELINE_OLD}" ]]; then
-    flags+="${CONFIG["timeline.$kind.flag-new"]}"
-  else
+  if [[ "${TIMELINE_WAS_PRINTED[$eid]}" ]]; then
     flags+=" "
+  else
+    flags+="${CONFIG["timeline.$kind.flag-new"]}"
   fi
 
   # composing the output
@@ -216,6 +216,15 @@ timeline_index_save ()
       echo "'$var'"
     done
     echo ")"
+
+    echo "declare -Ag TIMELINE_WAS_PRINTED=("
+    for var in "${!TIMELINE_WAS_PRINTED[@]}"; do
+      echo "[$var]=1"
+    done
+    for var in "${!TIMELINE_PRINTED[@]}"; do
+      [[ "${TIMELINE_WAS_PRINTED[$var]}" ]] || echo "[$var]=1"
+    done
+    echo ")"
   } > "${CACHE_DIR}/index.${ACCOUNT_OID}.cache"
 }
 
@@ -226,7 +235,6 @@ timeline_index_load ()
   # shellcheck source=/dev/null
   if [[ -r "${CACHE_DIR}/index.${ACCOUNT_OID}.cache" ]]; then
     source "${CACHE_DIR}/index.${ACCOUNT_OID}.cache" 
-    TIMELINE_OLD="${TIMELINE_INDEX[*]}"
   fi
 }
 

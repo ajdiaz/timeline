@@ -30,7 +30,11 @@ Timeline:
 
 *tr* - timeline refresh
 
+*trn* - timeline refresh flag:new
+
 *tl* - timeline list
+
+*dr* - timeline refresh flag:new
 
 *edit* - timeline edit
 
