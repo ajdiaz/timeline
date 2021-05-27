@@ -20,41 +20,6 @@ declare -a EVENTS_SORTED=()
 
 ERR_TIME_DUPLICATED=$"Duplicated timestamp for events %s and %s"
 
-# fun: event_load <account_id> <filename>
-# txt: given an content filename, parse it and store events in memory
-event_load ()
-{
-  local max_user_posts fname="$2" account="$1" key val
-  local commit line aname="${CONFIG["user.alias-$account"]:-$account}"
-  local -A gitlog
-
-  max_user_posts="${CONFIG["account.${aname}.max-posts"]:-${CONFIG[account.max-posts]:-20}}"
-
-  while read -r key val; do
-    gitlog["$key"]="$val"
-  done < <(
-    command git -C "${fname%/*}" log -s --pretty=format:"%H %G?" \
-      --no-color "$fname"
-  )
-
-  _i() {
-    case "${2}" in
-      ''|\#*) return
-    esac
-
-    commit="${2%% *}";
-    line="${2#$commit *) }";
-
-    event_load_line "$account" "${fname%/*}" "$commit" \
-      "${gitlog["$commit"]}" "${line}" "$1"
-  }
-
-  # shellcheck disable=SC2034
-  mapfile -c 1 -n "${max_user_posts}" -C _i < <(
-    command git -C "${fname%/*}" blame -s -l "$fname"
-  )
-}
-
 # fun: event_load_line <account_id> <commit> <flags> <content>
 # txt: parse a event line passed as argument and fill properly fields in
 #      a associative array called EVENT. The account id is the OID
@@ -358,4 +323,39 @@ event_info ()
       printf "Signed: No\n"
       ;;
   esac
+}
+
+# fun: event_load <account_id> <filename>
+# txt: given an content filename, parse it and store events in memory
+event_load ()
+{
+  local max_user_posts fname="$2" account="$1" key val
+  local commit line aname="${CONFIG["user.alias-$account"]:-$account}"
+  local -A gitlog
+
+  max_user_posts="${CONFIG["account.${aname}.max-posts"]:-${CONFIG[account.max-posts]:-20}}"
+
+  while read -r key val; do
+    gitlog["$key"]="$val"
+  done < <(
+    command git -C "${fname%/*}" log -s --pretty=format:"%H %G?" \
+      --no-color "$fname"
+  )
+
+  _i() {
+    case "${2}" in
+      ''|\#*) return
+    esac
+
+    commit="${2%% *}";
+    line="${2#$commit *) }";
+
+    event_load_line "$account" "${fname%/*}" "$commit" \
+      "${gitlog["$commit"]}" "${line//$'\e'[\[(]*([0-9;])[@-n]/}" "$1"
+  }
+
+  # shellcheck disable=SC2034
+  mapfile -c 1 -n "${max_user_posts}" -C _i < <(
+    command git -C "${fname%/*}" blame -s -l "$fname"
+  )
 }
