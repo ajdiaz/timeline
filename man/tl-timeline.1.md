@@ -54,9 +54,9 @@ Read more about HMAC signatures in **timeline**(7) manual page.
 
 : If true (by default) show replies in the timeline.
 
-*timeline.show-tags*=*false*
+*timeline.show-tags*=*true*
 
-: If true (false by default) show tags in the timeline.
+: If true (by default) show tags in the timeline.
 
 *timeline.react-on-all*=*true*
 

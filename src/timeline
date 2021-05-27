@@ -88,6 +88,8 @@ timeline_list_thread ()
   kind="${EVENTS_KIND["$eid"]}"
   name="$(username "$eid")"
   sign="${EVENTS_SIGN["$eid"]}"
+  indent="${CONFIG["timeline.$kind.indent"]}"
+  prefix="${CONFIG["timeline.$kind.prefix"]}"
 
   case "$kind" in
     post)
@@ -97,15 +99,13 @@ timeline_list_thread ()
       tags="${EVENTS_TAGS["$eid"]// /, }"
       # shellcheck disable=SC2153
       link="${EVENTS_LINK["$eid"]}"
+      format_compose "timeline.$kind" tags "${2}${indent}${prefix}${tags}"
       ;;
     reply)
       mesg="${EVENTS_MESG["$eid"]}"
       link="${EVENTS_LINK["$eid"]}"
       ;;
   esac
-
-  indent="${CONFIG["timeline.$kind.indent"]}"
-  prefix="${CONFIG["timeline.$kind.prefix"]}"
 
   case "${sign}" in
     G*) flags+="${CONFIG["timeline.$kind.flag-signed-good"]}";;
@@ -133,7 +133,6 @@ timeline_list_thread ()
   format_compose "timeline.$kind" index "${#TIMELINE_INDEX[@]}"
   format_compose "timeline.$kind" name "$name"
   format_compose "timeline.$kind" date "$date"
-  format_compose "timeline.$kind" tags "${2}${indent}${prefix}${tags}"
   format_compose "timeline.$kind" link "$link"
   format_compose "timeline.$kind" score "${EVENTS_SCORE["$eid"]}"
   format_compose "timeline.$kind" mesg "${2}${indent}${prefix}${mesg}"
@@ -144,20 +143,16 @@ timeline_list_thread ()
   show_tags="${CONFIG["timeline.show-tags"]}"
   show_replies="${CONFIG["timeline.show-replies"]}"
 
-  if [[ "$show_tags" != "true" ]]; then
-    if [[ "$(event_labels "$eid")" ]]; then
-      flags+="${CONFIG["timeline.$kind.flag-tagged"]}"
-    else
-      flags+=" "
-    fi
+  if [[ "$(event_labels "$eid")" ]]; then
+    flags+="${CONFIG["timeline.$kind.flag-tagged"]}"
+  else
+    flags+=" "
   fi
 
-  if [[ "$show_replies" != "true" ]]; then
-    if [[ "$(event_replies "$eid")" ]]; then
-      flags+="${CONFIG["timeline.$kind.flag-replied"]}"
-    else
-      flags+=" "
-    fi
+  if [[ "$(event_replies "$eid")" ]]; then
+    flags+="${CONFIG["timeline.$kind.flag-replied"]}"
+  else
+    flags+=" "
   fi
 
   if filter_eval "$eid"; then

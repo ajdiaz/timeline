@@ -27,14 +27,14 @@ declare -xA CONFIG=(
   [history.file]="${XDG_DATA_HOME:-$HOME/.local/share/}tl/history"
   [timeline.show-untrusted-items]=true
   [timeline.show-replies]=true
-  [timeline.show-tags]=false
+  [timeline.show-tags]=true
   [timeline.react-on-all]=true
   [timeline.filter]='-tag:spam -score-min:0'
   [timeline.own-posts]=true
   [timeline.use-short-ids]=true
   [timeline.post.format]='%b%-3d%b %b%(%Y%m%d %H%M%S)T%b %b%10s%b [%b%s%b] (%b%d%b) %b%s%b'
   [timeline.post.fields]='index,date,name,flags,score,mesg'
-  [timeline.post.highlight-mesg]='[@#][^\ ,.:;=\!\?]+'
+  [timeline.post.highlight-mesg]='[@][^\ ,.:;=\!\?]+'
   [timeline.post.prefix]=''
   [timeline.post.color]='7,'
   [timeline.post.color-index]='7,'
@@ -90,7 +90,7 @@ declare -xA CONFIG=(
   [timeline.tag.flag-trusted]='*'
   [timeline.reply.format]='%b%-3d%b %b%(%Y%m%d %H%M%S)T%b %b%10s%b [%b%s%b] (%b%d%b) %b%s%b'
   [timeline.reply.fields]='index,date,name,flags,score,mesg'
-  [timeline.reply.highlight-mesg]='[@#][^\ ,.:;=\!\?]+'
+  [timeline.reply.highlight-mesg]='[@][^\ ,.:;=\!\?]+'
   [timeline.reply.prefix]='> '
   [timeline.reply.indent]=' '
   [timeline.reply.color]='7,'
