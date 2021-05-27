@@ -60,20 +60,6 @@ timeline_load ()
   fi
 }
 
-# fun: timeline_hide_thread <eid>
-# txt: hide the thread of the specific EID
-timeline_hide_thread ()
-{
-  TIMELINE_PRINTED["$1"]=1
-  for event in $(event_labels "$1"); do
-    timeline_hide_thread "$event"
-  done
-  for event in $(event_replies "$1"); do
-    timeline_hide_thread "$event"
-  done
-  return 0
-}
-
 # fun: timeline_show_thread <eid>
 # txt: show the thread of the specific EID
 timeline_show_thread ()
