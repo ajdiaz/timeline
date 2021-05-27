@@ -176,6 +176,10 @@ account_config ()
 
   command git -C "$path" config user.name "${OID_CACHE["$pull_url"]}"
   command git -C "$path" config user.email "${OID_CACHE["$pull_url"]}@timeline"
+  command git -C "$path" config core.preloadindex true
+  command git -C "$path" config core.fscache true
+  command git -C "$path" config gc.auto 256
+  command git -C "$path" config core.ignoreStat true
   [[ "$keyid" ]] &&
     command git -C "$path" config user.signingkey "$keyid"
   command touch "${path:?}/CONTENT"
@@ -219,8 +223,10 @@ account_refresh ()
     --jobs "${CONFIG[git.jobs]:-1}"
 
   if [[ "$(command git -C "$path" status -s)" ]]; then
-    account_commit "FOLLOW updated"
+    account_commit "chore: update submodules"
   fi
+
+  command git -C "$path" repack -a -d --depth=250 --window=250 
 }
 
 # fun: account_delete [name]
