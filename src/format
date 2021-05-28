@@ -36,7 +36,7 @@ format_style ()
 if ( test -t 1 || ${T:-false} ) && ${COLOR:-true}; then
   format_compose ()
   {
-    local out match;
+    local out;
 
     case "${CONFIG["${1}.style-${2}"]}" in
       italic) out="$sitm$3$ritm";;
@@ -44,13 +44,16 @@ if ( test -t 1 || ${T:-false} ) && ${COLOR:-true}; then
       *) out="$3";;
     esac
 
-    if [[ "$out" =~ ${CONFIG["${1}.highlight-${2}"]} ]]; then
-      for match in "${BASH_REMATCH[@]}"; do
-        out="${out//$match/$smso$match$rmso}"
+    rep="$out"
+
+    if [[ "${CONFIG["${1}.highlight-${2}"]}" ]]; then
+      while [[ "$out" =~ ${CONFIG["${1}.highlight-${2}"]} ]]; do
+          rep="${rep//${BASH_REMATCH[0]}/$smso${BASH_REMATCH[0]}$rmso}"
+          out="${out#*"${BASH_REMATCH[0]}"}"
       done
     fi
 
-    FORMAT["$2"]="$(color_eval "${1}.color-${2}" "${1}.color" "$out")"
+    FORMAT["$2"]="$(color_eval "${1}.color-${2}" "${1}.color" "$rep")"
   }
 else
   format_compose () {
@@ -62,19 +65,13 @@ fi
 # txt: dumps to stdout the format composed previously with `format_compose`.
 format_dumps ()
 {
-  local format fields
+  local field IFS=','
   local -a args=()
 
-  format="${CONFIG["${1}.format"]}"
-  fields="${CONFIG["${1}.fields"]}"
-
-  [ "$format" ] || format=''
-
-  local IFS=','
-  for field in ${fields}; do
+  for field in ${CONFIG["${1}.fields"]}; do
     mapfile -t -O "${#args[@]}" args <<< "${FORMAT["$field"]}"
   done
 
   # shellcheck disable=SC2059
-  printf "${format}%b\n" "${args[@]}" "$sgr0"
+  printf "${CONFIG["${1}.format"]}%b\n" "${args[@]}" "$sgr0"
 }

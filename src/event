@@ -329,16 +329,15 @@ event_info ()
 # txt: given an content filename, parse it and store events in memory
 event_load ()
 {
-  local max_user_posts fname="$2" account="$1" key val
+  local max_user_posts fname="$2" account="$1"
   local commit line aname="${CONFIG["user.alias-$account"]:-$account}"
   local -A gitlog
 
   max_user_posts="${CONFIG["account.${aname}.max-posts"]:-${CONFIG[account.max-posts]:-20}}"
 
-  while read -r key val; do
-    gitlog["$key"]="$val"
-  done < <(
-    command git -C "${fname%/*}" log -s --pretty=format:"%H %G?" \
+  # shellcheck disable=SC1090
+  source <(
+    command git -C "${fname%/*}" log -s --pretty=format:"gitlog[%H]='%G?'" \
       --no-color "$fname"
   )
 
