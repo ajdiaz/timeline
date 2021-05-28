@@ -34,16 +34,13 @@ daemon_reload_config ()
   DAEMON_COMMANDS="${CONFIG[daemon.commands]}"
 }
 
-# fun: daemon_run <pidfile>
+# fun: daemon_run
 # txt: Run the commands configured for the daemon every interval.
 daemon_run ()
 {
   daemon_reload_config
 
-  PIDFILE="$1"
-
   trap daemon_reload_config HUP
-  trap daemon_remove_pid TERM
 
   # while sleep ...
   while sleep "${DAEMON_INTERVAL:-300}"
@@ -54,22 +51,29 @@ daemon_run ()
   done
 }
 
-# fun: daemon_start
-# txt: Start daemon in background.
+# fun: daemon_start [--foreground]
+# txt: Start daemon in background or in foreground in --foreground flag
+#      is present.
 daemon_start ()
 {
   local pid
   daemon_reload_config
 
-  [ -r "${PIDFILE}" ] && pid="$(<"${PIDFILE}")"
+  [[ -r "${PIDFILE}" ]] && pid="$(<"${PIDFILE}")"
 
   if [[ "$pid" ]]; then
     fatal $"There are another daemon running. Force quit with daemon kill"
   else
-    daemon_run "${PIDFILE}" &
+    daemon_run &
     echo "$!" > "${PIDFILE}"
-    disown
+
     info $"Starting daemon at pid %d" "$!"
+    if [[ "$1" = "--foreground" ]]; then
+      on_exit "daemon_stop"
+      wait
+    else
+      disown
+    fi
   fi
 }
 
@@ -83,7 +87,7 @@ daemon_stop ()
   [ -r "${PIDFILE}" ] && pid="$(<"${PIDFILE}")"
 
   if [[ "$pid" ]]; then
-    pkill "-$1" -P "$pid" && rm "${PIDFILE}"
+    pkill "-${1:-INT}" -P "$pid" && rm "${PIDFILE}"
   fi
 }
 

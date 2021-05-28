@@ -769,7 +769,6 @@ command_view_add ()
   config_save "${CONFIG_FILE}"
 }
 
-
 # help:view:fun: view del <name>
 # help:view:txt: Delete view named as defined in arguments
 command_view_del ()
@@ -792,13 +791,13 @@ command_daemon ()
   fi
 }
 
-# help:daemon:fun: daemon start
-# help:daemon:txt: Start daemon in background
+# help:daemon:fun: daemon start [--foreground]
+# help:daemon:txt: Start daemon in background or in foreground if the specific
+# help:daemon:txt: flag is set.
 command_daemon_start ()
 {
-  daemon_start
+  daemon_start "$@"
 }
-
 
 # help:daemon:fun: daemon stop
 # help:daemon:txt: Clean stop daemon running in background
