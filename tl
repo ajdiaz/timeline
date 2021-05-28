@@ -1,5 +1,5 @@
 #! /bin/bash -i
-TIMELINE_VERSION='1.8-16-g646069a'
+TIMELINE_VERSION='1.8-17-ge0fdc38'
 ## vim:ft=sh
 
 # fun: [E=code] fatal <message>
@@ -400,85 +400,6 @@ network_refresh ()
   while read -r uid url; do
     network_refresh_repo "$uid" "$url"
   done < <(follow_list "$path")
-}
-## vim:ft=sh
-
-# fun: directory_requirements
-# txt: ensure that specific requirements for directory management are
-#      present in the system
-directory_requirements ()
-{
-  REQUIREMENTS+=( "+curl" "+grep" )
-  reqs_eval
-}
-
-# fun: directory_refresh [name]
-# txt: download directory files for specific directory or for all directories
-#      listed in config.
-directory_refresh ()
-{
-  local dir
-  directory_requirements
-
-  for dir in "${!CONFIG[@]}"; do
-    case "$dir" in
-      "directory.$1"*)
-        curl -qsSL -o "${CACHE_DIR}/$dir" --fail "${CONFIG[$dir]}" 2>&1 ||
-          E=1 error "Unable to refresh directory: ${dir#directory.}"
-        ;;
-    esac
-  done
-}
-# fun: directory_add [--force] <name> <url>
-# txt: add a directory to the config
-directory_add ()
-{
-  if [[ "$1" == "--force" ]]; then
-    local force=true; shift
-  else
-    local force=false
-  fi
-
-  [[ "$1" ]] || E=2 error $"Name is required for add a directory"
-  [[ "$2" ]] || E=2 error $"URL is required for add a directory"
-
-  if ! $force && [[ "${CONFIG["directory.$1"]}" ]]; then
-    error "Already exists a directory registered with name $1"
-    E=1 error "Use --force to override"
-  fi
-
-  CONFIG["directory.$1"]="$2"
-}
-
-# fun: directory_del <name>
-# txt: del a directory to the config
-directory_del ()
-{
-  [[ "$1" ]] || E=2 error $"Name is required for del a directory"a
-  CONFIG["directory.$1"]=''
-}
-
-# fun: directory_list
-# txt: list all directories in config
-directory_list ()
-{
-  for dir in "${!CONFIG[@]}"; do
-    case "$dir" in
-      directory.*)
-        echo "${dir#directory.}: ${CONFIG["$dir"]}"
-        ;;
-    esac
-  done
-}
-
-# fun: directory_search [pattern]
-# txt: search a pattern in directories
-directory_search ()
-{
-  local dir
-  for dir in "${CACHE_DIR}"/directory.*; do
-    grep -v -e '^#' -e '^[ ]*$' "$dir" | grep -w "$1"
-  done
 }
 ## vim:ft=sh
 
@@ -6212,5 +6133,85 @@ format_dumps ()
 
   # shellcheck disable=SC2059
   printf "${CONFIG["${1}.format"]}%b\n" "${args[@]}" "$sgr0"
+}
+## vim:ft=sh
+
+# fun: directory_requirements
+# txt: ensure that specific requirements for directory management are
+#      present in the system
+directory_requirements ()
+{
+  REQUIREMENTS+=( "+curl" "+grep" )
+  reqs_eval
+}
+
+# fun: directory_refresh [name]
+# txt: download directory files for specific directory or for all directories
+#      listed in config.
+directory_refresh ()
+{
+  local dir
+  directory_requirements
+
+  for dir in "${!CONFIG[@]}"; do
+    case "$dir" in
+      "directory.$1"*)
+        curl -qsSL -o "${CACHE_DIR}/$dir" --fail "${CONFIG[$dir]}" 2>&1 ||
+          E=1 error "Unable to refresh directory: ${dir#directory.}"
+        ;;
+    esac
+  done
+}
+# fun: directory_add [--force] <name> <url>
+# txt: add a directory to the config
+directory_add ()
+{
+  if [[ "$1" == "--force" ]]; then
+    local force=true; shift
+  else
+    local force=false
+  fi
+
+  [[ "$1" ]] || E=2 error $"Name is required for add a directory"
+  [[ "$2" ]] || E=2 error $"URL is required for add a directory"
+
+  if ! $force && [[ "${CONFIG["directory.$1"]}" ]]; then
+    error "Already exists a directory registered with name $1"
+    E=1 error "Use --force to override"
+  fi
+
+  CONFIG["directory.$1"]="$2"
+}
+
+# fun: directory_del <name>
+# txt: del a directory to the config
+directory_del ()
+{
+  [[ "$1" ]] || E=2 error $"Name is required for del a directory"a
+  CONFIG["directory.$1"]=''
+}
+
+# fun: directory_list
+# txt: list all directories in config
+directory_list ()
+{
+  for dir in "${!CONFIG[@]}"; do
+    case "$dir" in
+      directory.*)
+        echo "${dir#directory.}: ${CONFIG["$dir"]}"
+        ;;
+    esac
+  done
+}
+
+# fun: directory_search [pattern]
+# txt: search a pattern in directories
+directory_search ()
+{
+  local dir
+  directory_requirements
+  for dir in "${CACHE_DIR}"/directory.*; do
+    grep -v -e '^#' -e '^[ ]*$' "$dir" | grep -w "$1"
+  done
 }
 main "$@"

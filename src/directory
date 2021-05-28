@@ -73,6 +73,7 @@ directory_list ()
 directory_search ()
 {
   local dir
+  directory_requirements
   for dir in "${CACHE_DIR}"/directory.*; do
     grep -v -e '^#' -e '^[ ]*$' "$dir" | grep -w "$1"
   done
