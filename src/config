@@ -148,6 +148,7 @@ declare -xA CONFIG=(
   [timeline.info.style-name]='normal'
   [timeline.info.style-mesg]='normal'
   [timeline.consistent-colors]=''
+  [timeline.loading-pattern]='. o O o'
   [network.list.format]='*** %b%(%Y%m%d %H%M%S)T%b %b%10s%b  score: %b%-03d%b  %b%-10s%b %b%s%b'
   [network.list.fields]='date,name,score,user,url'
   [network.list.color-score]='7,'
@@ -299,6 +300,13 @@ if test -t 1; then
        CONFIG['prompt.color']=69,
        ;;
    esac
+fi
+
+if [[ "${LC_MESSAGES//UTF-8/}" != "${LC_MESSAGES}" ]]; then
+  # if utf-8 is available in locale
+  CONFIG['input.emojis']=true
+  CONFIG['timeline.reply.prefix']='⤷ '
+  CONFIG['timeline.loading-pattern']="⣾ ⣽ ⣻ ⢿ ⡿ ⣟ ⣯ ⣷"
 fi
 
 declare -xa AVAIL_COLORS

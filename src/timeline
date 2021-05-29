@@ -25,6 +25,7 @@ declare -a TIMELINE_INDEX=()
 timeline_load ()
 {
   local oid="$2" content_path follow_path show_own path="$1"
+  local -a pattern
 
   if [[ -z "$path" ]]; then
     path="${ACCOUNT_PATH}"
@@ -34,7 +35,7 @@ timeline_load ()
   content_path="$path/$TIMELINE_CONTENT"
   follow_path="$path/$TIMELINE_FOLLOW"
   show_own="${CONFIG["timeline.own-posts"]}"
-  pattern=("⣾" "⣽" "⣻" "⢿" "⡿" "⣟" "⣯" "⣷")
+  read -ra pattern  <<< "${CONFIG["timeline.loading-pattern"]}"
 
   if ! [[ -r "$content_path" ]]; then
     error $"Content path does not exists."
@@ -42,6 +43,7 @@ timeline_load ()
     E=1 error $"Try $0 account rebuild ${ACCOUNT_NAME} to recreate it automatically"
   fi
 
+  echo -en $"> Loading ${pattern[$((i++ % ${#pattern[@]}))]}\r" >&2
   # Load our account timeline
   [[ "$show_own" = "false" ]] ||
     event_load "$oid" "${content_path}"
@@ -54,7 +56,7 @@ timeline_load ()
       [[ -r "$dir/$TIMELINE_CONTENT" ]] || continue # ignore non initialized
 
       dir="${dir%/}"
-      echo -en "\r${pattern[$((i % ${#pattern[@]}))]}\r"
+      echo -en $"> Loading ${pattern[$((i++ % ${#pattern[@]}))]}\r" >&2
       event_load "${dir##*/}" "${dir}/$TIMELINE_CONTENT"
     done
   fi
