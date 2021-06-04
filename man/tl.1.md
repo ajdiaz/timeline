@@ -97,6 +97,10 @@ name for a filter.
 
 : Send commands directly to underlying git repository of your account.
 
+**tl-gpg**(1)
+
+: Send commands directly to underlying gpg keyring of your account.
+
 # BASIC CONCEPTS
 
 * Timeline is designed to be distributed, which means that there is no main server which
@@ -144,7 +148,7 @@ in the Timeline network.
 
 \<reply\>
 
-: A response to a previos Timeline event.
+: A response to a previous Timeline event.
 
 \<score\>
 
@@ -237,7 +241,7 @@ of GNU GPL v3 License. Run *tl license* to get a full copy of the license.
 
 # SEE ALSO
 
-**tl-tutorial**(7), **timeline**(7), **git**(1).
+**tl-tutorial**(7), **timeline**(7), **tl-crypto**(7), **git**(1), **gpg**(1)
 
 # TIMELINE
 

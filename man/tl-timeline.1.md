@@ -19,7 +19,7 @@ The following subcommands are accepted with timeline command:
 **list** [filter]
 
 : Show current available timeline, but not refresh it from
-the internet. Usually you want ot use this if you are
+the internet. Usually you want to use this if you are
 offline, else use **refresh** subcommand instead.
 For known more about filters read the **FILTER** section below.
 
@@ -41,14 +41,41 @@ below.
 are events that HMAC does not match. Find out more about orphaned events
 in **timeline**(7) manual page.
 
+# FLAGS
+
+: Flags are special characters using in the timeline output to find out some
+characteristics of the event. There are the following flags in order (left to right):
+
+* **Encryption Flag**. (See configuration settings for *timeline.post.flag-encrypted-\**
+  to view all possible values).
+* **Signing Flag**. (See configuration settings for *timeline.post.flag-signed-\** to view
+  all possible values).
+* **Trust Flag**: Set to *timeline.post.flag-trusted* for replies, tags and scores that has a validated reference.
+  This flags essentially means that the reply/tag/score was actually confirmed that was
+  done for the specific event which refers, and no change are made in the original event.
+  From version 1.9 all events should be trusted.
+* **New Flag**: Set to *timeline.post.flag-new* for events that was never printed before.
+* **Tagged Flag**: Set to *timeline.post.flag-tagged* for events that are tagged.
+* **Reply Flag**: Set to *timeline.post.flag-replies* for events that are replied.
 
 # CONFIGURATION SETTINGS
 
-*timeline.show-untrusted-events*=*true*
+*timeline.show-untrusted-items*=*true*
 
 : If true (by default) show events that cannot be verified that are related with
-another one. This can happened when HMAC verification of a reply/tag/score fails.
+another one. This can happen when HMAC verification of a reply/tag/score fails.
 Read more about HMAC signatures in **timeline**(7) manual page.
+
+*timeline.show-all-encrypted*=*false*
+
+: If set to true (false by default) show an informational message when an
+encrypted event is found in the timeline, but cannot be decrypted.
+
+*timeline.show-anon-failed*=*false*
+
+: If set to true (false by default) show an error message when an anonymous encrypted
+message found, but we cannot decrypt it. See **tl-crypto**(7) for more information
+about anonymous encrypted messages.
 
 *timeline.show-replies*=*true*
 
@@ -80,7 +107,7 @@ Read more about filters in **FILTER** section below.
 
 *timeline.use-shorts-ids*=*true*
 
-: Whem *true* (by default) if the account has no username assigned, then
+: When *true* (by default) if the account has no username assigned, then
 instead of show the entire OID number, display a short version. Read **timeline**(7)
 and **tl-account**(1) page to known more about OIDs.
 
@@ -138,7 +165,23 @@ tags.
 
 : Set the flags of signature. The signature is taken from the git log. So you
 can verify here signed commits. To known more about signed commits, please read
-**git-commit**(1).
+**git-commit**(1). The same flags are available for *reply* and *tag* events.
+
+*timeline.post.flag-encrypted-good*=*K*
+
+*timeline.post.flag-encrypted-bad*=*!*
+
+*timeline.post.flag-encrypted-unknown*=*m*
+
+*timeline.post.flag-encrypted-expired*=*X*
+
+*timeline.post.flag-encrypted-revoked*=*R*
+
+*timeline.post.flag-encrypted-none*=*' '*
+
+: Set the flags of encrypted. The encrypted result and encrypted key status is
+taken from the GPG status. Read **tl-crypto**(7) manual page for more information.
+The same flags are available for *reply* and *tag* events.
 
 *timeline.post.flag-tagged*=*T*
 

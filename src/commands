@@ -5,7 +5,7 @@ INVALIDURL=$"Invalid URL '%s'"
 
 
 
-# help:fun: account {create|delete|clone|list|refresh|active|preview} {args...}
+# help:fun: account {create|delete|rebuild|clone|list|refresh|active|preview|keys|keygen|keyrevoke|encrkey|signkey} {args...}
 # help:txt: Manage timeline local and remote accounts.
 command_account ()
 {

@@ -20,12 +20,12 @@ accept subcommands.
 **add** \<pull_url\> [name]
 
 : Start to follow the account pointed by the *pull_url* address. An optional
-*name* will be used as user name, i.e. a familiar name for you instead of
-long OID.
+*name* will be used as username, i.e. a familiar name for you instead of
+long OID. When a new following is added, also imported the proper keyring.
 
 **del** [\-\-url] \<uid/url\>
 
-: Stop follow an account idenfied by specific OID, or the specific *pull_url*
+: Stop follow an account identified by specific OID, or the specific *pull_url*
 as was registered on **add** command.
 
 
@@ -41,7 +41,7 @@ This command has not associated configuration.
 
 # SEE ALSO
 
-**tl-tutorial**(7), **timeline**(7), **tl**(1), **git-submodule**(1)
+**tl-tutorial**(7), **tl-crypto**(7), **timeline**(7), **tl**(1), **git-submodule**(1)
 
 # TIMELINE
 

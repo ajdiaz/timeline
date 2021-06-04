@@ -1,5 +1,5 @@
 #! /bin/bash -i
-TIMELINE_VERSION='1.8-20-g6963a1a'
+TIMELINE_VERSION='1.8-22-g6e5ca18'
 ## vim:ft=sh
 
 # fun: complete_alternatives <level> <prefix>
@@ -2309,223 +2309,6 @@ markdown_generate ()
 }
 ## vim:ft=sh
 
-FILTER_LIST=()
-
-# fun: filter_tag <tags_to_filter> <eid>
-# txt: return true if EID need to be filtered
-filter_tag ()
-{
-  local fpattern="$1" eid="$2"
-  local event tag
-
-  [[ "$fpattern" = "*" ]] && return 0
-
-  for event in $(event_labels "$eid"); do
-    for tag in $(event_tags "$event"); do
-      if any "$fpattern" "$tag"; then
-        return 0
-      fi
-    done
-  done
-  return 1
-}
-
-# fun: filter_flag <flag_to_filter> <eid>
-# txt: return true if EID need to be filtered
-filter_flag ()
-{
-  local flag="$1" eid="$2"
-
-  [[ "${flag}" ]] || return 0
-
-  case "$flag" in
-    new) [[ "${TIMELINE_WAS_PRINTED[$eid]}" ]] || return 0;;
-    trust)
-      [[ "${EVENTS_SIGN["$eid"]//\*/}" != "${EVENTS_SIGN["$eid"]}" ]] &&
-        return 0;;
-    signed-good)
-      [[ "${EVENTS_SIGN["$eid"]//G/}" != "${EVENTS_SIGN["$eid"]}" ]] &&
-        return 0;;
-    signed-bad)
-      [[ "${EVENTS_SIGN["$eid"]//B/}" != "${EVENTS_SIGN["$eid"]}" ]] &&
-        return 0;;
-    signed-unknown)
-      [[ "${EVENTS_SIGN["$eid"]//U/}" != "${EVENTS_SIGN["$eid"]}" ]] &&
-        return 0;;
-    signed-expired)
-      [[ "${EVENTS_SIGN["$eid"]//X/}" != "${EVENTS_SIGN["$eid"]}" ]] &&
-        return 0
-      [[ "${EVENTS_SIGN["$eid"]//Y/}" != "${EVENTS_SIGN["$eid"]}" ]] &&
-        return 0;;
-    signed-revoked)
-      [[ "${EVENTS_SIGN["$eid"]//R/}" != "${EVENTS_SIGN["$eid"]}" ]] &&
-        return 0;;
-    signed-missing)
-      [[ "${EVENTS_SIGN["$eid"]//E/}" != "${EVENTS_SIGN["$eid"]}" ]] &&
-        return 0;;
-    signed)
-      case "${EVENTS_SIGN["$eid"]}" in
-        G*|B*|U*|X*|Y*|R*|E*) return 0;;
-      esac;;
-  esac
-  return 1
-}
-
-# fun: filter_view <view> <eid>
-# txt: return true if EID need to be filtered
-filter_view ()
-{
-  local fpattern="$1" eid="$2"
-  read -ra view <<< "${CONFIG["views.$fpattern"]}"
-
-  if [[ "${#view[@]}" -ne 0 ]]; then
-    filter_eval "$eid" "${view[@]}"
-  else
-    E=1 fatal $"No view named: %s" "$fpattern"
-  fi
-}
-
-# fun: filter_score {score-min|score-max} <value> <eid>
-# txt: return true if EID need to be filtered according to score values
-#      passsed as argument.
-filter_score ()
-{
-  local kind="$1" value="$2" eid="$3"
-  local score
-
-  score="$(event_score "$eid")"
-
-  case "$kind" in
-    score-min)
-      [[ "${score:-0}" -lt "${value}" ]] && return 0
-    ;;
-    score-max)
-      [[ "${score:-0}" -gt "${value}" ]] && return 0
-    ;;
-    *)
-      E=1 fatal $"Invalid score filter: %s" "$kind"
-    ;;
-  esac
-
-  return 1
-}
-
-# fun: filter_text <pattern> <eid>
-# txt: return true if especified eid contains text which match with pattern
-#      passed as argument (glob pattern supported only).
-filter_text ()
-{
-  local fpattern="$1" eid="$2"
-
-  # shellcheck disable=SC2254
-  case "${EVENTS_MESG["$eid"]}" in
-    *$fpattern*) return 0;;
-  esac
-  return 1
-}
-
-# fun: filter_mention <eid>
-# txt: return true if myself is mentioned in eid
-filter_mention ()
-{
-  local eid="$1" uid pattern
-  uid="${ACCOUNT_OID}"
-  local -a reat=()
-
-  # no acctive account
-  [[ "$uid" ]] || return 1
-
-  reat=( "@$uid" "@${uid:0:8}" "$(username "$uid")" )
-
-  if [[ "${CONFIG[timeline.react-on-all]}" = "true" ]]; then
-    reat+=( "@all" "@here" )
-  fi
-
-  for pattern in "${reat[@]}"; do
-    filter_text "*${pattern}*" "$eid" && return 0
-  done
-
-  return 1
-}
-
-# fun: filter_engagement <eid>
-# txt: return true if the event has engagement with your account
-filter_engagement ()
-{
-  local eid="$1" uid="${ACCOUNT_OID}" link
-
-  # no acctive account
-  [[ "$uid" ]] || return 1
-
-  case "${EVENTS_KIND["$eid"]}" in
-    P) return 1;;
-    R|T|S)
-      link="${EVENTS_LINK["$eid"]}"
-      link="${link#*:}"; link="${link%:*}"
-      [[ "$link" = "$uid" ]] && return 0
-      ;;
-  esac
-  return 1
-}
-
-# fun: filter_add <expr>
-# txt: Add an expression filter
-filter_add ()
-{
-  FILTER_LIST+=( "$@" )
-}
-
-# fun: filter_eval <eid> [<expr>...]
-# txt: evaluate filtering of the eid for the specified mode. If this funcion
-#      return 0, means that the item is filtered, otherwise is not filtered.
-filter_eval ()
-{
-  local eid="$1" ret=0; shift
-
-  [[ "$#" -eq 0 ]] && set -- "${FILTER_LIST[@]}"
-  for exp in "$@"; do
-    case "$exp" in
-      -*) filter_eval_expr "$eid" "${exp#-}" && ret=1 || ret=0;;
-      *) filter_eval_expr "$eid" "${exp#+}" && ret=0 || ret=1;;
-    esac
-  done
-  return $ret
-}
-
-# fun: filter_eval_expr <eid> <expr>
-# txt: eval an expression and return true if filtered or false if not
-filter_eval_expr ()
-{
-  local eid="$1" expr="$2"
-
-  case "$expr" in
-    '') ;;
-    tag:*)
-      filter_tag "${expr#tag:}" "$eid" && return 0
-      ;;
-    score-min:*|score-max:*)
-      filter_score "${expr%%:*}" "${expr#*:}" "$eid" && return 0
-      ;;
-    flag:*)
-      filter_flag "${expr#flag:}" "$eid" && return 0
-      ;;
-    view:*)
-      filter_view "${expr#view:}" "$eid" && return 0
-      ;;
-    mention)
-      filter_mention "$eid" && return 0
-      ;;
-    engagement)
-      filter_engagement "$eid" && return 0
-      ;;
-    *)
-      filter_text "${expr#text:}" "$eid" && return 0
-      ;;
-  esac
-  return 1
-}
-## vim:ft=sh
-
 declare -xa TERMINAL_COLORS_FG=()
 declare -xa TERMINAL_COLORS_BG=()
 
@@ -2838,6 +2621,1194 @@ directory_search ()
 }
 ## vim:ft=sh
 
+# fun: usage
+# txt: print help screen
+usage ()
+{
+  printf $"tl: [options] [command [args]]\n\n"
+  printf $"Options:\n"
+  printf $"  -h           Show this help screen\n"
+  printf $"  -a <account> Use specified account\n"
+  printf $"  -C <file>    Load specified config file\n"
+  printf $"  -V           Print version\n"
+  printf $"See all available commands with command 'help'\n"
+}
+
+# fun: args_eval <arg>+
+# txt: parse and evaluate program arguments
+args_eval ()
+{
+  OPTERR=1
+  while getopts "hC:a:V" opt; do
+    case $opt in
+      h)
+        usage; exit 0
+      ;;
+      C)
+        export CONFIG_FILE="$OPTARG"
+      ;;
+      a)
+        export ACCOUNT_NAME="$OPTARG"
+      ;;
+      V)
+        command_version; exit 0
+      ;;
+    *)
+      usage; exit 2
+      ;;
+    esac
+  done
+  return $((OPTIND-1))
+}
+## vim:ft=sh
+
+# env: ACCOUNT_NAME: A variable contains the name of the active account.
+export ACCOUNT_NAME=
+
+# env: ACCOUNT_PATH: A variable contains the path of the active account.
+export ACCOUNT_PATH=
+
+# env: ACCOUNT_OID: A variable contains the OID of the active account.
+export ACCOUNT_OID=
+
+# fun: account_list
+# txt: output a new-line separated list of defined accounts.
+account_list ()
+{
+  local account
+
+  for account in $(config_iter account.); do
+    case "$account" in
+      account.*.path)
+        account="${account#account.}"
+        account="${account%.path}"
+        echo "$account"
+      ;;
+    esac
+  done
+}
+
+# fun: account_load [name]
+# txt: load the account named as argument, if argument is omit, then try to
+#      load the account using the `account.default` configuration value or,
+#      if missing and there is only one configured account this one.
+#      Otherwise failed.
+account_load ()
+{
+  local name="$1" pull_url changes
+
+  name="${name:-${CONFIG[account.default]}}"
+
+  if [[ -z "$name" ]]; then
+
+    # try to infer the account name if none is provided
+    
+    read -ra all_accounts < <( account_list)
+
+    case "${#all_accounts[@]}" in
+      0) return 1;;
+      1) name="${all_accounts[0]}";;
+      *) E=1 fatal $"There are may accounts.";;
+    esac
+
+  fi
+
+  ACCOUNT_NAME="$name"
+  pull_url="${CONFIG["account.$ACCOUNT_NAME.pull-url"]}"
+
+  [[ "$pull_url" ]] ||
+    E=2 fatal $"Unknown account $ACCOUNT_NAME"
+
+  oid "$pull_url"
+  ACCOUNT_OID="${OID_CACHE["$pull_url"]}"
+  ACCOUNT_PATH="$(config_get "account.$ACCOUNT_NAME.path")"
+
+  export GNUPGHOME="${CONFIG[account.$ACCOUNT_NAME.keyring]}"
+
+  changes="$(git_helper -C "${ACCOUNT_PATH}" status --porcelain 2>&1)" ||
+    E=3 error $"Unable to check account status"
+  if [[ "$changes" ]]; then
+    error $"Account is dirty. Maybe you edit your account manually and badly."
+    error $"To repair just run: git -C '%s' reset --hard master" "$ACCOUNT_PATH"
+    exit 100
+  fi
+}
+
+export NOACTIVE=$"There are no active accounts"
+
+# fun: account_exists [name]
+# txt: return true if the account name passed as argument is a initialized
+#      account. If name is omit, then use active account path.
+account_exists ()
+{
+  local path=
+  
+  [[ "$1" ]] && path="${CONFIG["account.$1.path"]}"
+
+  if [[ -z "$path" ]]; then
+    path="${ACCOUNT_PATH}"
+  fi
+  [[ -d "${path%.git}/.git" ]]
+}
+
+# fun: account_keygen <oid> <tstamp> <name>
+# txt: generate a new keypair for the account named name and the oid oid and
+#      specific tstamp
+account_keygen ()
+{
+  local name="$3" tstamp="$2" oid="$1"
+
+  config_set "account.$name.keyring" "$(try_path "${CONFIG[crypto.keyring-path]}")/$name"
+
+  mkdir -p "${CONFIG["account.$name.keyring"]}" &&
+    chmod 700 "${CONFIG["account.$name.keyring"]}"
+
+  export GNUPGHOME="${CONFIG["account.$name.keyring"]}"
+
+  crypto_keygen "$oid" "$tstamp" \
+    "${CONFIG[account.$name.passphrase-file]:-/dev/null}" 2>&1
+}
+
+# fun: account_create <name> <push_url> <pull_url> [path]
+# txt: create a new account named as name, with specific push and pull url,
+#      if path is provided then set the account path to this one, otherwise,
+#      use the default path for accounts as prefix
+account_create ()
+{
+  local name="$1" push_url="$2" pull_url="$3" path="$4" tstamp
+
+  tstamp="$(timestamp)"
+
+  [[ "${CONFIG["account.$name.path"]}" ]] &&
+    E=1 fatal $"Another account already exists with that name"
+
+  account_exists "$name" &&
+    E=1 fatal $"Trying to initializating an already initialized account"
+  
+  path="${path:-$(try_path "$(config_get account.path)")/$name}"
+  config_set "account.$name.push-url" "$push_url"
+  config_set "account.$name.pull-url" "$pull_url"
+  config_set "account.$name.path" "$path"
+
+  oid "$pull_url"
+
+  config_set "user.alias-${OID_CACHE["$pull_url"]}" "$name"
+
+  [[ "${CONFIG[account.auto-keygen]}" = "true" ]] &&
+    account_keygen "${OID_CACHE[$pull_url]}" "$tstamp" "$name"
+
+  # create empty dir for init
+  mkdir -p "$path" ||
+    E=1 fatal $"Unable to create account directory: %s" "$path"
+
+  git_helper -C "$path" init ${TIMELINE_EXPERIMENTAL_SHA256:+--object-format=sha256}
+  account_config "$path" "$pull_url" "$1" "$tstamp"
+
+  config_save "${CONFIG_FILE}"
+
+  git_helper -C "$path" add .
+
+  git_helper -C "$path" commit -m 'init' 2>&1
+  git_helper -C "$path" remote add origin "$push_url" 2>&1
+  git_helper -C "$path" push -u origin master 2>&1 ||
+    E=2 fatal $"Unable to push initial commit"
+}
+
+# fun: account_clone <name> <push_url> <pull_url> [path]
+# txt: clone new account named as name, from the specific push url,
+#      if path is provided then set the account path to this one, otherwise,
+#      use the default path for accounts as prefix
+account_clone ()
+{
+  if [[ "$1" = "--force" ]]; then
+    local force=true; shift
+  else
+    local force=false
+  fi
+
+  local name="$1" push_url="$2" pull_url="$3" path="$4"
+
+  if ! $force && [[ "${CONFIG["account.$name.path"]}" ]]; then
+    E=1 fatal $"Another account already exists with that name"
+  else
+    path="${path:-$(try_path "$(config_get account.path)")/$name}"
+    config_set "account.$name.push-url" "$push_url"
+    config_set "account.$name.pull-url" "$pull_url"
+    config_set "account.$name.path" "$path"
+
+    oid "$pull_url"
+
+    [[ -z "${CONFIG[account.$name.keyring]}" ]] &&
+      [[ "${CONFIG[account.auto-keygen]}" = "true" ]] &&
+        account_keygen "${OID_CACHE[$pull_url]}" "$tstamp" "$name"
+
+    config_set "user.alias-${OID_CACHE["$pull_url"]}" "$name"
+    git_helper clone "$push_url" "$path" 2>&1
+    git_helper -C "$path" submodule init 2>&1
+
+    account_config "$path" "$pull_url" "$name" "timeline"
+
+    config_save "${CONFIG_FILE}"
+  fi
+}
+
+# fun: account_config <path> <pull_url> <name> <tstamp>
+# txt: configure user and other required things in the repo
+account_config ()
+{
+  local path="$1" pull_url="$2" name="$3" tstamp="$4" keyid
+  oid "$pull_url"
+
+  git_helper -C "$path" config user.name "${OID_CACHE["$pull_url"]}"
+  git_helper -C "$path" config user.email "${OID_CACHE["$pull_url"]}@timeline"
+  git_helper -C "$path" config core.preloadindex true
+  git_helper -C "$path" config core.fscache true
+  git_helper -C "$path" config gc.auto 256
+
+  command touch "${path:?}/CONTENT"
+  command mkdir -p "${path:?}/FOLLOW"
+
+  if [[ "$tstamp" ]]; then
+    keyid="$(crypto_keyid "${OID_CACHE["$pull_url"]}" "$tstamp")"
+
+    if [[ "$keyid" ]]; then
+      account_set_signkey "$name" "$keyid"
+      crypto_export "${OID_CACHE["$pull_url"]}" "${path:?}/SIGNKEY"
+      account_set_encrkey "$name" "$keyid"
+      crypto_export "${OID_CACHE["$pull_url"]}" "${path:?}/ENCRKEY"
+
+      export GNUPGHOME="${CONFIG[account.$name.keyring]}"
+    fi
+  fi
+
+}
+
+# fun: account_commit [message]
+# txt: set a commit point into current active account
+account_commit ()
+{
+  [[ "$ACCOUNT_PATH" ]] || E=1 fatal $"No active account to commit"
+
+  git_helper -C "$ACCOUNT_PATH" add .
+
+  if config_eval "account.$ACCOUNT_NAME.signkey" "account.signkey" >/dev/null
+  then
+    git_helper -C "$ACCOUNT_PATH" commit -S -m "${1:-autosave}"
+  else
+    git_helper -C "$ACCOUNT_PATH" commit -m "${1:-autosave}"
+  fi
+}
+
+# fun: account_push [remote]
+# txt: push active account content to remote passed as argument or, if
+#      missing, to `origin`.
+account_push ()
+{
+  # TODO Add support for multiple branches
+  git_helper -C "${ACCOUNT_PATH}" push "${1:-origin}" master
+}
+
+# fun: account_refresh <path> [remote]
+# txt: rebase changes to current account from remote passed as argument or,
+#     if missing, `origin`.
+account_refresh ()
+{
+  local line path="$1" commit=false; shift
+
+  git_helper -C "$path" fetch --all --jobs "${CONFIG[git.jobs]:-4}" 2>&1
+  # TODO Add support for multiple branches
+  git_helper -C "$path" rebase "${1:-origin}/master" 2>&1
+  git_helper -C "$path" submodule update --remote \
+    --jobs "${CONFIG[git.jobs]:-4}" 2>&1
+
+  while read -r _ line; do
+    commit=true
+    case "$line" in
+      FOLLOW/*) account_import "$path/$line";;
+    esac
+  done < <(git_helper -C "$path" status -s)
+
+  ${commit} &&
+    account_commit "chore: update submodules"
+
+  git_helper -C "$path" repack -a -d --depth=250 --window=250 2>&1
+}
+
+# fun: account_delete [name]
+# txt: delete account by name passed as argument or active account if none
+#      name is provided.
+account_delete ()
+{
+  local name="${1:-$ACCOUNT_NAME}" path pull_url
+
+  path="$(config_get "account.$name.path")"
+  pull_url="$(config_get "account.$name.pull-url")"
+  
+  oid "$pull_url"
+
+  if [[ -d "$path" ]]; then
+    rm -rf "$path"
+  fi
+
+  config_unset "account.$name"
+  config_unset "user.alias-${OID_CACHE["$pull_url"]}"
+
+  config_save "${CONFIG_FILE}"
+}
+
+# fun: account_set_signkey <name> <keyid>
+# txt: set signing keyid for an existant account
+account_set_signkey ()
+{
+  if [[ "$2" ]]; then
+    git_helper -C "$(config_get "account.$1.path")" config user.signingkey "$2"
+  else
+    git_helper -C "$(config_get "account.$1.path")" config --unset user.signingkey
+  fi
+
+  config_set "account.$1.signkey" "$2"
+}
+
+# fun: account_set_encrkey <name> <keyid>
+# txt: set encryption keyid for an existant account
+account_set_encrkey ()
+{
+  config_set "account.$1.encrkey" "$2"
+}
+
+# fun: account_preview <url> [filter]
+# txt: preview the contents of the specified url repo filtered with the
+#      specific if present.
+account_preview ()
+{
+  local tmpdir depth
+  tmpdir="$(temp_dir)"
+  depth="${CONFIG[account.preview-depth]}"
+
+  [[ "$depth" = "-1" ]] && depth=""
+
+  git_helper clone ${depth:+--depth "${depth}"} "$1" "${tmpdir}" 2>&1 |
+    info_multi ||
+      E=1 error $"Unable to clone remote repo"
+
+  oid "$1"
+  timeline_load "${tmpdir}" "${OID_CACHE["$1"]}"
+  shift
+  timeline_list "$@"
+}
+
+# fun: account_keys
+# txt: print the associated keys for the current account
+account_keys ()
+{
+  local fpr flags
+
+  while read -r fpr flags; do
+    [[ "$fpr" = "${CONFIG[account.$ACCOUNT_NAME.signkey]}" ]] &&
+      flags+='S'
+
+    [[ "$fpr" = "${CONFIG[account.$ACCOUNT_NAME.encrkey]}" ]] &&
+      flags+='E'
+
+    echo "$fpr $flags"
+  done < <(crypto_list "=${ACCOUNT_OID}@timeline")
+}
+
+# fun: account_import <path>
+# txt: get public keys references in path
+account_import ()
+{
+  local line path="$1";
+
+  # shellcheck disable=SC2016
+  while read -r line; do
+    case "$line" in
+      ENCRKEY|SIGNKEY) crypto_import "$path/$line"
+    esac
+  done < <(git_helper -C "$path" show --pretty="" --name-only)
+}
+## vim:ft=sh
+
+# fun: crypto_requirements
+# txt: ensure that specific requirements for crypto management are
+#      present in the system
+crypto_requirements ()
+{
+  REQUIREMENTS+=( "+gpg" )
+  reqs_eval
+}
+
+# fun: crypto_keygen <account_id> <tstamp> <passphrase-file>
+# txt: generate key pair for the specific account and echoes the key_id of the
+#      generated one. The crver is v1 by default. Read tl-crypto(7) man page
+#      for details.
+crypto_keygen ()
+{
+  crypto_requirements
+
+  local keyid
+
+  gpg_helper \
+    --passphrase-file "$3" \
+    --quick-gen-key "$1@$2" "ed25519" cert,sign never ||
+    E=3 error $"Unable to create master key for account $1 (v1)."
+
+  keyid="$(crypto_keyid "$1@$2")"
+
+  [[ "$keyid" ]] || E=3 fatal $"Unable to retrieve recent generate keyID"
+
+  gpg_helper \
+    --passphrase-file "$3" \
+    --quick-add-key "$keyid" "cv25519" encr never ||
+    E=3 error $"Unable to create encryption key for account $1 (v1)"
+
+  gpg_helper \
+    --passphrase-file "$3" \
+    --quick-add-uid "$keyid" "$1@timeline" ||
+    E=3 error $"Unable to create user-id for account $1 (v1)"
+
+  echo -e "5\ny\nsave\n" | 
+    gpg_helper --no-batch --command-fd 0 \
+      --expert --edit-key "$keyid" trust >/dev/null 2>/dev/null ||
+      E=3 error $"Unable to trust keyID $keyid"
+}
+
+# fun: crypto_keyid <account_id>
+# txt: get the fingerprint for the key associated to specific account id.
+crypto_keyid ()
+{
+  local -a out
+  mapfile -d $'\n' out < <(
+    gpg_helper --keyid-format long -k "$1${2:+@$2}" 2>/dev/null
+  )
+  [[ "${out[1]// /}" ]] &&
+    echo "${out[1]// /}"
+}
+
+# fun: crypto_import <keyfile>
+# txt: import a key into the timeline keyring
+crypto_import ()
+{
+  crypto_requirements
+
+  if [[ "$1" ]]; then
+    gpg_helper --import < "$1" || E=3 error $"Unable to import key file %s" "$1"
+  else
+    gpg_helper --import || E=3 error $"Unable to import key from stdin"
+  fi
+}
+
+# fun: crypto_export <account_id> <file>
+# txt: export public key of the specific account id to file
+crypto_export ()
+{
+  crypto_requirements
+  gpg_helper --no-comments --no-emit-version \
+    --armor --export "$1@timeline" > "$2" ||
+    E=3 error $"Unable to export keys for account $1"
+}
+
+# fun: crypto_revoke <account_name> <key_id>
+# txt: revoke a specific key_id
+crypto_revoke ()
+{
+  local rcert
+  local homedir="${CONFIG[account.$1.keyring]}"
+  crypto_requirements
+
+  [[ -r "${homedir}/openpgp-revocs.d/$2.rev" ]] ||
+    E=4 fatal $"KeyID $1 does not have revocation certificate."
+
+  rcert="$(< "${homedir}/openpgp-revocs.d/$2.rev")"
+  gpg_helper --import <<< "${rcert//:---/---}" || # remove : guard 
+    E=4 fatal $"Unable to revoke key"
+}
+
+# fun: crypto_uid <key_id> [match]
+# txt: echoes the uid of the key_id or, if match provided, return true if
+#      the uid match the pattern.
+crypto_uid ()
+{
+  local line
+  while read -r line; do
+    case "$line" in
+      uid:*)
+        IFS=: read -r -a line <<< "$line"
+        if [[ "$2" ]]; then
+          [[ "${line[9]}" = "$2" ]] && return 0
+        else
+          echo "${line[9]}"
+        fi
+        ;;
+    esac
+  done < <(gpg_helper --with-colons -k "$1")
+  ! [[ "$2" ]]
+}
+
+# fun: crypto_validate <key_id> <crver>
+# txt: validate that specific key_id is conforminr crver specification
+crypto_validate ()
+{
+  local kind val data
+  crypto_requirements
+
+  data="$(gpg_helper --keyid-format long -k "$1@timeline" 2>&1)" ||
+    E=3 error $"Unable to validate key $1 ($2). Error was: '$data'."
+
+  case "$2" in
+    v1)
+      while read -r kind val _; do
+        case "$kind" in
+          pub)
+            [[ "${val#ed25519/}" = "${val}" ]] &&
+              E=3 error $"Key $1 does not conform $2: Pub part is no ED25519"
+            ;;
+          sub)
+            [[ "${val#cv25519/}" = "${val}" ]] &&
+              E=3 error $"Key $1 does not conform $2: Sub part is no CV25519"
+            ;;
+        esac
+      done <<< "$data"
+      ;;
+  esac
+}
+
+# fun: crypto_list
+# txt: echoes a list of keys present in keyring
+crypto_list ()
+{
+  local line flags pub=false
+  while IFS=: read -r -a line; do
+    case "${line[0]}" in
+      pub)
+        case "${line[1]}" in
+          *r*) flags="R";;
+          *) flags="";;
+        esac
+        pub=true;;
+      fpr) "$pub" && echo "${line[9]} $flags";;
+      *) pub=false;;
+    esac
+  done < <(gpg_helper --with-colons -k "$@")
+}
+
+# fun: crypto_encrypt [--anon] <recipient> <message> <passfile>
+# txt: return a encrypted message for the specific recipient in REPLY var
+crypto_encrypt ()
+{
+  local mesg arg='-r'
+  local -a payload
+  crypto_requirements
+
+  [[ "$1" = "--anon" ]] && arg="-R" && shift
+
+  mapfile -t -s 2 payload < <(
+    gpg_helper -vv \
+      --armor --passphrase-file "$3" \
+      --sign --encrypt --no-comments --no-emit-version \
+      "$arg" "$1@timeline" <<< "$2"
+  ) 2>&1
+
+  [[ ${#payload[@]} -eq 0 ]] && exit 4
+
+  payload[-1]=''
+  REPLY="${payload[*]}"
+  REPLY="${REPLY// /}"
+}
+
+# fun: crypto_decrypt <account_id> <message> <passfile> [statusfile]
+# txt: decrypt a previously encrypted message
+crypto_decrypt ()
+{
+  local -a args
+  local -a mesg=(
+    "-----BEGIN PGP MESSAGE-----"
+    ""
+    "$2"
+    "-----END PGP MESSAGE-----"
+  )
+  crypto_requirements
+
+  [[ "$4" ]] && args+=( "--status-file=$4" )
+
+  read -r < <(
+    gpg_helper "${args[@]}" --passphrase-file "$3" -v --armor --decrypt \
+      --try-secret-key "$1@timeline" <<< "$(join $'\n' "${mesg[@]}")"
+  ) 2>&1 || REPLY=''
+}
+
+# fun: crypto_keyflags <keyid>
+# txt: put in $REPLY a list of flags for the keyid passed as argument
+crypto_keyflags ()
+{
+  local -a line
+  local aux
+  REPLY=''
+
+  while IFS=: read -ra line ; do
+    case "${line[0]}" in
+      pub|sub) aux="${line[1]}";;
+      fpr|fp2) [[ "${line[9]}" = "$1" ]] && REPLY="$aux" || true;;
+    esac
+  done < <(gpg_helper --with-colons -k "$1") ||
+    E=3 fatal $"Unable to retrieve keyflags for key %s" "$1"
+}
+
+# fun: gpg_helper [args]
+# txt: run gpg command with some well known parameters
+gpg_helper ()
+{
+  local homedir
+
+  [[ "$GNUPGHOME" ]] ||
+    E=3 fatal $"GNUPGHOME not set executing $*"
+
+  command "${CONFIG[crypto.gnupg-binary]:-exit}" --batch --no-tty \
+    --no-auto-key-retrieve --auto-key-locate "local" \
+    --trust-model always \
+    --personal-cipher-preferences AES256 \
+    --personal-digest-preferences SHA256 \
+    "$@"
+}
+## vim:ft=sh
+
+# fun: [E=code] fatal <message>
+# txt: print fatal message to stderr, if environment variable `$E` is
+#      present, then exists with specified error code in `$E` (only if
+#      non-interactive)
+fatal ()
+{
+  E="${E:-1}" error "$@"
+}
+
+# fun: error <message>
+# txt: print error message to stderr
+error ()
+{
+  if [ "$E" ]; then
+    local err_kind="fatal"
+  else
+    local err_kind="error"
+  fi
+
+  format_compose "timeline.$err_kind" name \
+    "$(config_get timeline.${err_kind}.name)"
+  format_compose "timeline.$err_kind" date "$(timestamp)"
+  # shellcheck disable=SC2059
+  format_compose "timeline.$err_kind" mesg "$(printf -- "$@")"
+  format_dumps "timeline.$err_kind" >&2
+
+  if [ "$E" ]; then
+    exit "$E"
+  fi
+}
+
+# fun: error_multi
+# txt: get messages from stdin and print informational messages to stderr
+error_multi ()
+{
+  format_compose timeline.error name "${CONFIG[timeline.error.name]:-ERROR}"
+  format_compose timeline.error date "$(printf "%(%s)T")"
+  _i() {
+    format_compose timeline.error mesg "${2%$'\n'}"
+    format_dumps timeline.error >&2
+  }
+  # shellcheck disable=SC2034
+  mapfile -c 1 -C _i
+}
+## vim:ft=sh
+
+# env: EID: store the last EID created
+export EID=
+
+# env: EVENT: associative array which contains parts of an event line.
+declare -A EVENTS_KIND=()
+declare -A EVENTS_DATE=()
+declare -A EVENTS_LINK=()
+declare -A EVENTS_TAGS=()
+declare -A EVENTS_MESG=()
+declare -A EVENTS_SIGN=()
+declare -A EVENTS_SCORE=()
+declare -A EVENTS_COMMIT=()
+declare -A EVENTS_ENCROUT=()
+declare -A EVENTS_CFLAGS=()
+
+declare -A EVENTS_CROSS_REPLY=()
+declare -A EVENTS_CROSS_TAGS=()
+declare -A EVENTS_CROSS_SCORE=()
+declare -a EVENTS_SORTED=()
+
+ERR_TIME_DUPLICATED=$"Duplicated timestamp for events %s and %s"
+
+# fun: event_load_line <account_id> <fname> <commit> <flags> <content> <index> <encrout> <cflag>
+# txt: parse a event line passed as argument and fill properly fields in
+#      a associative array called EVENT. The account id is the OID
+#      associated to the pull_url of the account.
+#
+#      The POST kind has the fields: timestamp,kind,message
+#      The REPLY kind has the fields: timestamp,kind,ref,message
+#      The TAG kind has the fields: timestamp,kind,ref,tags
+#      The SCORE kind has the fields: timestamp,kind,ref,score
+event_load_line ()
+{
+  local aid="$1" fname="$2" commit="$3" flags="$4" line="${5%$'\n'}"
+  local encrout="$7" cflag="$8" show_untrusted t_output t_status
+  local idx link mesg tags score hmac='' eid
+
+  local datet="${line%% *}"
+  local kind="${line#$datet }"; kind="${kind%% *}"
+  local rest="${line#$datet $kind }"
+
+  local -a status
+
+  idx="$(( ${datet}000 + $6 ))"
+
+  show_untrusted="${CONFIG["timeline.show-untrusted-items"]}"
+
+  case "$kind" in
+    P|POST)
+      mesg="$rest"
+      kind='post'
+      oid "$mesg"
+      hmac="${OID_CACHE["$mesg"]}"
+      ;;
+    R|REPLY)
+      link="${rest%% *}"
+      mesg="${rest#$link }"
+      kind='reply'
+      oid "$mesg"
+      hmac="${OID_CACHE["$mesg"]}"
+      ;;
+    T|TAG)
+      link="${rest%% *}"
+      tags="${rest#$link }"
+      kind='tag'
+      oid "$link $tags"
+      hmac="${OID_CACHE["$link $tags"]}"
+      ;;
+    S|SCORE)
+      kind='score'
+      link="${rest%% *}"
+      score="${rest#$link }"
+      case "$score" in
+        -1) score="-1";;
+        *) score="1";;
+      esac
+      oid "$link $score"
+      hmac="${OID_CACHE["$link $score"]}"
+      ;;
+    E|ENCRYPTED)
+      local ignore_anon rcpt="${rest%% *}"; mesg="${rest#$rcpt }"
+
+      ignore_anon="$(config_eval \
+        "account.$ACCOUNT_NAME.crypto-ignore-anon" \
+        "account.crypto-ignore-anon"
+      )"
+
+      if [[ "$rcpt" = "${ACCOUNT_OID}" ]] ||
+        [[ ("$rcpt" = "@all") && ($ignore_anon != "false") ]]; then
+        t_output="$(temp_file)"; t_status="$(temp_file)"
+
+        crypto_decrypt "${ACCOUNT_OID}" "$mesg" \
+          "${CONFIG[account.$ACCOUNT_NAME.passphrase-file]:-/dev/null}" \
+          "$t_status" > "$t_output" 2>&1
+
+        mesg="$REPLY"
+
+        while read -ra status; do
+          case "${status[1]}" in
+            DECRYPTION_KEY)
+              crypto_keyflags "${status[2]}"
+              cflag="${REPLY}" && break;;
+          esac
+        done < "$t_status"
+
+        if  [[ "$mesg" ]]; then
+          event_load_line "$1" "$2" "$3" "$4" "$mesg" "$6" "$(< "$t_output")" "$cflag"
+        elif [[ "${CONFIG[timeline.show-anon-failed]}" = "true" ]]; then
+          error $"Unable to decrypt anonymous message from %s." "$(username "$aid")"
+        fi
+
+      elif [[ "${CONFIG[timeline.show-all-encrypted]}" = "true" ]]; then
+        info $"Encrypted message from %s to %s." "$(username "$aid")" "$(username "$rcpt")"
+      fi
+      return 0;;
+    *)
+      error $"Ignored malformed event: '$line'"
+      return 0
+      ;;
+  esac
+
+  [[ "$encrout" ]] && unset OID_CACHE["$mesg"]
+
+  if [[ "$show_untrusted" = "true" ]]; then
+    eid="$aid:$datet"
+    case "$link" in
+      *:*:*) flags+="*"; link="${link%:*}";;
+    esac
+  else
+    eid="$aid:$datet:$hmac"
+  fi
+
+  EVENTS_KIND["$eid"]="$kind"
+  EVENTS_DATE["$eid"]="$datet"
+  EVENTS_LINK["$eid"]="$link"
+  EVENTS_TAGS["$eid"]="$tags"
+  EVENTS_MESG["$eid"]="$mesg"
+  EVENTS_SIGN["$eid"]="$flags"
+  EVENTS_COMMIT["$eid"]="$fname $commit"
+  EVENTS_ENCROUT["$eid"]="$encrout"
+  EVENTS_CFLAGS["$eid"]="$cflag"
+
+  # XXX some array abused. Because arrays allows any index number, and are
+  # sorted by definition, we do not need to sort anything.
+  EVENTS_SORTED["$idx"]="$eid"
+
+  if [[ "$kind" = 'reply' ]]; then
+    EVENTS_CROSS_REPLY[$link]+=" $eid "
+  elif [[ "$kind" = 'tag' ]]; then
+    EVENTS_CROSS_TAGS[$link]+=" $eid "
+  elif [[ "$kind" = 'score' ]]; then
+    if ! [[ "${EVENTS_CROSS_SCORE[$aid:$link]}" ]]; then
+      EVENTS_CROSS_SCORE["$aid:$link"]=1
+      (( EVENTS_SCORE["$link"]+=score ))
+    fi
+  fi
+
+  [[ "$ACCOUNT_NAME" ]] && notify "$eid"
+}
+
+# fun: event_sign <eid>
+# txt: return true if EID is signed
+event_sign ()
+{
+  echo "${EVENTS_SIGN[$1]}"
+}
+
+# fun: event_replies <eid>
+# txt: given an specific eid return the eids of the replies of that post
+event_replies ()
+{
+  local -a sorted_replies=()
+  local idx
+
+  for reply in ${EVENTS_CROSS_REPLY["$1"]}; do
+    idx="${reply#*:}"; idx="${idx%%:*}$(printf %03d "$((RANDOM % 100))")"
+    [[ "$reply" = "$1" ]] && E=3 error "$ERR_TIME_DUPLICATED" "$label" "$1"
+    sorted_replies[$idx]="$reply"
+  done
+
+  echo "${sorted_replies[@]}"
+}
+
+# fun: event_labels <eid>
+# txt: given an specific eid return the eids of the tags of that post
+event_labels ()
+{
+  local -a sorted_labels=()
+  local idx
+
+  for label in ${EVENTS_CROSS_TAGS["$1"]}; do
+    idx="${label#*:}"; idx="${idx%%:*}$(printf %03d "$((RANDOM % 100))")"
+    [[ "$label" = "$1" ]] && E=3 error "$ERR_TIME_DUPLICATED" "$label" "$1"
+    sorted_labels[$idx]="$label"
+  done
+
+  echo "${sorted_labels[@]}"
+}
+
+# fun: event_score <eid>
+# txt: return the score of the specified event
+event_score ()
+{
+  echo "${EVENTS_SCORE[$1]:-0}"
+}
+
+# fun: event_iter
+# txt: print a list of events saved in memory
+event_iter ()
+{
+  echo "${EVENTS_SORTED[@]}"
+}
+
+# fun: event_kind <eid>
+# txt: given an event id, get the kind of the event
+event_kind ()
+{
+  echo "${EVENTS_KIND["$1"]}"
+}
+
+# fun: event_date <eid>
+# txt: given an event id, get the date of the event
+event_date ()
+{
+  echo "${EVENTS_DATE["$1"]}"
+}
+
+# fun: event_link <eid>
+# txt: given an event id, get the link of the event (only for TAGS and
+#      REPLIES)
+event_link ()
+{
+  echo "${EVENTS_LINK["$1"]}"
+}
+
+# fun: event_tags <eid>
+# txt: given an event id, get the tags of the event (only for TAGS)
+event_tags ()
+{
+  echo "${EVENTS_TAGS["$1"]}"
+}
+
+# fun: event_mesg <eid>
+# txt: given an event id, get the message of the event (only for REPLY and
+#      POST)
+event_mesg ()
+{
+  echo "${EVENTS_MESG["$1"]}"
+}
+
+# fun: event_create <args>
+# txt: create new event. Args can vary depends of event type, the order of
+#      the arguments should be:
+#      For posts: date kind mesg
+#      For reply: date kind link mesg
+#      For tags:  date kind link tags
+#      For dms: date kind recipient mesg-base64
+# env: EID: set this variable to the value of the EID to the created element.
+event_create ()
+{
+  local auto_push content_markdown mesg line l
+  local -a content
+
+  auto_push="$(config_eval "account.${ACCOUNT_NAME}.auto-push" account.auto-push)"
+
+  EID="$ACCOUNT_OID:$1"
+
+  case "$2" in
+    P) mesg="$3"; line="$*";;
+    E) mesg="$4"; line="$*";;
+    R|T|S)
+      mesg="$4"
+      case "$3" in
+        *:*:*) line="$*" ;;
+        *:*)
+          if [[ "${EVENTS_MESG["$3"]}" ]]; then
+            oid "${EVENTS_MESG["$3"]}"
+            line="$1 $2 $3:${OID_CACHE["${EVENTS_MESG["$3"]}"]} $4"
+          else
+            E=1 error $"Try to reference a non-existant EID: $3"
+          fi;;
+        *) E=1 error $"Invalid EID reference: $*";;
+      esac;;
+  esac
+  oid "$mesg"
+  EID+=":${OID_CACHE["$mesg"]}"
+
+  mapfile -t content < "${ACCOUNT_PATH}/$TIMELINE_CONTENT"
+
+  echo "$line" > "${ACCOUNT_PATH}/$TIMELINE_CONTENT"
+  for l in "${content[@]}"; do
+    echo "$l" >> "${ACCOUNT_PATH}/$TIMELINE_CONTENT"
+  done
+
+  content_markdown="${CONFIG["account.${ACCOUNT_NAME}.content-markdown"]}"
+
+  if ! [[ "$content_markdown" ]]; then
+    content_markdown="${CONFIG[account.content-markdown]}"
+  fi
+
+  if [[ "$content_markdown" = "true" ]]; then
+    markdown_generate
+  fi
+
+  account_commit "event: $line"
+
+  if [[ "$auto_push" = "true" ]]; then
+    account_push
+  fi
+}
+
+# fun: event_info <eid>
+# txt: given an eid, print the infortmation related with this event
+event_info ()
+{
+  local eid="$1" date kind mesg tags reply link tag
+
+  date="${EVENTS_DATE["$1"]}"
+  kind="${EVENTS_KIND["$1"]}"
+
+  if [[ -z "$kind" ]]; then
+    E=1 error $"Not found information for EID '$eid'"
+    return 1
+  fi
+
+  mesg="${EVENTS_MESG["$eid"]}"
+  tags="${EVENTS_TAGS["$eid"]}"
+  link="${EVENTS_LINK["$eid"]}"
+  
+  printf "%-10s %s\n" $"EID:"   "$eid"
+  printf "%-10s %s (%s)\n" $"UID:"   "${eid%%:*}" "$(username "$eid")"
+  # shellcheck disable=SC2183
+  printf "%-10s %s (%(%Y-%m-%d %H:%M:%S)T)\n" $"Date:"  "$date" "$date"
+  printf "%-10s %s\n" $"Kind:"   "${kind^^}"
+  printf "%-10s %s\n" $"Link:"   "${link}"
+  printf "%-10s %s\n" $"Tags:"   "${tags}"
+  printf "%-10s %s\n" $"Mesg:"   "${mesg}"
+  printf $"Tagged by:\n"
+
+  local -A taggedas=()
+  for item in $(event_labels "$eid"); do
+    printf "  -  %s\n" "$item"
+    for tag in ${EVENTS_TAGS["$item"]}; do
+      taggedas["$tag"]=1
+    done
+  done
+  printf $"Tagged as:\n"
+  for item in "${!taggedas[@]}"; do
+    printf "  -  %s\n" "$item"
+  done
+  printf $"Replied by:\n"
+  for item in $(event_replies "$eid"); do
+    printf "  -  %s\n" "$item"
+  done
+
+  case "${EVENTS_SIGN["$eid"]//\*/}" in
+    G|B|U|X|Y|R|E)
+      printf "%-10s %s\n" $"Signed:" $"Yes"
+      printf $"Signature information:\n"
+
+      git_helper -C "${EVENTS_COMMIT["$eid"]%% *}" \
+        verify-commit "${EVENTS_COMMIT["$eid"]##* }" 2>&1 | prefix "     "
+      ;;
+    *)
+      printf "%-10s %s\n" $"Signed:" $"No"
+      ;;
+  esac
+
+  if [[ "${EVENTS_ENCROUT["$eid"]}" ]]; then
+    printf "%-10s %s\n" $"Encrypted:" $"Yes"
+    printf "%-10s %s\n" $"Encrypted Flags": "${EVENTS_CFLAGS["$eid"]}"
+    printf "%-10s %s\n" $"Keyring:" "${CONFIG["account.$ACCOUNT_NAME.keyring"]}"
+    printf $"Decryption Process Information:\n"
+
+    echo "${EVENTS_ENCROUT["$eid"]}" | prefix "     "
+  else
+    printf "%-10s %s\n" $"Encrypted:" $"No"
+  fi
+}
+
+# fun: event_load <account_id> <filename>
+# txt: given an content filename, parse it and store events in memory
+event_load ()
+{
+  local max_user_posts fname="$2" account="$1"
+  local commit line aname="${CONFIG["user.alias-$account"]:-$account}"
+  local -A gitlog
+
+  max_user_posts="${CONFIG["account.${aname}.max-posts"]:-${CONFIG[account.max-posts]:-20}}"
+
+  # shellcheck disable=SC1090
+  source <(
+    git_helper -C "${fname%/*}" log -s --pretty=format:"gitlog[%H]='%G?'" \
+      --no-color "$fname"
+  )
+
+  _i() {
+    case "${2}" in
+      ''|\#*) return
+    esac
+
+    commit="${2%% *}";
+    line="${2#$commit *) }";
+
+    event_load_line "$account" "${fname%/*}" "$commit" \
+      "${gitlog["$commit"]}" "${line//$'\e'[\[(]*([0-9;])[@-n]/}" "$1"
+  }
+
+  # shellcheck disable=SC2034
+  mapfile -c 1 -n "${max_user_posts}" -C _i < <(
+    git_helper -C "${fname%/*}" blame -s -l "$fname"
+  )
+}
+## vim:ft=sh
+
+# fun: follow_list <path>
+# txt: given a path get the submodules into FOLLOW directory
+follow_list ()
+{
+  local line path="$1"
+
+  while read -r line; do
+    line="${line#*${TIMELINE_FOLLOW}/}"
+    case "$line" in
+      *'.url='*)
+        echo "${line%.url=*}" "${line#*.url=}"
+      ;;
+    esac
+  done < <(git_helper -C "$path" config -f .gitmodules -l 2>/dev/null)
+}
+
+
+# fun: follow_add <pull_url> [name]
+# txt: Add new following using pull_url passed as argument. Optional name
+#      will add a config entry for user alias to this name.
+follow_add ()
+{
+  local pull_url="${1}" name="$2"
+  oid "$pull_url"
+  
+  git_helper -C "${ACCOUNT_PATH}" submodule add \
+    "$pull_url" "${TIMELINE_FOLLOW}/${OID_CACHE["$pull_url"]}"
+  git_helper -C "${ACCOUNT_PATH}" submodule init
+  git_helper -C "${ACCOUNT_PATH}" submodule update --remote
+
+  account_commit "follow: add ${OID_CACHE["${pull_url}"]}"
+  account_push
+
+  if [[ "${CONFIG[crypto.auto-import]}" = "true" ]]
+  then
+    [[ -r "${ACCOUNT_PATH}/${TIMELINE_FOLLOW}/${OID_CACHE["$pull_url"]}/ENCRKEY" ]] &&
+      crypto_import "${ACCOUNT_PATH}/${TIMELINE_FOLLOW}/${OID_CACHE["$pull_url"]}/ENCRKEY"
+
+    [[ -r "${ACCOUNT_PATH}/${TIMELINE_FOLLOW}/${OID_CACHE["$pull_url"]}/SIGNKEY" ]] &&
+      crypto_import "${ACCOUNT_PATH}/${TIMELINE_FOLLOW}/${OID_CACHE["$pull_url"]}/SIGNKEY"
+  fi
+
+  if [[ "$name" ]]; then
+    config_set "user.alias-${OID_CACHE["$pull_url"]}" "$name"
+    config_save "${CONFIG_FILE}"
+  fi
+}
+
+# fun: follow_del <uid>
+# txt: remove following for user identified by specific UID
+follow_del ()
+{
+  local uid="$1"
+
+  mpath="${TIMELINE_FOLLOW}/$uid"
+
+  # remove gitconfig sections
+  mute git_helper -C "$ACCOUNT_PATH" config -f .git/config \
+    --remove-section "submodule.$mpath"
+
+  mute git_helper -C "$ACCOUNT_PATH" config -f .gitmodules \
+    --remove-section "submodule.$mpath"
+
+  account_commit "follow: del ${uid}"
+
+  git_helper -C "$ACCOUNT_PATH" rm --cached "$mpath"
+  rm -rf "${ACCOUNT_PATH:?}/.git/modules/$mpath"
+ 
+  if [[ -d "$ACCOUNT_PATH/$mpath" ]]; then
+    rm -rf "${ACCOUNT_PATH:?}/${mpath:?}"
+  fi
+
+  account_push
+}
+## vim:ft=sh
+
 # env: NETWORK: an associative array which contains all network information
 declare -A NETWORK_SCORE=()
 declare -A NETWORK_PARENTS=()
@@ -2976,166 +3947,993 @@ network_refresh ()
 }
 ## vim:ft=sh
 
-# fun: usage
-# txt: print help screen
-usage ()
+# env: TIMELINE_CONTENT: The path relative to the account root, where
+#      CONTENT file is stored.
+TIMELINE_CONTENT="CONTENT"
+
+# env: TIMELINE_FOLLOW The path relative to the account root, where
+#      FOLLOW dir is located.
+TIMELINE_FOLLOW="FOLLOW"
+
+# env: TIMELINE_PRINTED: Internal associative array which contains the EID
+#      of events alredy printed to avoid duplicates in the current execution.
+declare -A TIMELINE_PRINTED=()
+
+# env: TIMELINE_WAS_PRINTED: Internal associative array which contains the EID
+#      of events printed in some previous execution.
+declare -A TIMELINE_WAS_PRINTED=()
+
+# env: TIMELINE_INDEX: Internal array used to print an index in timeline to
+#      easy refer to an event
+declare -a TIMELINE_INDEX=()
+
+# fun: timeline_load [path] [oid]
+# txt: load the timeline from current active account into memory
+timeline_load ()
 {
-  printf $"tl: [options] [command [args]]\n\n"
-  printf $"Options:\n"
-  printf $"  -h           Show this help screen\n"
-  printf $"  -a <account> Use specified account\n"
-  printf $"  -C <file>    Load specified config file\n"
-  printf $"  -V           Print version\n"
-  printf $"See all available commands with command 'help'\n"
+  local oid="$2" content_path follow_path show_own path="$1"
+  local -a pattern
+
+  if [[ -z "$path" ]]; then
+    path="${ACCOUNT_PATH}"
+    oid="${ACCOUNT_OID}"
+  fi
+
+  content_path="$path/$TIMELINE_CONTENT"
+  follow_path="$path/$TIMELINE_FOLLOW"
+  show_own="${CONFIG["timeline.own-posts"]}"
+  read -ra pattern  <<< "${CONFIG["timeline.loading-pattern"]}"
+
+  if ! [[ -r "$content_path" ]]; then
+    error $"Content path does not exists."
+    error $"Maybe you delete your account data?"
+    E=1 error $"Try $0 account rebuild ${ACCOUNT_NAME} to recreate it automatically"
+  fi
+
+  echo -en $"> Loading ${pattern[$((i++ % ${#pattern[@]}))]}\r" >&2
+  # Load our account timeline
+  [[ "$show_own" = "false" ]] ||
+    event_load "$oid" "${content_path}"
+
+  local dir i=0
+
+  if [[ -d "${follow_path}" ]]; then
+    for dir in "${follow_path}"/*; do
+      [[ -d "$dir" ]] || continue  # ignore non-dir files
+      [[ -r "$dir/$TIMELINE_CONTENT" ]] || continue # ignore non initialized
+
+      dir="${dir%/}"
+      echo -en $"> Loading ${pattern[$((i++ % ${#pattern[@]}))]}\r" >&2
+      event_load "${dir##*/}" "${dir}/$TIMELINE_CONTENT"
+    done
+  fi
 }
 
-# fun: args_eval <arg>+
-# txt: parse and evaluate program arguments
-args_eval ()
+# fun: timeline_show_thread <eid>
+# txt: show the thread of the specific EID
+timeline_show_thread ()
 {
-  OPTERR=1
-  while getopts "hC:a:V" opt; do
-    case $opt in
-      h)
-        usage; exit 0
+  unset TIMELINE_PRINTED["$1"]
+  for event in $(event_labels "$1"); do
+    timeline_show_thread "$event"
+  done
+  for event in $(event_replies "$1"); do
+    timeline_show_thread "$event"
+  done
+  return 0
+}
+
+# fun: timeline_list_thread <eid>
+# txt: print thread for specific eid passed as argument
+timeline_list_thread ()
+{
+  local prefix indent date kind mesg tags link name eid="$1"
+  local flag show_tags show_replies flags=''
+
+  # item is already printed? then do nothing
+  [[ "${TIMELINE_PRINTED["$eid"]}" ]] && return
+
+  date="${EVENTS_DATE["$eid"]}"
+  kind="${EVENTS_KIND["$eid"]}"
+  name="$(username "$eid")"
+  sign="${EVENTS_SIGN["$eid"]}"
+  indent="${CONFIG["timeline.$kind.indent"]}"
+  prefix="${CONFIG["timeline.$kind.prefix"]}"
+
+  case "$kind" in
+    post)
+      mesg="${EVENTS_MESG["$eid"]}"
       ;;
-      C)
-        export CONFIG_FILE="$OPTARG"
+    tag)
+      tags="${EVENTS_TAGS["$eid"]// /, }"
+      # shellcheck disable=SC2153
+      link="${EVENTS_LINK["$eid"]}"
+      format_compose "timeline.$kind" tags "${2}${indent}${prefix}${tags}"
       ;;
-      a)
-        export ACCOUNT_NAME="$OPTARG"
+    reply)
+      mesg="${EVENTS_MESG["$eid"]}"
+      link="${EVENTS_LINK["$eid"]}"
       ;;
-      V)
-        command_version; exit 0
-      ;;
-    *)
-      usage; exit 2
-      ;;
+  esac
+
+  if [[ "${EVENTS_CFLAGS["$eid"]}" ]]; then
+    case "${EVENTS_CFLAGS["$eid"]}" in
+      'u') flags+="${CONFIG["timeline.$kind.flag-encrypted-good"]}";;
+      '-') flags+="${CONFIG["timeline.$kind.flag-encrypted-unknown"]}";;
+      'r') flags+="${CONFIG["timeline.$kind.flag-encrypted-revoked"]}";;
+      'e') flags+="${CONFIG["timeline.$kind.flag-encrypted-expired"]}";;
+      *) flags+="${CONFIG["timeline.$kind.flag-encrypted-bad"]}";;
+    esac
+  else
+    flags+="${CONFIG["timeline.$kind.flag-encrypted-none"]}"
+  fi
+
+  case "${sign}" in
+    G*) flags+="${CONFIG["timeline.$kind.flag-signed-good"]}";;
+    B*) flags+="${CONFIG["timeline.$kind.flag-signed-bad"]}";;
+    U*) flags+="${CONFIG["timeline.$kind.flag-signed-unknown"]}";;
+    X*|Y*) flags+="${CONFIG["timeline.$kind.flag-signed-expired"]}";;
+    R*) flags+="${CONFIG["timeline.$kind.flag-signed-revoked"]}";;
+    E*) flags+="${CONFIG["timeline.$kind.flag-signed-missing"]}";;
+    N*) flags+="${CONFIG["timeline.$kind.flag-signed-none"]}";;
+    *) flags+="${sign}";;
+  esac
+
+  if [[ "${CONFIG["timeline.show-untrusted-items"]}" = "true" ]]; then
+    [[ "${sign//\*/}" != "${sign}" ]] &&
+      flags+="${CONFIG["timeline.$kind.flag-trusted"]}" ||
+      flags+=' '
+  fi
+
+  if [[ "${TIMELINE_WAS_PRINTED[$eid]}" ]]; then
+    flags+=" "
+  else
+    flags+="${CONFIG["timeline.$kind.flag-new"]}"
+  fi
+
+  # composing the output
+  format_compose "timeline.$kind" index "${#TIMELINE_INDEX[@]}"
+  format_compose "timeline.$kind" name "$name"
+  format_compose "timeline.$kind" date "$date"
+  format_compose "timeline.$kind" link "$link"
+  format_compose "timeline.$kind" score "${EVENTS_SCORE["$eid"]}"
+  format_compose "timeline.$kind" mesg "${2}${indent}${prefix}${mesg}"
+
+  TIMELINE_PRINTED["$eid"]=1
+  TIMELINE_INDEX+=( "$eid" )
+
+  show_tags="${CONFIG["timeline.show-tags"]}"
+  show_replies="${CONFIG["timeline.show-replies"]}"
+
+  if [[ "$(event_labels "$eid")" ]]; then
+    flags+="${CONFIG["timeline.$kind.flag-tagged"]}"
+  else
+    flags+=" "
+  fi
+
+  if [[ "$(event_replies "$eid")" ]]; then
+    flags+="${CONFIG["timeline.$kind.flag-replied"]}"
+  else
+    flags+=" "
+  fi
+
+  if filter_eval "$eid"; then
+    format_compose "timeline.$kind" flags "${flags}"
+    format_dumps "timeline.$kind"
+  fi
+
+  if [[ "$show_tags" = "true" ]]; then
+    for tags in $(event_labels "$eid"); do
+      timeline_list_thread "$tags" "$2${indent}"
+    done
+  fi
+
+  if [[ "$show_replies" = "true" ]]; then
+    for reply in $(event_replies "$eid"); do
+      timeline_list_thread "$reply" "$2${indent}"
+    done
+  fi
+}
+
+# fun: timeline_list [filter]
+# txt: print the entire timelist
+timeline_list ()
+{
+  local eid
+  local -a filter_list
+
+  TIMELINE_PRINTED=()
+  TIMELINE_INDEX=()
+
+  if [[ $# -eq 0 ]]; then
+    read -ra filter_list <<< "${CONFIG[timeline.filter]}"
+    filter_add "${filter_list[@]}"
+  else
+    filter_add "$@"
+  fi
+
+  for eid in "${EVENTS_SORTED[@]}"; do
+    if [[ "${EVENTS_KIND["$eid"]}" = "post" ]]; then
+      timeline_list_thread "$eid" ''
+    fi
+  done
+
+  timeline_index_save
+}
+
+# fun: timeline_index_save
+# txt: dumps TIMELINE_INDEX to a sourceable file to be loaded before any
+#      input to identify an event easily.
+timeline_index_save ()
+{
+  local var
+  {
+    echo "declare -ag TIMELINE_INDEX=("
+    for var in "${TIMELINE_INDEX[@]}"; do
+      echo "'$var'"
+    done
+    echo ")"
+
+    echo "declare -Ag TIMELINE_WAS_PRINTED=("
+    for var in "${!TIMELINE_WAS_PRINTED[@]}"; do
+      echo "[$var]=1"
+    done
+    for var in "${!TIMELINE_PRINTED[@]}"; do
+      [[ "${TIMELINE_WAS_PRINTED[$var]}" ]] || echo "[$var]=1"
+    done
+    echo ")"
+  } > "${CACHE_DIR}/index.${ACCOUNT_OID}.cache"
+}
+
+# fun: timeline_index_load
+# txt: source index saved file with timeline_index_save
+timeline_index_load ()
+{
+  # shellcheck source=/dev/null
+  if [[ -r "${CACHE_DIR}/index.${ACCOUNT_OID}.cache" ]]; then
+    source "${CACHE_DIR}/index.${ACCOUNT_OID}.cache" 
+  fi
+}
+
+# fun: timeline_index_get <num>
+# txt: return the EID of the event indexed by number passed as argument
+timeline_index_get ()
+{
+  if [[ "$1" -ge ${#TIMELINE_INDEX[@]} ]]; then
+    E=1 error $"Index out of bounds: %s in %s" "$1" "TIMELINE_INDEX"
+  else
+    echo "${TIMELINE_INDEX[$1]}"
+  fi
+}
+
+# fun: timeline_edit
+# txt: interactively edit your timeline
+timeline_edit ()
+{
+  local content auto_push
+  content="${ACCOUNT_PATH}/CONTENT"
+
+  if [[ -w "$content" ]]; then
+
+    auto_push="${CONFIG["account.${ACCOUNT_NAME}.auto-push"]}"
+
+    if ! [[ "$auto_push" ]]; then
+      auto_push="$(config_get account.auto-push)"
+    fi
+
+    ${EDITOR:-nano} "$content"
+
+    account_commit "manual: timeline edit command" | info_multi
+
+    if [[ "$auto_push" = "true" ]]; then
+      account_push | info_multi
+    fi
+
+  else
+    fatal $"Unable to edit CONTENT file"
+  fi
+}
+
+# fun: timeline_orphans
+# txt: show orphan events in the timeline
+timeline_orphans ()
+{
+  for eids in "${EVENTS_CROSS_REPLY[@]}" "${EVENTS_CROSS_TAGS[@]}" \
+    "${EVENTS_CROSS_SCORE[@]}"
+  do
+    for eid in $eids; do
+      if [[ -z "${EVENTS_KIND["$eid"]}" ]]; then
+        timeline_list_thread "$eid"
+      fi
+    done
+  done
+  timeline_index_save
+}
+## vim: ft=sh
+
+# env: OID_CACHE
+# txt: save a generated oids to avoid recalculation
+declare -gA OID_CACHE
+
+# fun: fun <function_name>
+# txt: return true if function is defined
+fun () { declare -f "$1" >/dev/null 2>&1; }
+
+# fun: input <pass_text>
+# txt: return true if the text typed by the user match with the pass_text
+input ()
+{
+  local reply i
+  read -r reply
+  for i in "$@"; do
+    [[ "$i" = "$reply" ]] && return 0
+  done
+
+  return 1
+}
+
+# fun: prefix <item>
+# txt: prefix each line in stdin with a item and output to stdout
+prefix () { local line; while read -r line; do echo "$1$line"; done; }
+
+# fun: mute <command> [args]
+# txt: run command quietly
+mute () { "$@" >/dev/null 2>&1; }
+
+# fun: timestamp
+# txt: print current timestamp in UTC
+timestamp ()
+{
+  # shellcheck disable=SC2183
+  printf "%(%s)T"
+}
+
+# fun: join <delim> <array_items>
+# txt: return a delim separated list of array_items
+join ()
+{
+  local delim="$1"; shift
+  for x in "$@"; do
+    printf "%s%s" "$x" "$delim"
+  done
+}
+
+# fun: oid <string>
+# txt: create a unique object id for the string passed as argument
+oid ()
+{
+  if [[ -z "${OID_CACHE["$1"]}" ]]; then
+    OID_CACHE["$1"]="$(git_helper hash-object --stdin <<<"${1%.git}")"
+  fi
+}
+
+# fun: oid_save
+# txt: save the list of OIDs to a cache file
+oid_save ()
+{
+  local i=0
+  [[ "${CONFIG[oid.use-cache]}" != "true" ]] && return
+  {
+    echo "declare -Axg OID_CACHE=("
+    for key in "${!OID_CACHE[@]}"; do
+      echo "[\"$key\"]=\"${OID_CACHE[$key]}\""
+      [[ $((++i)) -gt ${CONFIG[oid.max-cache-size]:-1000} ]] && break
+    done
+    echo ")"
+  } > "${CACHE_DIR}/oid.cache"
+}
+
+# fun: oid_load
+# txt: load precalculated OIDs from cache file
+oid_load ()
+{
+  [[ "${CONFIG[oid.use-cache]}" != "true" ]] && return
+
+  # shellcheck source=/dev/null
+  [[ -r "${CACHE_DIR}/oid.cache" ]] &&
+    source "${CACHE_DIR}/oid.cache"
+}
+
+# fun: try_path <path_list>
+# txt: given a path list, return the first existant item in the list, or, if
+#      none exists, the first one. NOTE: this function does not allow colons
+#      in path items.
+try_path ()
+{
+  local IFS=':'
+  for path in $1; do
+    if [ -d "$path" ]; then
+      echo "$path"
+      return
+    fi
+  done
+  echo "${1%%:*}"
+}
+
+# fun: valid_url <url>
+# txt: return true if url is valid, otherwise return false
+valid_url ()
+{
+  case "$1" in
+    ssh://*|http://*|https://*|file://*) return 0
+  esac
+  return 1
+}
+
+# fun: has_hmac <eid>
+# txt: return true if the eid has an hmac
+has_hmac ()
+{
+  local hmac; hmac="${1#*:}"
+  [[ "${hmac}" != "${hmac#*:}" ]]
+}
+
+# fun: username <eid|account_id>
+# txt: return username from a event_id or account_id using alias defined in
+#      configuration and short form if 'timeline.use-short-ids' is true.
+username ()
+{
+  local uname="$1"
+  
+  uname="${uname%%:*}" # remove timestamp if present
+  uname="${uname#@}"  # remove trail @ if present
+
+  alias_name="${CONFIG["user.alias-$uname"]}"
+  short_ids="${CONFIG["timeline.use-short-ids"]}"
+
+  if [[ "$alias_name" ]]; then
+    uname="$alias_name"
+  elif [[ "$short_ids" = "true" ]]; then
+    uname="${uname:0:8}"
+  fi
+
+  echo "@${uname}"
+}
+
+# fun: uid <name>
+# txt: reverse search for name in list of account alias
+uid ()
+{
+  local key
+  for key in "${!CONFIG[@]}"; do
+    case "$key" in
+      user.alias-*)
+        [[ "${CONFIG[$key]}" = "$1" ]] && echo "${key#*-}" && return 0;;
     esac
   done
-  return $((OPTIND-1))
-}
-## vim:ft=sh
-
-# fun: [E=code] fatal <message>
-# txt: print fatal message to stderr, if environment variable `$E` is
-#      present, then exists with specified error code in `$E` (only if
-#      non-interactive)
-fatal ()
-{
-  E="${E:-1}" error "$@"
 }
 
-# fun: error <message>
-# txt: print error message to stderr
-error ()
+# fun: expand_user <userlist>
+# txt: expand a user list to a list of valids uids
+expand_user ()
 {
-  if [ "$E" ]; then
-    local err_kind="fatal"
-  else
-    local err_kind="error"
-  fi
-
-  format_compose "timeline.$err_kind" name \
-    "$(config_get timeline.${err_kind}.name)"
-  format_compose "timeline.$err_kind" date "$(timestamp)"
-  # shellcheck disable=SC2059
-  format_compose "timeline.$err_kind" mesg "$(printf -- "$@")"
-  format_dumps "timeline.$err_kind" >&2
-
-  if [ "$E" ]; then
-    exit "$E"
-  fi
-}
-
-# fun: error_multi
-# txt: get messages from stdin and print informational messages to stderr
-error_multi ()
-{
-  format_compose timeline.error name "${CONFIG[timeline.error.name]:-ERROR}"
-  format_compose timeline.error date "$(printf "%(%s)T")"
-  _i() {
-    format_compose timeline.error mesg "${2%$'\n'}"
-    format_dumps timeline.error >&2
-  }
-  # shellcheck disable=SC2034
-  mapfile -c 1 -C _i
-}
-## vim:ft=sh
-
-# fun: follow_list <path>
-# txt: given a path get the submodules into FOLLOW directory
-follow_list ()
-{
-  local line path="$1"
-
-  while read -r line; do
-    line="${line#*${TIMELINE_FOLLOW}/}"
-    case "$line" in
-      *'.url='*)
-        echo "${line%.url=*}" "${line#*.url=}"
-      ;;
+  local u
+  for u in ${1//,/ }; do
+    case "$u" in
+      =*) echo "${CONFIG["group.${u%=}"]}";;
+      *) uid "${u%@}";;
     esac
-  done < <(git_helper -C "$path" config -f .gitmodules -l 2>/dev/null)
+  done
 }
 
-
-# fun: follow_add <pull_url> [name]
-# txt: Add new following using pull_url passed as argument. Optional name
-#      will add a config entry for user alias to this name.
-follow_add ()
-{
-  local pull_url="${1}" name="$2"
-  oid "$pull_url"
-  
-  git_helper -C "${ACCOUNT_PATH}" submodule add \
-    "$pull_url" "${TIMELINE_FOLLOW}/${OID_CACHE["$pull_url"]}"
-  git_helper -C "${ACCOUNT_PATH}" submodule init
-  git_helper -C "${ACCOUNT_PATH}" submodule update --remote
-
-  account_commit "follow: add ${OID_CACHE["${pull_url}"]}"
-  account_push
-
-  if [[ "${CONFIG[crypto.auto-import]}" = "true" ]]
-  then
-    [[ -r "${ACCOUNT_PATH}/${TIMELINE_FOLLOW}/${OID_CACHE["$pull_url"]}/ENCRKEY" ]] &&
-      crypto_import "${ACCOUNT_PATH}/${TIMELINE_FOLLOW}/${OID_CACHE["$pull_url"]}/ENCRKEY"
-
-    [[ -r "${ACCOUNT_PATH}/${TIMELINE_FOLLOW}/${OID_CACHE["$pull_url"]}/SIGNKEY" ]] &&
-      crypto_import "${ACCOUNT_PATH}/${TIMELINE_FOLLOW}/${OID_CACHE["$pull_url"]}/SIGNKEY"
-  fi
-
-  if [[ "$name" ]]; then
-    config_set "user.alias-${OID_CACHE["$pull_url"]}" "$name"
-    config_save "${CONFIG_FILE}"
-  fi
+# fun: is_decimal <num>
+# txt: return true if num is a decimal based number.
+is_decimal () {
+  [[ "$1" = "0" ]] && return 0
+  mute let i="10#${1#-}" 2>/dev/null
 }
 
-# fun: follow_del <uid>
-# txt: remove following for user identified by specific UID
-follow_del ()
+# fun: any <list> <list>
+# txt: return true if any element of the first list is also in the second
+#      list.
+any ()
 {
-  local uid="$1"
+  case "$1" in
+    '*'|"$2") return 0;;
+    '') return 1;;
+  esac
 
-  mpath="${TIMELINE_FOLLOW}/$uid"
+  local -A list
 
-  # remove gitconfig sections
-  mute git_helper -C "$ACCOUNT_PATH" config -f .git/config \
-    --remove-section "submodule.$mpath"
+  for item in $1; do
+    list["$item"]=1
+  done
 
-  mute git_helper -C "$ACCOUNT_PATH" config -f .gitmodules \
-    --remove-section "submodule.$mpath"
+  for item in $2; do
+    [[ "${list["$item"]}" ]] && return 0
+  done
+  return 1
+}
 
-  account_commit "follow: del ${uid}"
+# fun: git_helper <cmds>+
+# txt: send commands to git assuming some things
+git_helper ()
+{
+  HOME=/dev/null command git "$@"
+}
 
-  git_helper -C "$ACCOUNT_PATH" rm --cached "$mpath"
-  rm -rf "${ACCOUNT_PATH:?}/.git/modules/$mpath"
- 
-  if [[ -d "$ACCOUNT_PATH/$mpath" ]]; then
-    rm -rf "${ACCOUNT_PATH:?}/${mpath:?}"
+# fun: on_exit <callback>
+# txt: run callback on exit
+declare -a _on_exit=()
+trap _handler_on_exit EXIT
+_handler_on_exit ()
+{
+  local fun
+  for fun in "${_on_exit[@]}"; do
+    "$fun";
+  done
+}
+on_exit ()
+{
+  _on_exit+=( "$1" )
+}
+
+# fun: temp_file
+# txt: outputs a temporary file which will ensure that will be eliminated
+#      when exectution ends.
+temp_file ()
+{
+  local name="${TMPDIR:-/tmp}/temp_$$.$RANDOM$RANDOM"
+  : > "$name"
+  echo "$name"
+}
+_temp_file_exit ()
+{
+  rm -f "${TMPDIR:-/tmp}/temp_$$".*
+}
+on_exit _temp_file_exit
+
+# fun: temp_dir
+# txt: outputs a temporary directory which will be removed when tl dies
+temp_dir ()
+{
+  local name="${TMPDIR:-/tmp}/tempdir_$$.$RANDOM"
+  mkdir -p "$name"
+  echo "$name"
+}
+_temp_dir_exit ()
+{
+  rm -rf "${TMPDIR:-/tmp}/tempdir_$$".*
+}
+on_exit _temp_dir_exit
+## vim:ft=sh
+
+# env: CONFIG: associative array contains the configuration values. This
+#      array should be loaded from file with `config_load` function, and
+#      accessed by `config_get` and `config_set` to read and write,
+#      res pectively.
+declare -xA CONFIG=(
+  [oid.use-cache]=true
+  [oid.max-cache-size]=1000
+  [interactive.show-banner]=true
+  [account.auto-push]=true
+  [account.auto-keygen]=true
+  [account.content-markdown]=true
+  [account.preview-depth]=100
+  [account.default]=''
+  [account.signkey]=''
+  [account.encrkey]=''
+  [account.encrypt-to-me]=true
+  [account.max-posts]=20
+  [account.path]="${XDG_DATA_HOME:-$HOME/.local/share}/tl/account:$HOME/.tl/account"
+  [plugin.path]="${XDG_DATA_HOME:-$HOME/.local/share}/tl/plugin:$HOME/.tl/plugin"
+  [cache.path]="${XDG_CACHE_HOME:-$HOME/.cache}/tl:$HOME/.tl/cache"
+  [git.jobs]='4'
+  [crypto.gnupg-binary]="gpg"
+  [crypto.auto-import]=true
+  [crypto.ignore-anon]=false
+  [crypto.always-anon]=false
+  [crypto.keyring-path]="${XDG_DATA_HOME:-$HOME/.local/share}/tl/keyring:$HOME/.tl/keyring"
+  [network.depth]=10
+  [prompt.format]='%b%s:%b '
+  [prompt.fields]='account'
+  [prompt.color]='7,'
+  [prompt.color-name]='7,'
+  [history.enabled]=true
+  [history.file]="${XDG_DATA_HOME:-$HOME/.local/share/}tl/history"
+  [timeline.show-untrusted-items]=true
+  [timeline.show-all-encrypted]=false
+  [timeline.show-anon-failed]=false
+  [timeline.show-replies]=true
+  [timeline.show-tags]=true
+  [timeline.react-on-all]=true
+  [timeline.filter]='-tag:spam -score-min:0'
+  [timeline.own-posts]=true
+  [timeline.use-short-ids]=true
+  [timeline.post.format]='%b%-3d%b %b%(%Y%m%d %H%M%S)T%b %b%10s%b [%b%s%b] (%b%d%b) %b%s%b'
+  [timeline.post.fields]='index,date,name,flags,score,mesg'
+  [timeline.post.highlight-mesg]='[@][^\ ,.:;=\!\?]+'
+  [timeline.post.prefix]=''
+  [timeline.post.color]='7,'
+  [timeline.post.color-index]='7,'
+  [timeline.post.color-date]='7,'
+  [timeline.post.color-name]='7,'
+  [timeline.post.color-flags]='7,'
+  [timeline.post.color-mesg]='7,'
+  [timeline.post.color-score]='7,'
+  [timeline.post.style-index]='normal'
+  [timeline.post.style-date]='normal'
+  [timeline.post.style-name]='normal'
+  [timeline.post.style-flags]='normal'
+  [timeline.post.style-mesg]='normal'
+  [timeline.post.style-score]='normal'
+  [timeline.post.flag-encrypted-good]='K'
+  [timeline.post.flag-encrypted-bad]='!'
+  [timeline.post.flag-encrypted-revoked]='R'
+  [timeline.post.flag-encrypted-unknown]='m'
+  [timeline.post.flag-encrypted-expired]='X'
+  [timeline.post.flag-encrypted-none]=' '
+  [timeline.post.flag-signed-good]='S'
+  [timeline.post.flag-signed-bad]='!'
+  [timeline.post.flag-signed-unknown]='s'
+  [timeline.post.flag-signed-expired]='X'
+  [timeline.post.flag-signed-revoked]='R'
+  [timeline.post.flag-signed-missing]='m'
+  [timeline.post.flag-signed-none]=' '
+  [timeline.post.flag-tagged]='T'
+  [timeline.post.flag-replied]='r'
+  [timeline.post.flag-new]='N'
+  [timeline.tag.format]='%b%-3d%b %b%(%Y%m%d %H%M%S)T%b %b%10s%b [%b%s%b] (%b%d%b) %b%s%b'
+  [timeline.tag.fields]='index,date,name,flags,score,tags'
+  [timeline.tag.prefix]='# '
+  [timeline.tag.indent]=' '
+  [timeline.tag.color]='7,'
+  [timeline.tag.color-index]='7,'
+  [timeline.tag.color-date]='7,'
+  [timeline.tag.color-name]='7,'
+  [timeline.tag.color-mesg]='7,'
+  [timeline.tag.color-score]='7,'
+  [timeline.tag.color-flags]='7,'
+  [timeline.tag.color-tags]='7,'
+  [timeline.tag.style-index]='normal'
+  [timeline.tag.style-date]='normal'
+  [timeline.tag.style-name]='normal'
+  [timeline.tag.style-score]='normal'
+  [timeline.tag.style-flags]='normal'
+  [timeline.tag.style-tags]='normal'
+  [timeline.tag.flag-encrypted-good]='K'
+  [timeline.tag.flag-encrypted-bad]='!'
+  [timeline.tag.flag-encrypted-revoked]='R'
+  [timeline.tag.flag-encrypted-unknown]='m'
+  [timeline.tag.flag-encrypted-expired]='X'
+  [timeline.tag.flag-encrypted-none]=' '
+  [timeline.tag.flag-signed-good]='S'
+  [timeline.tag.flag-signed-bad]='!'
+  [timeline.tag.flag-signed-unknown]='s'
+  [timeline.tag.flag-signed-expired]='X'
+  [timeline.tag.flag-signed-revoked]='R'
+  [timeline.tag.flag-signed-missing]='m'
+  [timeline.tag.flag-signed-none]=' '
+  [timeline.tag.flag-tagged]='T'
+  [timeline.tag.flag-replied]='r'
+  [timeline.tag.flag-new]='N'
+  [timeline.tag.flag-trusted]='*'
+  [timeline.reply.format]='%b%-3d%b %b%(%Y%m%d %H%M%S)T%b %b%10s%b [%b%s%b] (%b%d%b) %b%s%b'
+  [timeline.reply.fields]='index,date,name,flags,score,mesg'
+  [timeline.reply.highlight-mesg]='[@][^\ ,.:;=\!\?]+'
+  [timeline.reply.prefix]='> '
+  [timeline.reply.indent]=' '
+  [timeline.reply.color]='7,'
+  [timeline.reply.color-index]='7,'
+  [timeline.reply.color-date]='7,'
+  [timeline.reply.color-name]='7,'
+  [timeline.reply.color-flags]='7,'
+  [timeline.reply.color-mesg]='7,'
+  [timeline.reply.color-score]='7,'
+  [timeline.reply.style-index]='normal'
+  [timeline.reply.style-date]='normal'
+  [timeline.reply.style-name]='normal'
+  [timeline.reply.style-score]='normal'
+  [timeline.reply.style-flags]='normal'
+  [timeline.reply.style-mesg]='normal'
+  [timeline.reply.flag-encrypted-good]='K'
+  [timeline.reply.flag-encrypted-bad]='!'
+  [timeline.reply.flag-encrypted-revoked]='R'
+  [timeline.reply.flag-encrypted-unknown]='m'
+  [timeline.reply.flag-encrypted-expired]='X'
+  [timeline.reply.flag-encrypted-none]=' '
+  [timeline.reply.flag-signed-good]='S'
+  [timeline.reply.flag-signed-bad]='!'
+  [timeline.reply.flag-signed-unknown]='s'
+  [timeline.reply.flag-signed-expired]='X'
+  [timeline.reply.flag-signed-revoked]='R'
+  [timeline.reply.flag-signed-missing]='m'
+  [timeline.reply.flag-signed-none]=' '
+  [timeline.reply.flag-tagged]='T'
+  [timeline.reply.flag-replied]='r'
+  [timeline.reply.flag-new]='N'
+  [timeline.reply.flag-trusted]='*'
+  [timeline.fatal.format]='*** %b%(%Y%m%d %H%M%S)T%b %b%10s%b %b%s%b'
+  [timeline.fatal.fields]='date,name,mesg'
+  [timeline.fatal.name]='FATAL'
+  [timeline.fatal.color]='7,'
+  [timeline.fatal.color-date]='7,'
+  [timeline.fatal.color-name]='7,'
+  [timeline.fatal.color-mesg]='7,'
+  [timeline.fatal.style-date]='normal'
+  [timeline.fatal.style-name]='normal'
+  [timeline.fatal.style-mesg]='normal'
+  [timeline.error.format]='*** %b%(%Y%m%d %H%M%S)T%b %b%10s%b %b%s%b'
+  [timeline.error.fields]='date,name,mesg'
+  [timeline.error.name]='ERROR'
+  [timeline.error.color]='7,'
+  [timeline.error.color-date]='7,'
+  [timeline.error.color-name]='7,'
+  [timeline.error.color-mesg]='7,'
+  [timeline.error.style-date]='normal'
+  [timeline.error.style-name]='normal'
+  [timeline.error.style-mesg]='normal'
+  [timeline.info.format]='*** %b%(%Y%m%d %H%M%S)T%b %b%10s%b %b%s%b'
+  [timeline.info.fields]='date,name,mesg'
+  [timeline.info.name]='INFO'
+  [timeline.info.color]='7,'
+  [timeline.info.color-date]='7,'
+  [timeline.info.color-name]='7,'
+  [timeline.info.color-mesg]='7,'
+  [timeline.info.style-date]='normal'
+  [timeline.info.style-name]='normal'
+  [timeline.info.style-mesg]='normal'
+  [timeline.consistent-colors]=''
+  [timeline.loading-pattern]='. o O o'
+  [network.list.format]='*** %b%(%Y%m%d %H%M%S)T%b %b%10s%b  score: %b%-03d%b  %b%-10s%b %b%s%b'
+  [network.list.fields]='date,name,score,user,url'
+  [network.list.color-score]='7,'
+  [network.list.color-date]='7,'
+  [network.list.color-name]='7,'
+  [network.list.color-user]='7,'
+  [network.list.color-url]='7,'
+  [network.list.color]='7,'
+  [network.list.style-date]='normal'
+  [network.list.style-name]='normal'
+  [network.list.style-score]='normal'
+  [network.list.style-user]='normal'
+  [network.list.style-url]='normal'
+  [network.show-followers]=true
+  [network.follower.format]='*** %b%(%Y%m%d %H%M%S)T%b %b%10s%b                         FOLLOWED BY %b%-10s%b'
+  [network.follower.fields]='date,name,user'
+  [network.follower-color-date]='7,'
+  [network.follower-color-name]='7,'
+  [network.follower-color-user]='7,'
+  [network.follower.color]='7,'
+  [daemon.interval]='300'
+  [daemon.commands]='timeline refresh'
+  [daemon.pidfile]="${XDG_RUNTIME_DIR:-/run/$UID}/tl.pid"
+  [daemon.log.file]="${XDG_DATA_HOME:-${HOME}/.local/share}/tl/daemon.log"
+  [daemon.log.level]=info
+  [notify.command]="notify-send"
+  [notify.format]='Knock knock from %s:\n%s'
+  [notify.filter]="mention engagement"
+  [notify.cache-file]="${XDG_CACHE_HOME:-${HOME}/.cache}/tl/notify.cache"
+  [directory.default]="https://tldir.ajdiaz.me/index.txt"
+  [alias.tr]='timeline refresh'
+  [alias.trn]='timeline refresh flag:new'
+  [alias.tl]='timeline list'
+  [alias.dr]='timeline refresh flag:new'
+  [alias.edit]='timeline edit'
+  [alias.e]='timeline edit'
+  [alias.post]='event post'
+  [alias.p]='event post'
+  [alias.reply]='event reply'
+  [alias.r]='event reply'
+  [alias.tag]='event tag'
+  [alias.info]='event info'
+  [alias.show]='event info'
+  [alias.score]='event score'
+  [alias.net]='network'
+  [alias.nl]='network list'
+  [alias.nr]='network refresh'
+  [alias.dir]='directory'
+  [alias.ds]='directory search'
+  [alias.pre]='account preview'
+  [alias.keys]='account keys'
+  [alias.keygen]='account keygen'
+  [alias.revoke]='account keyrevoke'
+  [input.emojis]=false
+)
+
+export NO_COLORS=0
+export COLOR=false
+
+if test -t 1; then
+  case "$(tput colors)" in
+     8)
+       export COLOR=true
+       CONFIG['timeline.post.color']=8,
+       CONFIG['timeline.post.color-date']=8,
+       CONFIG['timeline.post.color-mesg']=7,
+       CONFIG['timeline.post.color-flags']=11,
+       CONFIG['timeline.post.color-score']=3,
+       CONFIG['timeline.post.color-name']=CONSISTENT,
+       CONFIG['timeline.reply.color']=8,
+       CONFIG['timeline.reply.color-date']=8,
+       CONFIG['timeline.reply.color-mesg']=7,
+       CONFIG['timeline.reply.color-flags']=11,
+       CONFIG['timeline.reply.color-score']=3,
+       CONFIG['timeline.reply.color-name']=CONSISTENT,
+       CONFIG['timeline.tag.color']=8,
+       CONFIG['timeline.tag.color-date']=8,
+       CONFIG['timeline.tag.color-tags']=3,
+       CONFIG['timeline.tag.color-name']=CONSISTENT,
+       CONFIG['timeline.tag.color-flags']=11,
+       CONFIG['timeline.tag.color-score']=3,
+       CONFIG['timeline.info.color']=8,
+       CONFIG['timeline.info.color-date']=8,
+       CONFIG['timeline.info.color-name']=6,
+       CONFIG['timeline.info.color-mesg']=7,
+       CONFIG['timeline.error.color']=8,
+       CONFIG['timeline.error.color-date']=8,
+       CONFIG['timeline.error.color-name']=4,
+       CONFIG['timeline.error.color-mesg']=7,
+       CONFIG['timeline.fatal.color']=8,
+       CONFIG['timeline.fatal.color-date']=8,
+       CONFIG['timeline.fatal.color-name']=4,
+       CONFIG['timeline.fatal.color-mesg']=7,
+       CONFIG['timeline.consistent-colors']="3,5,6,9"
+       CONFIG['network.list.color-date']=8,
+       CONFIG['network.list.color-name']=6,
+       CONFIG['network.list.color-score']=3,
+       CONFIG['network.list.color-user']=CONSISTENT,
+       CONFIG['network.list.color-url']=4,
+       CONFIG['network.follower.color-user']=6,
+       CONFIG['network.follower.color-name']=6,
+       CONFIG['network.follower.color-date']=8,
+       CONFIG['network.follower.color']=8,
+       CONFIG['prompt.color']=4,
+      ;;
+   256)
+       export COLOR=true
+       CONFIG['timeline.post.color']=240,
+       CONFIG['timeline.post.color-date']=240,
+       CONFIG['timeline.post.color-mesg']=7,
+       CONFIG['timeline.post.color-score']=3,
+       CONFIG['timeline.post.color-name']=CONSISTENT,
+       CONFIG['timeline.post.color-flags']=11,
+       CONFIG['timeline.reply.color']=240,
+       CONFIG['timeline.reply.color-date']=240,
+       CONFIG['timeline.reply.color-mesg']=245,
+       CONFIG['timeline.reply.color-score']=3,
+       CONFIG['timeline.reply.color-name']=CONSISTENT,
+       CONFIG['timeline.reply.color-flags']=11,
+       CONFIG['timeline.tag.color']=240,
+       CONFIG['timeline.tag.color-date']=240,
+       CONFIG['timeline.tag.color-tags']=136,
+       CONFIG['timeline.tag.color-score']=3,
+       CONFIG['timeline.tag.color-name']=CONSISTENT,
+       CONFIG['timeline.tag.style-tags']=italic
+       CONFIG['timeline.tag.color-flags']=11,
+       CONFIG['timeline.info.color']=240,
+       CONFIG['timeline.info.color-date']=240,
+       CONFIG['timeline.info.color-name']=69,
+       CONFIG['timeline.info.color-mesg']=7,
+       CONFIG['timeline.info.style-mesg']=italic
+       CONFIG['timeline.error.color']=240,
+       CONFIG['timeline.error.color-date']=240,
+       CONFIG['timeline.error.color-name']=9,
+       CONFIG['timeline.error.color-mesg']=7,
+       CONFIG['timeline.fatal.color']=240,
+       CONFIG['timeline.fatal.color-date']=240,
+       CONFIG['timeline.fatal.color-name']=9,
+       CONFIG['timeline.fatal.color-mesg']=7,
+       CONFIG['timeline.consistent-colors']="34,139,149,199,209,173,153"
+       CONFIG['network.list.color-date']=240,
+       CONFIG['network.list.color-name']=165,
+       CONFIG['network.list.color-score']=226,
+       CONFIG['network.list.color-user']=CONSISTENT,
+       CONFIG['network.list.color-url']=69,
+       CONFIG['network.follower.color-user']=214,
+       CONFIG['network.follower.color-name']=165,
+       CONFIG['network.follower.color-date']=240,
+       CONFIG['network.follower.style-user']='italic'
+       CONFIG['network.follower.color']=240,
+       CONFIG['prompt.color']=69,
+       ;;
+   esac
+fi
+
+if [[ "${LC_MESSAGES//UTF-8/}" != "${LC_MESSAGES}" ]]; then
+  # if utf-8 is available in locale
+  CONFIG['input.emojis']=true
+  CONFIG['timeline.reply.prefix']='⤷ '
+  CONFIG['timeline.loading-pattern']="⣾ ⣽ ⣻ ⢿ ⡿ ⣟ ⣯ ⣷"
+fi
+
+declare -xa AVAIL_COLORS
+IFS=',' read -ra AVAIL_COLORS <<<"${CONFIG[timeline.consistent-colors]}"
+
+# fun: config_load <filename>
+# txt: given a filename path as argument, read the content and save it in
+#      `$CONFIG` environment variable properly.
+config_load ()
+{
+  local IFS='='
+  while read -r key val; do
+    CONFIG["$key"]="$val"
+  done < <(git_helper config -f "$1" -l)
+}
+
+# fun: config_get <key>
+# txt: get the configuration value corresponding with the configuration
+#      keyword passed as argument, or fails if not found.
+config_get ()
+{
+  local val="${CONFIG["$1"]}"
+
+  [[ "$val" ]] ||
+    E=1 error $"Unknown configuration variable '%s'" "$1"
+
+  echo "$val"
+}
+
+# fun: config_eval <key>+
+# txt: return the first occurence of a key in the config or empty string if
+#      keys are not found.
+config_eval ()
+{
+  local key
+  for key in "$@"; do
+    [[ "${CONFIG["$key"]}" ]] && echo "${CONFIG["$key"]}" && return 0
+  done
+  return 1
+}
+
+# fun: config_set <key> <val>
+# txt: set the properly value of configuration key passed as argument using
+#      value provided.
+config_set ()
+{
+  CONFIG["$1"]="$2"
+}
+
+# fun: config_unset key
+# txt: unset config key with named passed as parameter key.
+config_unset ()
+{
+  CONFIG["$1"]=''
+}
+
+# fun: config_iter <prefix>
+# txt: given a fixed prefix, return all keys matched with specified prefix.
+config_iter ()
+{
+  for key in "${!CONFIG[@]}"; do
+    case "$key" in
+      "$1"*) echo "$key";;
+    esac
+  done
+}
+
+# fun: config_save <filename>
+# txt: given a filename passed as argument, dump the content of `$CONFIG`
+#      variable to that file
+config_save ()
+{
+  local val
+
+  [[ "$1" ]] || E=2 fatal $"No config file path provided for config_save"
+
+  if [[ ! -d "${1%/*}" ]]; then
+    mkdir -p "${1%/*}"
   fi
 
-  account_push
+  for var in "${!CONFIG[@]}"; do
+    val="${CONFIG["$var"]}"
+
+    if [[ "$val" ]]; then
+      git_helper config -f "$1" "$var" "${CONFIG["$var"]}"
+    else
+      mute git_helper config -f "$1" --remove-section "${var}" ||
+        git_helper config -f "$1" --unset "${var}"
+    fi
+  done
+}
+
+# fun: config_list
+# txt: print all configuration values
+config_list ()
+{
+  for var in "${!CONFIG[@]}"; do
+    echo "${var}=${CONFIG[$var]}"
+  done
 }
 ## vim:ft=sh
 
@@ -3144,7 +4942,7 @@ INVALIDURL=$"Invalid URL '%s'"
 
 
 
-# help:fun: account {create|delete|clone|list|refresh|active|preview} {args...}
+# help:fun: account {create|delete|rebuild|clone|list|refresh|active|preview|keys|keygen|keyrevoke|encrkey|signkey} {args...}
 # help:txt: Manage timeline local and remote accounts.
 command_account ()
 {
@@ -4864,2020 +6662,221 @@ Public License instead of this License.  But first, please read
 <https://www.gnu.org/licenses/why-not-lgpl.html>.
 EOF
 }
-## vim: ft=sh
-
-# env: OID_CACHE
-# txt: save a generated oids to avoid recalculation
-declare -gA OID_CACHE
-
-# fun: fun <function_name>
-# txt: return true if function is defined
-fun () { declare -f "$1" >/dev/null 2>&1; }
-
-# fun: input <pass_text>
-# txt: return true if the text typed by the user match with the pass_text
-input ()
-{
-  local reply i
-  read -r reply
-  for i in "$@"; do
-    [[ "$i" = "$reply" ]] && return 0
-  done
-
-  return 1
-}
-
-# fun: prefix <item>
-# txt: prefix each line in stdin with a item and output to stdout
-prefix () { local line; while read -r line; do echo "$1$line"; done; }
-
-# fun: mute <command> [args]
-# txt: run command quietly
-mute () { "$@" >/dev/null 2>&1; }
-
-# fun: timestamp
-# txt: print current timestamp in UTC
-timestamp ()
-{
-  # shellcheck disable=SC2183
-  printf "%(%s)T"
-}
-
-# fun: join <delim> <array_items>
-# txt: return a delim separated list of array_items
-join ()
-{
-  local delim="$1"; shift
-  for x in "$@"; do
-    printf "%s%s" "$x" "$delim"
-  done
-}
-
-# fun: oid <string>
-# txt: create a unique object id for the string passed as argument
-oid ()
-{
-  if [[ -z "${OID_CACHE["$1"]}" ]]; then
-    OID_CACHE["$1"]="$(git_helper hash-object --stdin <<<"${1%.git}")"
-  fi
-}
-
-# fun: oid_save
-# txt: save the list of OIDs to a cache file
-oid_save ()
-{
-  local i=0
-  [[ "${CONFIG[oid.use-cache]}" != "true" ]] && return
-  {
-    echo "declare -Axg OID_CACHE=("
-    for key in "${!OID_CACHE[@]}"; do
-      echo "[\"$key\"]=\"${OID_CACHE[$key]}\""
-      [[ $((++i)) -gt ${CONFIG[oid.max-cache-size]:-1000} ]] && break
-    done
-    echo ")"
-  } > "${CACHE_DIR}/oid.cache"
-}
-
-# fun: oid_load
-# txt: load precalculated OIDs from cache file
-oid_load ()
-{
-  [[ "${CONFIG[oid.use-cache]}" != "true" ]] && return
-
-  # shellcheck source=/dev/null
-  [[ -r "${CACHE_DIR}/oid.cache" ]] &&
-    source "${CACHE_DIR}/oid.cache"
-}
-
-# fun: try_path <path_list>
-# txt: given a path list, return the first existant item in the list, or, if
-#      none exists, the first one. NOTE: this function does not allow colons
-#      in path items.
-try_path ()
-{
-  local IFS=':'
-  for path in $1; do
-    if [ -d "$path" ]; then
-      echo "$path"
-      return
-    fi
-  done
-  echo "${1%%:*}"
-}
-
-# fun: valid_url <url>
-# txt: return true if url is valid, otherwise return false
-valid_url ()
-{
-  case "$1" in
-    ssh://*|http://*|https://*|file://*) return 0
-  esac
-  return 1
-}
-
-# fun: has_hmac <eid>
-# txt: return true if the eid has an hmac
-has_hmac ()
-{
-  local hmac; hmac="${1#*:}"
-  [[ "${hmac}" != "${hmac#*:}" ]]
-}
-
-# fun: username <eid|account_id>
-# txt: return username from a event_id or account_id using alias defined in
-#      configuration and short form if 'timeline.use-short-ids' is true.
-username ()
-{
-  local uname="$1"
-  
-  uname="${uname%%:*}" # remove timestamp if present
-  uname="${uname#@}"  # remove trail @ if present
-
-  alias_name="${CONFIG["user.alias-$uname"]}"
-  short_ids="${CONFIG["timeline.use-short-ids"]}"
-
-  if [[ "$alias_name" ]]; then
-    uname="$alias_name"
-  elif [[ "$short_ids" = "true" ]]; then
-    uname="${uname:0:8}"
-  fi
-
-  echo "@${uname}"
-}
-
-# fun: uid <name>
-# txt: reverse search for name in list of account alias
-uid ()
-{
-  local key
-  for key in "${!CONFIG[@]}"; do
-    case "$key" in
-      user.alias-*)
-        [[ "${CONFIG[$key]}" = "$1" ]] && echo "${key#*-}" && return 0;;
-    esac
-  done
-}
-
-# fun: expand_user <userlist>
-# txt: expand a user list to a list of valids uids
-expand_user ()
-{
-  local u
-  for u in ${1//,/ }; do
-    case "$u" in
-      =*) echo "${CONFIG["group.${u%=}"]}";;
-      *) uid "${u%@}";;
-    esac
-  done
-}
-
-# fun: is_decimal <num>
-# txt: return true if num is a decimal based number.
-is_decimal () {
-  [[ "$1" = "0" ]] && return 0
-  mute let i="10#${1#-}" 2>/dev/null
-}
-
-# fun: any <list> <list>
-# txt: return true if any element of the first list is also in the second
-#      list.
-any ()
-{
-  case "$1" in
-    '*'|"$2") return 0;;
-    '') return 1;;
-  esac
-
-  local -A list
-
-  for item in $1; do
-    list["$item"]=1
-  done
-
-  for item in $2; do
-    [[ "${list["$item"]}" ]] && return 0
-  done
-  return 1
-}
-
-# fun: git_helper <cmds>+
-# txt: send commands to git assuming some things
-git_helper ()
-{
-  HOME=/dev/null command git "$@"
-}
-
-# fun: on_exit <callback>
-# txt: run callback on exit
-declare -a _on_exit=()
-trap _handler_on_exit EXIT
-_handler_on_exit ()
-{
-  local fun
-  for fun in "${_on_exit[@]}"; do
-    "$fun";
-  done
-}
-on_exit ()
-{
-  _on_exit+=( "$1" )
-}
-
-# fun: temp_file
-# txt: outputs a temporary file which will ensure that will be eliminated
-#      when exectution ends.
-temp_file ()
-{
-  local name="${TMPDIR:-/tmp}/temp_$$.$RANDOM$RANDOM"
-  : > "$name"
-  echo "$name"
-}
-_temp_file_exit ()
-{
-  rm -f "${TMPDIR:-/tmp}/temp_$$".*
-}
-on_exit _temp_file_exit
-
-# fun: temp_dir
-# txt: outputs a temporary directory which will be removed when tl dies
-temp_dir ()
-{
-  local name="${TMPDIR:-/tmp}/tempdir_$$.$RANDOM"
-  mkdir -p "$name"
-  echo "$name"
-}
-_temp_dir_exit ()
-{
-  rm -rf "${TMPDIR:-/tmp}/tempdir_$$".*
-}
-on_exit _temp_dir_exit
 ## vim:ft=sh
 
-# env: CONFIG: associative array contains the configuration values. This
-#      array should be loaded from file with `config_load` function, and
-#      accessed by `config_get` and `config_set` to read and write,
-#      res pectively.
-declare -xA CONFIG=(
-  [oid.use-cache]=true
-  [oid.max-cache-size]=1000
-  [interactive.show-banner]=true
-  [account.auto-push]=true
-  [account.auto-keygen]=true
-  [account.content-markdown]=true
-  [account.preview-depth]=100
-  [account.default]=''
-  [account.signkey]=''
-  [account.encrkey]=''
-  [account.encrypt-to-me]=true
-  [account.max-posts]=20
-  [account.path]="${XDG_DATA_HOME:-$HOME/.local/share}/tl/account:$HOME/.tl/account"
-  [plugin.path]="${XDG_DATA_HOME:-$HOME/.local/share}/tl/plugin:$HOME/.tl/plugin"
-  [cache.path]="${XDG_CACHE_HOME:-$HOME/.cache}/tl:$HOME/.tl/cache"
-  [git.jobs]='4'
-  [crypto.gnupg-binary]="gpg"
-  [crypto.auto-import]=true
-  [crypto.ignore-anon]=false
-  [crypto.always-anon]=false
-  [crypto.keyring-path]="${XDG_DATA_HOME:-$HOME/.local/share}/tl/keyring:$HOME/.tl/keyring"
-  [network.depth]=10
-  [prompt.format]='%b%s:%b '
-  [prompt.fields]='account'
-  [prompt.color]='7,'
-  [prompt.color-name]='7,'
-  [history.enabled]=true
-  [history.file]="${XDG_DATA_HOME:-$HOME/.local/share/}tl/history"
-  [timeline.show-untrusted-items]=true
-  [timeline.show-all-encrypted]=false
-  [timeline.show-anon-failed]=false
-  [timeline.show-replies]=true
-  [timeline.show-tags]=true
-  [timeline.react-on-all]=true
-  [timeline.filter]='-tag:spam -score-min:0'
-  [timeline.own-posts]=true
-  [timeline.use-short-ids]=true
-  [timeline.post.format]='%b%-3d%b %b%(%Y%m%d %H%M%S)T%b %b%10s%b [%b%s%b] (%b%d%b) %b%s%b'
-  [timeline.post.fields]='index,date,name,flags,score,mesg'
-  [timeline.post.highlight-mesg]='[@][^\ ,.:;=\!\?]+'
-  [timeline.post.prefix]=''
-  [timeline.post.color]='7,'
-  [timeline.post.color-index]='7,'
-  [timeline.post.color-date]='7,'
-  [timeline.post.color-name]='7,'
-  [timeline.post.color-flags]='7,'
-  [timeline.post.color-mesg]='7,'
-  [timeline.post.color-score]='7,'
-  [timeline.post.style-index]='normal'
-  [timeline.post.style-date]='normal'
-  [timeline.post.style-name]='normal'
-  [timeline.post.style-flags]='normal'
-  [timeline.post.style-mesg]='normal'
-  [timeline.post.style-score]='normal'
-  [timeline.post.flag-encrypted-good]='K'
-  [timeline.post.flag-encrypted-bad]='!'
-  [timeline.post.flag-encrypted-revoked]='R'
-  [timeline.post.flag-encrypted-unknown]='m'
-  [timeline.post.flag-encrypted-expired]='X'
-  [timeline.post.flag-encrypted-none]=' '
-  [timeline.post.flag-signed-good]='S'
-  [timeline.post.flag-signed-bad]='!'
-  [timeline.post.flag-signed-unknown]='s'
-  [timeline.post.flag-signed-expired]='X'
-  [timeline.post.flag-signed-revoked]='R'
-  [timeline.post.flag-signed-missing]='m'
-  [timeline.post.flag-signed-none]=' '
-  [timeline.post.flag-tagged]='T'
-  [timeline.post.flag-replied]='r'
-  [timeline.post.flag-new]='N'
-  [timeline.tag.format]='%b%-3d%b %b%(%Y%m%d %H%M%S)T%b %b%10s%b [%b%s%b] (%b%d%b) %b%s%b'
-  [timeline.tag.fields]='index,date,name,flags,score,tags'
-  [timeline.tag.prefix]='# '
-  [timeline.tag.indent]=' '
-  [timeline.tag.color]='7,'
-  [timeline.tag.color-index]='7,'
-  [timeline.tag.color-date]='7,'
-  [timeline.tag.color-name]='7,'
-  [timeline.tag.color-mesg]='7,'
-  [timeline.tag.color-score]='7,'
-  [timeline.tag.color-flags]='7,'
-  [timeline.tag.color-tags]='7,'
-  [timeline.tag.style-index]='normal'
-  [timeline.tag.style-date]='normal'
-  [timeline.tag.style-name]='normal'
-  [timeline.tag.style-score]='normal'
-  [timeline.tag.style-flags]='normal'
-  [timeline.tag.style-tags]='normal'
-  [timeline.tag.flag-encrypted-good]='K'
-  [timeline.tag.flag-encrypted-bad]='!'
-  [timeline.tag.flag-encrypted-revoked]='R'
-  [timeline.tag.flag-encrypted-unknown]='m'
-  [timeline.tag.flag-encrypted-expired]='X'
-  [timeline.tag.flag-encrypted-none]=' '
-  [timeline.tag.flag-signed-good]='S'
-  [timeline.tag.flag-signed-bad]='!'
-  [timeline.tag.flag-signed-unknown]='s'
-  [timeline.tag.flag-signed-expired]='X'
-  [timeline.tag.flag-signed-revoked]='R'
-  [timeline.tag.flag-signed-missing]='m'
-  [timeline.tag.flag-signed-none]=' '
-  [timeline.tag.flag-tagged]='T'
-  [timeline.tag.flag-replied]='r'
-  [timeline.tag.flag-new]='N'
-  [timeline.tag.flag-trusted]='*'
-  [timeline.reply.format]='%b%-3d%b %b%(%Y%m%d %H%M%S)T%b %b%10s%b [%b%s%b] (%b%d%b) %b%s%b'
-  [timeline.reply.fields]='index,date,name,flags,score,mesg'
-  [timeline.reply.highlight-mesg]='[@][^\ ,.:;=\!\?]+'
-  [timeline.reply.prefix]='> '
-  [timeline.reply.indent]=' '
-  [timeline.reply.color]='7,'
-  [timeline.reply.color-index]='7,'
-  [timeline.reply.color-date]='7,'
-  [timeline.reply.color-name]='7,'
-  [timeline.reply.color-flags]='7,'
-  [timeline.reply.color-mesg]='7,'
-  [timeline.reply.color-score]='7,'
-  [timeline.reply.style-index]='normal'
-  [timeline.reply.style-date]='normal'
-  [timeline.reply.style-name]='normal'
-  [timeline.reply.style-score]='normal'
-  [timeline.reply.style-flags]='normal'
-  [timeline.reply.style-mesg]='normal'
-  [timeline.reply.flag-encrypted-good]='K'
-  [timeline.reply.flag-encrypted-bad]='!'
-  [timeline.reply.flag-encrypted-revoked]='R'
-  [timeline.reply.flag-encrypted-unknown]='m'
-  [timeline.reply.flag-encrypted-expired]='X'
-  [timeline.reply.flag-encrypted-none]=' '
-  [timeline.reply.flag-signed-good]='S'
-  [timeline.reply.flag-signed-bad]='!'
-  [timeline.reply.flag-signed-unknown]='s'
-  [timeline.reply.flag-signed-expired]='X'
-  [timeline.reply.flag-signed-revoked]='R'
-  [timeline.reply.flag-signed-missing]='m'
-  [timeline.reply.flag-signed-none]=' '
-  [timeline.reply.flag-tagged]='T'
-  [timeline.reply.flag-replied]='r'
-  [timeline.reply.flag-new]='N'
-  [timeline.reply.flag-trusted]='*'
-  [timeline.fatal.format]='*** %b%(%Y%m%d %H%M%S)T%b %b%10s%b %b%s%b'
-  [timeline.fatal.fields]='date,name,mesg'
-  [timeline.fatal.name]='FATAL'
-  [timeline.fatal.color]='7,'
-  [timeline.fatal.color-date]='7,'
-  [timeline.fatal.color-name]='7,'
-  [timeline.fatal.color-mesg]='7,'
-  [timeline.fatal.style-date]='normal'
-  [timeline.fatal.style-name]='normal'
-  [timeline.fatal.style-mesg]='normal'
-  [timeline.error.format]='*** %b%(%Y%m%d %H%M%S)T%b %b%10s%b %b%s%b'
-  [timeline.error.fields]='date,name,mesg'
-  [timeline.error.name]='ERROR'
-  [timeline.error.color]='7,'
-  [timeline.error.color-date]='7,'
-  [timeline.error.color-name]='7,'
-  [timeline.error.color-mesg]='7,'
-  [timeline.error.style-date]='normal'
-  [timeline.error.style-name]='normal'
-  [timeline.error.style-mesg]='normal'
-  [timeline.info.format]='*** %b%(%Y%m%d %H%M%S)T%b %b%10s%b %b%s%b'
-  [timeline.info.fields]='date,name,mesg'
-  [timeline.info.name]='INFO'
-  [timeline.info.color]='7,'
-  [timeline.info.color-date]='7,'
-  [timeline.info.color-name]='7,'
-  [timeline.info.color-mesg]='7,'
-  [timeline.info.style-date]='normal'
-  [timeline.info.style-name]='normal'
-  [timeline.info.style-mesg]='normal'
-  [timeline.consistent-colors]=''
-  [timeline.loading-pattern]='. o O o'
-  [network.list.format]='*** %b%(%Y%m%d %H%M%S)T%b %b%10s%b  score: %b%-03d%b  %b%-10s%b %b%s%b'
-  [network.list.fields]='date,name,score,user,url'
-  [network.list.color-score]='7,'
-  [network.list.color-date]='7,'
-  [network.list.color-name]='7,'
-  [network.list.color-user]='7,'
-  [network.list.color-url]='7,'
-  [network.list.color]='7,'
-  [network.list.style-date]='normal'
-  [network.list.style-name]='normal'
-  [network.list.style-score]='normal'
-  [network.list.style-user]='normal'
-  [network.list.style-url]='normal'
-  [network.show-followers]=true
-  [network.follower.format]='*** %b%(%Y%m%d %H%M%S)T%b %b%10s%b                         FOLLOWED BY %b%-10s%b'
-  [network.follower.fields]='date,name,user'
-  [network.follower-color-date]='7,'
-  [network.follower-color-name]='7,'
-  [network.follower-color-user]='7,'
-  [network.follower.color]='7,'
-  [daemon.interval]='300'
-  [daemon.commands]='timeline refresh'
-  [daemon.pidfile]="${XDG_RUNTIME_DIR:-/run/$UID}/tl.pid"
-  [daemon.log.file]="${XDG_DATA_HOME:-${HOME}/.local/share}/tl/daemon.log"
-  [daemon.log.level]=info
-  [notify.command]="notify-send"
-  [notify.format]='Knock knock from %s:\n%s'
-  [notify.filter]="mention engagement"
-  [notify.cache-file]="${XDG_CACHE_HOME:-${HOME}/.cache}/tl/notify.cache"
-  [directory.default]="https://tldir.ajdiaz.me/index.txt"
-  [alias.tr]='timeline refresh'
-  [alias.trn]='timeline refresh flag:new'
-  [alias.tl]='timeline list'
-  [alias.dr]='timeline refresh flag:new'
-  [alias.edit]='timeline edit'
-  [alias.e]='timeline edit'
-  [alias.post]='event post'
-  [alias.p]='event post'
-  [alias.reply]='event reply'
-  [alias.r]='event reply'
-  [alias.tag]='event tag'
-  [alias.info]='event info'
-  [alias.show]='event info'
-  [alias.score]='event score'
-  [alias.net]='network'
-  [alias.nl]='network list'
-  [alias.nr]='network refresh'
-  [alias.dir]='directory'
-  [alias.ds]='directory search'
-  [alias.pre]='account preview'
-  [alias.keys]='account keys'
-  [alias.keygen]='account keygen'
-  [alias.revoke]='account keyrevoke'
-  [input.emojis]=false
-)
+FILTER_LIST=()
 
-export NO_COLORS=0
-export COLOR=false
-
-if test -t 1; then
-  case "$(tput colors)" in
-     8)
-       export COLOR=true
-       CONFIG['timeline.post.color']=8,
-       CONFIG['timeline.post.color-date']=8,
-       CONFIG['timeline.post.color-mesg']=7,
-       CONFIG['timeline.post.color-flags']=11,
-       CONFIG['timeline.post.color-score']=3,
-       CONFIG['timeline.post.color-name']=CONSISTENT,
-       CONFIG['timeline.reply.color']=8,
-       CONFIG['timeline.reply.color-date']=8,
-       CONFIG['timeline.reply.color-mesg']=7,
-       CONFIG['timeline.reply.color-flags']=11,
-       CONFIG['timeline.reply.color-score']=3,
-       CONFIG['timeline.reply.color-name']=CONSISTENT,
-       CONFIG['timeline.tag.color']=8,
-       CONFIG['timeline.tag.color-date']=8,
-       CONFIG['timeline.tag.color-tags']=3,
-       CONFIG['timeline.tag.color-name']=CONSISTENT,
-       CONFIG['timeline.tag.color-flags']=11,
-       CONFIG['timeline.tag.color-score']=3,
-       CONFIG['timeline.info.color']=8,
-       CONFIG['timeline.info.color-date']=8,
-       CONFIG['timeline.info.color-name']=6,
-       CONFIG['timeline.info.color-mesg']=7,
-       CONFIG['timeline.error.color']=8,
-       CONFIG['timeline.error.color-date']=8,
-       CONFIG['timeline.error.color-name']=4,
-       CONFIG['timeline.error.color-mesg']=7,
-       CONFIG['timeline.fatal.color']=8,
-       CONFIG['timeline.fatal.color-date']=8,
-       CONFIG['timeline.fatal.color-name']=4,
-       CONFIG['timeline.fatal.color-mesg']=7,
-       CONFIG['timeline.consistent-colors']="3,5,6,9"
-       CONFIG['network.list.color-date']=8,
-       CONFIG['network.list.color-name']=6,
-       CONFIG['network.list.color-score']=3,
-       CONFIG['network.list.color-user']=CONSISTENT,
-       CONFIG['network.list.color-url']=4,
-       CONFIG['network.follower.color-user']=6,
-       CONFIG['network.follower.color-name']=6,
-       CONFIG['network.follower.color-date']=8,
-       CONFIG['network.follower.color']=8,
-       CONFIG['prompt.color']=4,
-      ;;
-   256)
-       export COLOR=true
-       CONFIG['timeline.post.color']=240,
-       CONFIG['timeline.post.color-date']=240,
-       CONFIG['timeline.post.color-mesg']=7,
-       CONFIG['timeline.post.color-score']=3,
-       CONFIG['timeline.post.color-name']=CONSISTENT,
-       CONFIG['timeline.post.color-flags']=11,
-       CONFIG['timeline.reply.color']=240,
-       CONFIG['timeline.reply.color-date']=240,
-       CONFIG['timeline.reply.color-mesg']=245,
-       CONFIG['timeline.reply.color-score']=3,
-       CONFIG['timeline.reply.color-name']=CONSISTENT,
-       CONFIG['timeline.reply.color-flags']=11,
-       CONFIG['timeline.reply.prefix']='⤷ ' # XXX 256colors -> unicode!!!
-       CONFIG['timeline.tag.color']=240,
-       CONFIG['timeline.tag.color-date']=240,
-       CONFIG['timeline.tag.color-tags']=136,
-       CONFIG['timeline.tag.color-score']=3,
-       CONFIG['timeline.tag.color-name']=CONSISTENT,
-       CONFIG['timeline.tag.style-tags']=italic
-       CONFIG['timeline.tag.color-flags']=11,
-       CONFIG['timeline.info.color']=240,
-       CONFIG['timeline.info.color-date']=240,
-       CONFIG['timeline.info.color-name']=69,
-       CONFIG['timeline.info.color-mesg']=7,
-       CONFIG['timeline.info.style-mesg']=italic
-       CONFIG['timeline.error.color']=240,
-       CONFIG['timeline.error.color-date']=240,
-       CONFIG['timeline.error.color-name']=9,
-       CONFIG['timeline.error.color-mesg']=7,
-       CONFIG['timeline.fatal.color']=240,
-       CONFIG['timeline.fatal.color-date']=240,
-       CONFIG['timeline.fatal.color-name']=9,
-       CONFIG['timeline.fatal.color-mesg']=7,
-       CONFIG['timeline.consistent-colors']="34,139,149,199,209,173,153"
-       CONFIG['network.list.color-date']=240,
-       CONFIG['network.list.color-name']=165,
-       CONFIG['network.list.color-score']=226,
-       CONFIG['network.list.color-user']=CONSISTENT,
-       CONFIG['network.list.color-url']=69,
-       CONFIG['network.follower.color-user']=214,
-       CONFIG['network.follower.color-name']=165,
-       CONFIG['network.follower.color-date']=240,
-       CONFIG['network.follower.style-user']='italic'
-       CONFIG['network.follower.color']=240,
-       CONFIG['prompt.color']=69,
-       ;;
-   esac
-fi
-
-if [[ "${LC_MESSAGES//UTF-8/}" != "${LC_MESSAGES}" ]]; then
-  # if utf-8 is available in locale
-  CONFIG['input.emojis']=true
-  CONFIG['timeline.reply.prefix']='⤷ '
-  CONFIG['timeline.loading-pattern']="⣾ ⣽ ⣻ ⢿ ⡿ ⣟ ⣯ ⣷"
-fi
-
-declare -xa AVAIL_COLORS
-IFS=',' read -ra AVAIL_COLORS <<<"${CONFIG[timeline.consistent-colors]}"
-
-# fun: config_load <filename>
-# txt: given a filename path as argument, read the content and save it in
-#      `$CONFIG` environment variable properly.
-config_load ()
+# fun: filter_tag <tags_to_filter> <eid>
+# txt: return true if EID need to be filtered
+filter_tag ()
 {
-  local IFS='='
-  while read -r key val; do
-    CONFIG["$key"]="$val"
-  done < <(git_helper config -f "$1" -l)
-}
+  local fpattern="$1" eid="$2"
+  local event tag
 
-# fun: config_get <key>
-# txt: get the configuration value corresponding with the configuration
-#      keyword passed as argument, or fails if not found.
-config_get ()
-{
-  local val="${CONFIG["$1"]}"
+  [[ "$fpattern" = "*" ]] && return 0
 
-  [[ "$val" ]] ||
-    E=1 error $"Unknown configuration variable '%s'" "$1"
-
-  echo "$val"
-}
-
-# fun: config_eval <key>+
-# txt: return the first occurence of a key in the config or empty string if
-#      keys are not found.
-config_eval ()
-{
-  local key
-  for key in "$@"; do
-    [[ "${CONFIG["$key"]}" ]] && echo "${CONFIG["$key"]}" && return 0
-  done
-  return 1
-}
-
-# fun: config_set <key> <val>
-# txt: set the properly value of configuration key passed as argument using
-#      value provided.
-config_set ()
-{
-  CONFIG["$1"]="$2"
-}
-
-# fun: config_unset key
-# txt: unset config key with named passed as parameter key.
-config_unset ()
-{
-  CONFIG["$1"]=''
-}
-
-# fun: config_iter <prefix>
-# txt: given a fixed prefix, return all keys matched with specified prefix.
-config_iter ()
-{
-  for key in "${!CONFIG[@]}"; do
-    case "$key" in
-      "$1"*) echo "$key";;
-    esac
-  done
-}
-
-# fun: config_save <filename>
-# txt: given a filename passed as argument, dump the content of `$CONFIG`
-#      variable to that file
-config_save ()
-{
-  local val
-
-  [[ "$1" ]] || E=2 fatal $"No config file path provided for config_save"
-
-  if [[ ! -d "${1%/*}" ]]; then
-    mkdir -p "${1%/*}"
-  fi
-
-  for var in "${!CONFIG[@]}"; do
-    val="${CONFIG["$var"]}"
-
-    if [[ "$val" ]]; then
-      git_helper config -f "$1" "$var" "${CONFIG["$var"]}"
-    else
-      mute git_helper config -f "$1" --remove-section "${var}" ||
-        git_helper config -f "$1" --unset "${var}"
-    fi
-  done
-}
-
-# fun: config_list
-# txt: print all configuration values
-config_list ()
-{
-  for var in "${!CONFIG[@]}"; do
-    echo "${var}=${CONFIG[$var]}"
-  done
-}
-## vim:ft=sh
-
-# env: TIMELINE_CONTENT: The path relative to the account root, where
-#      CONTENT file is stored.
-TIMELINE_CONTENT="CONTENT"
-
-# env: TIMELINE_FOLLOW The path relative to the account root, where
-#      FOLLOW dir is located.
-TIMELINE_FOLLOW="FOLLOW"
-
-# env: TIMELINE_PRINTED: Internal associative array which contains the EID
-#      of events alredy printed to avoid duplicates in the current execution.
-declare -A TIMELINE_PRINTED=()
-
-# env: TIMELINE_WAS_PRINTED: Internal associative array which contains the EID
-#      of events printed in some previous execution.
-declare -A TIMELINE_WAS_PRINTED=()
-
-# env: TIMELINE_INDEX: Internal array used to print an index in timeline to
-#      easy refer to an event
-declare -a TIMELINE_INDEX=()
-
-# fun: timeline_load [path] [oid]
-# txt: load the timeline from current active account into memory
-timeline_load ()
-{
-  local oid="$2" content_path follow_path show_own path="$1"
-  local -a pattern
-
-  if [[ -z "$path" ]]; then
-    path="${ACCOUNT_PATH}"
-    oid="${ACCOUNT_OID}"
-  fi
-
-  content_path="$path/$TIMELINE_CONTENT"
-  follow_path="$path/$TIMELINE_FOLLOW"
-  show_own="${CONFIG["timeline.own-posts"]}"
-  read -ra pattern  <<< "${CONFIG["timeline.loading-pattern"]}"
-
-  if ! [[ -r "$content_path" ]]; then
-    error $"Content path does not exists."
-    error $"Maybe you delete your account data?"
-    E=1 error $"Try $0 account rebuild ${ACCOUNT_NAME} to recreate it automatically"
-  fi
-
-  echo -en $"> Loading ${pattern[$((i++ % ${#pattern[@]}))]}\r" >&2
-  # Load our account timeline
-  [[ "$show_own" = "false" ]] ||
-    event_load "$oid" "${content_path}"
-
-  local dir i=0
-
-  if [[ -d "${follow_path}" ]]; then
-    for dir in "${follow_path}"/*; do
-      [[ -d "$dir" ]] || continue  # ignore non-dir files
-      [[ -r "$dir/$TIMELINE_CONTENT" ]] || continue # ignore non initialized
-
-      dir="${dir%/}"
-      echo -en $"> Loading ${pattern[$((i++ % ${#pattern[@]}))]}\r" >&2
-      event_load "${dir##*/}" "${dir}/$TIMELINE_CONTENT"
-    done
-  fi
-}
-
-# fun: timeline_show_thread <eid>
-# txt: show the thread of the specific EID
-timeline_show_thread ()
-{
-  unset TIMELINE_PRINTED["$1"]
-  for event in $(event_labels "$1"); do
-    timeline_show_thread "$event"
-  done
-  for event in $(event_replies "$1"); do
-    timeline_show_thread "$event"
-  done
-  return 0
-}
-
-# fun: timeline_list_thread <eid>
-# txt: print thread for specific eid passed as argument
-timeline_list_thread ()
-{
-  local prefix indent date kind mesg tags link name eid="$1"
-  local flag show_tags show_replies flags=''
-
-  # item is already printed? then do nothing
-  [[ "${TIMELINE_PRINTED["$eid"]}" ]] && return
-
-  date="${EVENTS_DATE["$eid"]}"
-  kind="${EVENTS_KIND["$eid"]}"
-  name="$(username "$eid")"
-  sign="${EVENTS_SIGN["$eid"]}"
-  indent="${CONFIG["timeline.$kind.indent"]}"
-  prefix="${CONFIG["timeline.$kind.prefix"]}"
-
-  case "$kind" in
-    post)
-      mesg="${EVENTS_MESG["$eid"]}"
-      ;;
-    tag)
-      tags="${EVENTS_TAGS["$eid"]// /, }"
-      # shellcheck disable=SC2153
-      link="${EVENTS_LINK["$eid"]}"
-      format_compose "timeline.$kind" tags "${2}${indent}${prefix}${tags}"
-      ;;
-    reply)
-      mesg="${EVENTS_MESG["$eid"]}"
-      link="${EVENTS_LINK["$eid"]}"
-      ;;
-  esac
-
-  if [[ "${EVENTS_CFLAGS["$eid"]}" ]]; then
-    case "${EVENTS_CFLAGS["$eid"]}" in
-      'u') flags+="${CONFIG["timeline.$kind.flag-encrypted-good"]}";;
-      '-') flags+="${CONFIG["timeline.$kind.flag-encrypted-unknown"]}";;
-      'r') flags+="${CONFIG["timeline.$kind.flag-encrypted-revoked"]}";;
-      'e') flags+="${CONFIG["timeline.$kind.flag-encrypted-expired"]}";;
-      *) flags+="${CONFIG["timeline.$kind.flag-encrypted-bad"]}";;
-    esac
-  else
-    flags+="${CONFIG["timeline.$kind.flag-encrypted-none"]}"
-  fi
-
-  case "${sign}" in
-    G*) flags+="${CONFIG["timeline.$kind.flag-signed-good"]}";;
-    B*) flags+="${CONFIG["timeline.$kind.flag-signed-bad"]}";;
-    U*) flags+="${CONFIG["timeline.$kind.flag-signed-unknown"]}";;
-    X*|Y*) flags+="${CONFIG["timeline.$kind.flag-signed-expired"]}";;
-    R*) flags+="${CONFIG["timeline.$kind.flag-signed-revoked"]}";;
-    E*) flags+="${CONFIG["timeline.$kind.flag-signed-missing"]}";;
-    N*) flags+="${CONFIG["timeline.$kind.flag-signed-none"]}";;
-    *) flags+="${sign}";;
-  esac
-
-  if [[ "${CONFIG["timeline.show-untrusted-items"]}" = "true" ]]; then
-    [[ "${sign//\*/}" != "${sign}" ]] &&
-      flags+="${CONFIG["timeline.$kind.flag-trusted"]}" ||
-      flags+=' '
-  fi
-
-  if [[ "${TIMELINE_WAS_PRINTED[$eid]}" ]]; then
-    flags+=" "
-  else
-    flags+="${CONFIG["timeline.$kind.flag-new"]}"
-  fi
-
-  # composing the output
-  format_compose "timeline.$kind" index "${#TIMELINE_INDEX[@]}"
-  format_compose "timeline.$kind" name "$name"
-  format_compose "timeline.$kind" date "$date"
-  format_compose "timeline.$kind" link "$link"
-  format_compose "timeline.$kind" score "${EVENTS_SCORE["$eid"]}"
-  format_compose "timeline.$kind" mesg "${2}${indent}${prefix}${mesg}"
-
-  TIMELINE_PRINTED["$eid"]=1
-  TIMELINE_INDEX+=( "$eid" )
-
-  show_tags="${CONFIG["timeline.show-tags"]}"
-  show_replies="${CONFIG["timeline.show-replies"]}"
-
-  if [[ "$(event_labels "$eid")" ]]; then
-    flags+="${CONFIG["timeline.$kind.flag-tagged"]}"
-  else
-    flags+=" "
-  fi
-
-  if [[ "$(event_replies "$eid")" ]]; then
-    flags+="${CONFIG["timeline.$kind.flag-replied"]}"
-  else
-    flags+=" "
-  fi
-
-  if filter_eval "$eid"; then
-    format_compose "timeline.$kind" flags "${flags}"
-    format_dumps "timeline.$kind"
-  fi
-
-  if [[ "$show_tags" = "true" ]]; then
-    for tags in $(event_labels "$eid"); do
-      timeline_list_thread "$tags" "$2${indent}"
-    done
-  fi
-
-  if [[ "$show_replies" = "true" ]]; then
-    for reply in $(event_replies "$eid"); do
-      timeline_list_thread "$reply" "$2${indent}"
-    done
-  fi
-}
-
-# fun: timeline_list [filter]
-# txt: print the entire timelist
-timeline_list ()
-{
-  local eid
-  local -a filter_list
-
-  TIMELINE_PRINTED=()
-  TIMELINE_INDEX=()
-
-  if [[ $# -eq 0 ]]; then
-    read -ra filter_list <<< "${CONFIG[timeline.filter]}"
-    filter_add "${filter_list[@]}"
-  else
-    filter_add "$@"
-  fi
-
-  for eid in "${EVENTS_SORTED[@]}"; do
-    if [[ "${EVENTS_KIND["$eid"]}" = "post" ]]; then
-      timeline_list_thread "$eid" ''
-    fi
-  done
-
-  timeline_index_save
-}
-
-# fun: timeline_index_save
-# txt: dumps TIMELINE_INDEX to a sourceable file to be loaded before any
-#      input to identify an event easily.
-timeline_index_save ()
-{
-  local var
-  {
-    echo "declare -ag TIMELINE_INDEX=("
-    for var in "${TIMELINE_INDEX[@]}"; do
-      echo "'$var'"
-    done
-    echo ")"
-
-    echo "declare -Ag TIMELINE_WAS_PRINTED=("
-    for var in "${!TIMELINE_WAS_PRINTED[@]}"; do
-      echo "[$var]=1"
-    done
-    for var in "${!TIMELINE_PRINTED[@]}"; do
-      [[ "${TIMELINE_WAS_PRINTED[$var]}" ]] || echo "[$var]=1"
-    done
-    echo ")"
-  } > "${CACHE_DIR}/index.${ACCOUNT_OID}.cache"
-}
-
-# fun: timeline_index_load
-# txt: source index saved file with timeline_index_save
-timeline_index_load ()
-{
-  # shellcheck source=/dev/null
-  if [[ -r "${CACHE_DIR}/index.${ACCOUNT_OID}.cache" ]]; then
-    source "${CACHE_DIR}/index.${ACCOUNT_OID}.cache" 
-  fi
-}
-
-# fun: timeline_index_get <num>
-# txt: return the EID of the event indexed by number passed as argument
-timeline_index_get ()
-{
-  if [[ "$1" -ge ${#TIMELINE_INDEX[@]} ]]; then
-    E=1 error $"Index out of bounds: %s in %s" "$1" "TIMELINE_INDEX"
-  else
-    echo "${TIMELINE_INDEX[$1]}"
-  fi
-}
-
-# fun: timeline_edit
-# txt: interactively edit your timeline
-timeline_edit ()
-{
-  local content auto_push
-  content="${ACCOUNT_PATH}/CONTENT"
-
-  if [[ -w "$content" ]]; then
-
-    auto_push="${CONFIG["account.${ACCOUNT_NAME}.auto-push"]}"
-
-    if ! [[ "$auto_push" ]]; then
-      auto_push="$(config_get account.auto-push)"
-    fi
-
-    ${EDITOR:-nano} "$content"
-
-    account_commit "manual: timeline edit command" | info_multi
-
-    if [[ "$auto_push" = "true" ]]; then
-      account_push | info_multi
-    fi
-
-  else
-    fatal $"Unable to edit CONTENT file"
-  fi
-}
-
-# fun: timeline_orphans
-# txt: show orphan events in the timeline
-timeline_orphans ()
-{
-  for eids in "${EVENTS_CROSS_REPLY[@]}" "${EVENTS_CROSS_TAGS[@]}" \
-    "${EVENTS_CROSS_SCORE[@]}"
-  do
-    for eid in $eids; do
-      if [[ -z "${EVENTS_KIND["$eid"]}" ]]; then
-        timeline_list_thread "$eid"
+  for event in $(event_labels "$eid"); do
+    for tag in $(event_tags "$event"); do
+      if any "$fpattern" "$tag"; then
+        return 0
       fi
     done
   done
-  timeline_index_save
-}
-## vim:ft=sh
-
-# fun: crypto_requirements
-# txt: ensure that specific requirements for crypto management are
-#      present in the system
-crypto_requirements ()
-{
-  REQUIREMENTS+=( "+gpg" )
-  reqs_eval
+  return 1
 }
 
-# fun: crypto_keygen <account_id> <tstamp> <passphrase-file>
-# txt: generate key pair for the specific account and echoes the key_id of the
-#      generated one. The crver is v1 by default. Read tl-crypto(7) man page
-#      for details.
-crypto_keygen ()
+# fun: filter_flag <flag_to_filter> <eid>
+# txt: return true if EID need to be filtered
+filter_flag ()
 {
-  crypto_requirements
-
-  local keyid
-
-  gpg_helper \
-    --passphrase-file "$3" \
-    --quick-gen-key "$1@$2" "ed25519" cert,sign never ||
-    E=3 error $"Unable to create master key for account $1 (v1)."
-
-  keyid="$(crypto_keyid "$1@$2")"
-
-  [[ "$keyid" ]] || E=3 fatal $"Unable to retrieve recent generate keyID"
-
-  gpg_helper \
-    --passphrase-file "$3" \
-    --quick-add-key "$keyid" "cv25519" encr never ||
-    E=3 error $"Unable to create encryption key for account $1 (v1)"
-
-  gpg_helper \
-    --passphrase-file "$3" \
-    --quick-add-uid "$keyid" "$1@timeline" ||
-    E=3 error $"Unable to create user-id for account $1 (v1)"
-
-  echo -e "5\ny\nsave\n" | 
-    gpg_helper --no-batch --command-fd 0 \
-      --expert --edit-key "$keyid" trust >/dev/null 2>/dev/null ||
-      E=3 error $"Unable to trust keyID $keyid"
-}
-
-# fun: crypto_keyid <account_id>
-# txt: get the fingerprint for the key associated to specific account id.
-crypto_keyid ()
-{
-  local -a out
-  mapfile -d $'\n' out < <(
-    gpg_helper --keyid-format long -k "$1${2:+@$2}" 2>/dev/null
-  )
-  [[ "${out[1]// /}" ]] &&
-    echo "${out[1]// /}"
-}
-
-# fun: crypto_import <keyfile>
-# txt: import a key into the timeline keyring
-crypto_import ()
-{
-  crypto_requirements
-
-  if [[ "$1" ]]; then
-    gpg_helper --import < "$1" || E=3 error $"Unable to import key file %s" "$1"
-  else
-    gpg_helper --import || E=3 error $"Unable to import key from stdin"
-  fi
-}
-
-# fun: crypto_export <account_id> <file>
-# txt: export public key of the specific account id to file
-crypto_export ()
-{
-  crypto_requirements
-  gpg_helper --no-comments --no-emit-version \
-    --armor --export "$1@timeline" > "$2" ||
-    E=3 error $"Unable to export keys for account $1"
-}
-
-# fun: crypto_revoke <account_name> <key_id>
-# txt: revoke a specific key_id
-crypto_revoke ()
-{
-  local rcert
-  local homedir="${CONFIG[account.$1.keyring]}"
-  crypto_requirements
-
-  [[ -r "${homedir}/openpgp-revocs.d/$2.rev" ]] ||
-    E=4 fatal $"KeyID $1 does not have revocation certificate."
-
-  rcert="$(< "${homedir}/openpgp-revocs.d/$2.rev")"
-  gpg_helper --import <<< "${rcert//:---/---}" || # remove : guard 
-    E=4 fatal $"Unable to revoke key"
-}
-
-# fun: crypto_uid <key_id> [match]
-# txt: echoes the uid of the key_id or, if match provided, return true if
-#      the uid match the pattern.
-crypto_uid ()
-{
-  local line
-  while read -r line; do
-    case "$line" in
-      uid:*)
-        IFS=: read -r -a line <<< "$line"
-        if [[ "$2" ]]; then
-          [[ "${line[9]}" = "$2" ]] && return 0
-        else
-          echo "${line[9]}"
-        fi
-        ;;
-    esac
-  done < <(gpg_helper --with-colons -k "$1")
-  ! [[ "$2" ]]
-}
-
-# fun: crypto_validate <key_id> <crver>
-# txt: validate that specific key_id is conforminr crver specification
-crypto_validate ()
-{
-  local kind val data
-  crypto_requirements
-
-  data="$(gpg_helper --keyid-format long -k "$1@timeline" 2>&1)" ||
-    E=3 error $"Unable to validate key $1 ($2). Error was: '$data'."
-
-  case "$2" in
-    v1)
-      while read -r kind val _; do
-        case "$kind" in
-          pub)
-            [[ "${val#ed25519/}" = "${val}" ]] &&
-              E=3 error $"Key $1 does not conform $2: Pub part is no ED25519"
-            ;;
-          sub)
-            [[ "${val#cv25519/}" = "${val}" ]] &&
-              E=3 error $"Key $1 does not conform $2: Sub part is no CV25519"
-            ;;
-        esac
-      done <<< "$data"
-      ;;
-  esac
-}
-
-# fun: crypto_list
-# txt: echoes a list of keys present in keyring
-crypto_list ()
-{
-  local line flags pub=false
-  while IFS=: read -r -a line; do
-    case "${line[0]}" in
-      pub)
-        case "${line[1]}" in
-          *r*) flags="R";;
-          *) flags="";;
-        esac
-        pub=true;;
-      fpr) "$pub" && echo "${line[9]} $flags";;
-      *) pub=false;;
-    esac
-  done < <(gpg_helper --with-colons -k "$@")
-}
-
-# fun: crypto_encrypt [--anon] <recipient> <message> <passfile>
-# txt: return a encrypted message for the specific recipient in REPLY var
-crypto_encrypt ()
-{
-  local mesg arg='-r'
-  local -a payload
-  crypto_requirements
-
-  [[ "$1" = "--anon" ]] && arg="-R" && shift
-
-  mapfile -t -s 2 payload < <(
-    gpg_helper -vv \
-      --armor --passphrase-file "$3" \
-      --sign --encrypt --no-comments --no-emit-version \
-      "$arg" "$1@timeline" <<< "$2"
-  ) 2>&1
-
-  [[ ${#payload[@]} -eq 0 ]] && exit 4
-
-  payload[-1]=''
-  REPLY="${payload[*]}"
-  REPLY="${REPLY// /}"
-}
-
-# fun: crypto_decrypt <account_id> <message> <passfile> [statusfile]
-# txt: decrypt a previously encrypted message
-crypto_decrypt ()
-{
-  local -a args
-  local -a mesg=(
-    "-----BEGIN PGP MESSAGE-----"
-    ""
-    "$2"
-    "-----END PGP MESSAGE-----"
-  )
-  crypto_requirements
-
-  [[ "$4" ]] && args+=( "--status-file=$4" )
-
-  read -r < <(
-    gpg_helper "${args[@]}" --passphrase-file "$3" -v --armor --decrypt \
-      --try-secret-key "$1@timeline" <<< "$(join $'\n' "${mesg[@]}")"
-  ) 2>&1 || REPLY=''
-}
-
-# fun: crypto_keyflags <keyid>
-# txt: put in $REPLY a list of flags for the keyid passed as argument
-crypto_keyflags ()
-{
-  local -a line
-  local aux
-  REPLY=''
-
-  while IFS=: read -ra line ; do
-    case "${line[0]}" in
-      pub|sub) aux="${line[1]}";;
-      fpr|fp2) [[ "${line[9]}" = "$1" ]] && REPLY="$aux" || true;;
-    esac
-  done < <(gpg_helper --with-colons -k "$1") ||
-    E=3 fatal $"Unable to retrieve keyflags for key %s" "$1"
-}
-
-# fun: gpg_helper [args]
-# txt: run gpg command with some well known parameters
-gpg_helper ()
-{
-  local homedir
-
-  [[ "$GNUPGHOME" ]] ||
-    E=3 fatal $"GNUPGHOME not set executing $*"
-
-  command "${CONFIG[crypto.gnupg-binary]:-exit}" --batch --no-tty \
-    --no-auto-key-retrieve --auto-key-locate "local" \
-    --trust-model always \
-    --personal-cipher-preferences AES256 \
-    --personal-digest-preferences SHA256 \
-    "$@"
-}
-## vim:ft=sh
-
-# env: ACCOUNT_NAME: A variable contains the name of the active account.
-export ACCOUNT_NAME=
-
-# env: ACCOUNT_PATH: A variable contains the path of the active account.
-export ACCOUNT_PATH=
-
-# env: ACCOUNT_OID: A variable contains the OID of the active account.
-export ACCOUNT_OID=
-
-# fun: account_list
-# txt: output a new-line separated list of defined accounts.
-account_list ()
-{
-  local account
-
-  for account in $(config_iter account.); do
-    case "$account" in
-      account.*.path)
-        account="${account#account.}"
-        account="${account%.path}"
-        echo "$account"
-      ;;
-    esac
-  done
-}
-
-# fun: account_load [name]
-# txt: load the account named as argument, if argument is omit, then try to
-#      load the account using the `account.default` configuration value or,
-#      if missing and there is only one configured account this one.
-#      Otherwise failed.
-account_load ()
-{
-  local name="$1" pull_url changes
-
-  name="${name:-${CONFIG[account.default]}}"
-
-  if [[ -z "$name" ]]; then
-
-    # try to infer the account name if none is provided
-    
-    read -ra all_accounts < <( account_list)
-
-    case "${#all_accounts[@]}" in
-      0) return 1;;
-      1) name="${all_accounts[0]}";;
-      *) E=1 fatal $"There are may accounts.";;
-    esac
-
-  fi
-
-  ACCOUNT_NAME="$name"
-  pull_url="${CONFIG["account.$ACCOUNT_NAME.pull-url"]}"
-
-  [[ "$pull_url" ]] ||
-    E=2 fatal $"Unknown account $ACCOUNT_NAME"
-
-  oid "$pull_url"
-  ACCOUNT_OID="${OID_CACHE["$pull_url"]}"
-  ACCOUNT_PATH="$(config_get "account.$ACCOUNT_NAME.path")"
-
-  export GNUPGHOME="${CONFIG[account.$ACCOUNT_NAME.keyring]}"
-
-  changes="$(git_helper -C "${ACCOUNT_PATH}" status --porcelain 2>&1)" ||
-    E=3 error $"Unable to check account status"
-  if [[ "$changes" ]]; then
-    error $"Account is dirty. Maybe you edit your account manually and badly."
-    error $"To repair just run: git -C '%s' reset --hard master" "$ACCOUNT_PATH"
-    exit 100
-  fi
-}
-
-export NOACTIVE=$"There are no active accounts"
-
-# fun: account_exists [name]
-# txt: return true if the account name passed as argument is a initialized
-#      account. If name is omit, then use active account path.
-account_exists ()
-{
-  local path=
-  
-  [[ "$1" ]] && path="${CONFIG["account.$1.path"]}"
-
-  if [[ -z "$path" ]]; then
-    path="${ACCOUNT_PATH}"
-  fi
-  [[ -d "${path%.git}/.git" ]]
-}
-
-# fun: account_keygen <oid> <tstamp> <name>
-# txt: generate a new keypair for the account named name and the oid oid and
-#      specific tstamp
-account_keygen ()
-{
-  local name="$3" tstamp="$2" oid="$1"
-
-  config_set "account.$name.keyring" "$(try_path "${CONFIG[crypto.keyring-path]}")/$name"
-
-  mkdir -p "${CONFIG["account.$name.keyring"]}" &&
-    chmod 700 "${CONFIG["account.$name.keyring"]}"
-
-  export GNUPGHOME="${CONFIG["account.$name.keyring"]}"
-
-  crypto_keygen "$oid" "$tstamp" \
-    "${CONFIG[account.$name.passphrase-file]:-/dev/null}" 2>&1
-}
-
-# fun: account_create <name> <push_url> <pull_url> [path]
-# txt: create a new account named as name, with specific push and pull url,
-#      if path is provided then set the account path to this one, otherwise,
-#      use the default path for accounts as prefix
-account_create ()
-{
-  local name="$1" push_url="$2" pull_url="$3" path="$4" tstamp
-
-  tstamp="$(timestamp)"
-
-  [[ "${CONFIG["account.$name.path"]}" ]] &&
-    E=1 fatal $"Another account already exists with that name"
-
-  account_exists "$name" &&
-    E=1 fatal $"Trying to initializating an already initialized account"
-  
-  path="${path:-$(try_path "$(config_get account.path)")/$name}"
-  config_set "account.$name.push-url" "$push_url"
-  config_set "account.$name.pull-url" "$pull_url"
-  config_set "account.$name.path" "$path"
-
-  oid "$pull_url"
-
-  config_set "user.alias-${OID_CACHE["$pull_url"]}" "$name"
-
-  [[ "${CONFIG[account.auto-keygen]}" = "true" ]] &&
-    account_keygen "${OID_CACHE[$pull_url]}" "$tstamp" "$name"
-
-  # create empty dir for init
-  mkdir -p "$path" ||
-    E=1 fatal $"Unable to create account directory: %s" "$path"
-
-  git_helper -C "$path" init ${TIMELINE_EXPERIMENTAL_SHA256:+--object-format=sha256}
-  account_config "$path" "$pull_url" "$1" "$tstamp"
-
-  config_save "${CONFIG_FILE}"
-
-  git_helper -C "$path" add .
-
-  git_helper -C "$path" commit -m 'init' 2>&1
-  git_helper -C "$path" remote add origin "$push_url" 2>&1
-  git_helper -C "$path" push -u origin master 2>&1 ||
-    E=2 fatal $"Unable to push initial commit"
-}
-
-# fun: account_clone <name> <push_url> <pull_url> [path]
-# txt: clone new account named as name, from the specific push url,
-#      if path is provided then set the account path to this one, otherwise,
-#      use the default path for accounts as prefix
-account_clone ()
-{
-  if [[ "$1" = "--force" ]]; then
-    local force=true; shift
-  else
-    local force=false
-  fi
-
-  local name="$1" push_url="$2" pull_url="$3" path="$4"
-
-  if ! $force && [[ "${CONFIG["account.$name.path"]}" ]]; then
-    E=1 fatal $"Another account already exists with that name"
-  else
-    path="${path:-$(try_path "$(config_get account.path)")/$name}"
-    config_set "account.$name.push-url" "$push_url"
-    config_set "account.$name.pull-url" "$pull_url"
-    config_set "account.$name.path" "$path"
-
-    oid "$pull_url"
-
-    [[ -z "${CONFIG[account.$name.keyring]}" ]] &&
-      [[ "${CONFIG[account.auto-keygen]}" = "true" ]] &&
-        account_keygen "${OID_CACHE[$pull_url]}" "$tstamp" "$name"
-
-    config_set "user.alias-${OID_CACHE["$pull_url"]}" "$name"
-    git_helper clone "$push_url" "$path" 2>&1
-    git_helper -C "$path" submodule init 2>&1
-
-    account_config "$path" "$pull_url" "$name" "timeline"
-
-    config_save "${CONFIG_FILE}"
-  fi
-}
-
-# fun: account_config <path> <pull_url> <name> <tstamp>
-# txt: configure user and other required things in the repo
-account_config ()
-{
-  local path="$1" pull_url="$2" name="$3" tstamp="$4" keyid
-  oid "$pull_url"
-
-  git_helper -C "$path" config user.name "${OID_CACHE["$pull_url"]}"
-  git_helper -C "$path" config user.email "${OID_CACHE["$pull_url"]}@timeline"
-  git_helper -C "$path" config core.preloadindex true
-  git_helper -C "$path" config core.fscache true
-  git_helper -C "$path" config gc.auto 256
-
-  command touch "${path:?}/CONTENT"
-  command mkdir -p "${path:?}/FOLLOW"
-
-  if [[ "$tstamp" ]]; then
-    keyid="$(crypto_keyid "${OID_CACHE["$pull_url"]}" "$tstamp")"
-
-    if [[ "$keyid" ]]; then
-      account_set_signkey "$name" "$keyid"
-      crypto_export "${OID_CACHE["$pull_url"]}" "${path:?}/SIGNKEY"
-      account_set_encrkey "$name" "$keyid"
-      crypto_export "${OID_CACHE["$pull_url"]}" "${path:?}/ENCRKEY"
-
-      export GNUPGHOME="${CONFIG[account.$name.keyring]}"
-    fi
-  fi
-
-}
-
-# fun: account_commit [message]
-# txt: set a commit point into current active account
-account_commit ()
-{
-  [[ "$ACCOUNT_PATH" ]] || E=1 fatal $"No active account to commit"
-
-  git_helper -C "$ACCOUNT_PATH" add .
-
-  if config_eval "account.$ACCOUNT_NAME.signkey" "account.signkey" >/dev/null
-  then
-    git_helper -C "$ACCOUNT_PATH" commit -S -m "${1:-autosave}"
-  else
-    git_helper -C "$ACCOUNT_PATH" commit -m "${1:-autosave}"
-  fi
-}
-
-# fun: account_push [remote]
-# txt: push active account content to remote passed as argument or, if
-#      missing, to `origin`.
-account_push ()
-{
-  # TODO Add support for multiple branches
-  git_helper -C "${ACCOUNT_PATH}" push "${1:-origin}" master
-}
-
-# fun: account_refresh <path> [remote]
-# txt: rebase changes to current account from remote passed as argument or,
-#     if missing, `origin`.
-account_refresh ()
-{
-  local line path="$1" commit=false; shift
-
-  git_helper -C "$path" fetch --all --jobs "${CONFIG[git.jobs]:-4}" 2>&1
-  # TODO Add support for multiple branches
-  git_helper -C "$path" rebase "${1:-origin}/master" 2>&1
-  git_helper -C "$path" submodule update --remote \
-    --jobs "${CONFIG[git.jobs]:-4}" 2>&1
-
-  while read -r _ line; do
-    commit=true
-    case "$line" in
-      FOLLOW/*) account_import "$path/$line";;
-    esac
-  done < <(git_helper -C "$path" status -s)
-
-  ${commit} &&
-    account_commit "chore: update submodules"
-
-  git_helper -C "$path" repack -a -d --depth=250 --window=250 2>&1
-}
-
-# fun: account_delete [name]
-# txt: delete account by name passed as argument or active account if none
-#      name is provided.
-account_delete ()
-{
-  local name="${1:-$ACCOUNT_NAME}" path pull_url
-
-  path="$(config_get "account.$name.path")"
-  pull_url="$(config_get "account.$name.pull-url")"
-  
-  oid "$pull_url"
-
-  if [[ -d "$path" ]]; then
-    rm -rf "$path"
-  fi
-
-  config_unset "account.$name"
-  config_unset "user.alias-${OID_CACHE["$pull_url"]}"
-
-  config_save "${CONFIG_FILE}"
-}
-
-# fun: account_set_signkey <name> <keyid>
-# txt: set signing keyid for an existant account
-account_set_signkey ()
-{
-  if [[ "$2" ]]; then
-    git_helper -C "$(config_get "account.$1.path")" config user.signingkey "$2"
-  else
-    git_helper -C "$(config_get "account.$1.path")" config --unset user.signingkey
-  fi
-
-  config_set "account.$1.signkey" "$2"
-}
-
-# fun: account_set_encrkey <name> <keyid>
-# txt: set encryption keyid for an existant account
-account_set_encrkey ()
-{
-  config_set "account.$1.encrkey" "$2"
-}
-
-# fun: account_preview <url> [filter]
-# txt: preview the contents of the specified url repo filtered with the
-#      specific if present.
-account_preview ()
-{
-  local tmpdir depth
-  tmpdir="$(temp_dir)"
-  depth="${CONFIG[account.preview-depth]}"
-
-  [[ "$depth" = "-1" ]] && depth=""
-
-  git_helper clone ${depth:+--depth "${depth}"} "$1" "${tmpdir}" 2>&1 |
-    info_multi ||
-      E=1 error $"Unable to clone remote repo"
-
-  oid "$1"
-  timeline_load "${tmpdir}" "${OID_CACHE["$1"]}"
-  shift
-  timeline_list "$@"
-}
-
-# fun: account_keys
-# txt: print the associated keys for the current account
-account_keys ()
-{
-  local fpr flags
-
-  while read -r fpr flags; do
-    [[ "$fpr" = "${CONFIG[account.$ACCOUNT_NAME.signkey]}" ]] &&
-      flags+='S'
-
-    [[ "$fpr" = "${CONFIG[account.$ACCOUNT_NAME.encrkey]}" ]] &&
-      flags+='E'
-
-    echo "$fpr $flags"
-  done < <(crypto_list "=${ACCOUNT_OID}@timeline")
-}
-
-# fun: account_import <path>
-# txt: get public keys references in path
-account_import ()
-{
-  local line path="$1";
-
-  # shellcheck disable=SC2016
-  while read -r line; do
-    case "$line" in
-      ENCRKEY|SIGNKEY) crypto_import "$path/$line"
-    esac
-  done < <(git_helper -C "$path" show --pretty="" --name-only)
-}
-## vim:ft=sh
-
-# env: EID: store the last EID created
-export EID=
-
-# env: EVENT: associative array which contains parts of an event line.
-declare -A EVENTS_KIND=()
-declare -A EVENTS_DATE=()
-declare -A EVENTS_LINK=()
-declare -A EVENTS_TAGS=()
-declare -A EVENTS_MESG=()
-declare -A EVENTS_SIGN=()
-declare -A EVENTS_SCORE=()
-declare -A EVENTS_COMMIT=()
-declare -A EVENTS_ENCROUT=()
-declare -A EVENTS_CFLAGS=()
-
-declare -A EVENTS_CROSS_REPLY=()
-declare -A EVENTS_CROSS_TAGS=()
-declare -A EVENTS_CROSS_SCORE=()
-declare -a EVENTS_SORTED=()
-
-ERR_TIME_DUPLICATED=$"Duplicated timestamp for events %s and %s"
-
-# fun: event_load_line <account_id> <fname> <commit> <flags> <content> <index> <encrout> <cflag>
-# txt: parse a event line passed as argument and fill properly fields in
-#      a associative array called EVENT. The account id is the OID
-#      associated to the pull_url of the account.
-#
-#      The POST kind has the fields: timestamp,kind,message
-#      The REPLY kind has the fields: timestamp,kind,ref,message
-#      The TAG kind has the fields: timestamp,kind,ref,tags
-#      The SCORE kind has the fields: timestamp,kind,ref,score
-event_load_line ()
-{
-  local aid="$1" fname="$2" commit="$3" flags="$4" line="${5%$'\n'}"
-  local encrout="$7" cflag="$8" show_untrusted t_output t_status
-  local idx link mesg tags score hmac='' eid
-
-  local datet="${line%% *}"
-  local kind="${line#$datet }"; kind="${kind%% *}"
-  local rest="${line#$datet $kind }"
-
-  local -a status
-
-  idx="$(( ${datet}000 + $6 ))"
-
-  show_untrusted="${CONFIG["timeline.show-untrusted-items"]}"
-
-  case "$kind" in
-    P|POST)
-      mesg="$rest"
-      kind='post'
-      oid "$mesg"
-      hmac="${OID_CACHE["$mesg"]}"
-      ;;
-    R|REPLY)
-      link="${rest%% *}"
-      mesg="${rest#$link }"
-      kind='reply'
-      oid "$mesg"
-      hmac="${OID_CACHE["$mesg"]}"
-      ;;
-    T|TAG)
-      link="${rest%% *}"
-      tags="${rest#$link }"
-      kind='tag'
-      oid "$link $tags"
-      hmac="${OID_CACHE["$link $tags"]}"
-      ;;
-    S|SCORE)
-      kind='score'
-      link="${rest%% *}"
-      score="${rest#$link }"
-      case "$score" in
-        -1) score="-1";;
-        *) score="1";;
-      esac
-      oid "$link $score"
-      hmac="${OID_CACHE["$link $score"]}"
-      ;;
-    E|ENCRYPTED)
-      local ignore_anon rcpt="${rest%% *}"; mesg="${rest#$rcpt }"
-
-      ignore_anon="$(config_eval \
-        "account.$ACCOUNT_NAME.crypto-ignore-anon" \
-        "account.crypto-ignore-anon"
-      )"
-
-      if [[ "$rcpt" = "${ACCOUNT_OID}" ]] ||
-        [[ ("$rcpt" = "@all") && ($ignore_anon != "false") ]]; then
-        t_output="$(temp_file)"; t_status="$(temp_file)"
-
-        crypto_decrypt "${ACCOUNT_OID}" "$mesg" \
-          "${CONFIG[account.$ACCOUNT_NAME.passphrase-file]:-/dev/null}" \
-          "$t_status" > "$t_output" 2>&1
-
-        mesg="$REPLY"
-
-        while read -ra status; do
-          case "${status[1]}" in
-            DECRYPTION_KEY)
-              crypto_keyflags "${status[2]}"
-              cflag="${REPLY}" && break;;
-          esac
-        done < "$t_status"
-
-        if  [[ "$mesg" ]]; then
-          event_load_line "$1" "$2" "$3" "$4" "$mesg" "$6" "$(< "$t_output")" "$cflag"
-        elif [[ "${CONFIG[timeline.show-anon-failed]}" = "true" ]]; then
-          error $"Unable to decrypt anonymous message from %s." "$(username "$aid")"
-        fi
-
-      elif [[ "${CONFIG[timeline.show-all-encrypted]}" = "true" ]]; then
-        info $"Encrypted message from %s to %s." "$(username "$aid")" "$(username "$rcpt")"
-      fi
-      return 0;;
-    *)
-      error $"Ignored malformed event: '$line'"
-      return 0
-      ;;
-  esac
-
-  [[ "$encrout" ]] && unset OID_CACHE["$mesg"]
-
-  if [[ "$show_untrusted" = "true" ]]; then
-    eid="$aid:$datet"
-    case "$link" in
-      *:*:*) flags+="*"; link="${link%:*}";;
-    esac
-  else
-    eid="$aid:$datet:$hmac"
-  fi
-
-  EVENTS_KIND["$eid"]="$kind"
-  EVENTS_DATE["$eid"]="$datet"
-  EVENTS_LINK["$eid"]="$link"
-  EVENTS_TAGS["$eid"]="$tags"
-  EVENTS_MESG["$eid"]="$mesg"
-  EVENTS_SIGN["$eid"]="$flags"
-  EVENTS_COMMIT["$eid"]="$fname $commit"
-  EVENTS_ENCROUT["$eid"]="$encrout"
-  EVENTS_CFLAGS["$eid"]="$cflag"
-
-  # XXX some array abused. Because arrays allows any index number, and are
-  # sorted by definition, we do not need to sort anything.
-  EVENTS_SORTED["$idx"]="$eid"
-
-  if [[ "$kind" = 'reply' ]]; then
-    EVENTS_CROSS_REPLY[$link]+=" $eid "
-  elif [[ "$kind" = 'tag' ]]; then
-    EVENTS_CROSS_TAGS[$link]+=" $eid "
-  elif [[ "$kind" = 'score' ]]; then
-    if ! [[ "${EVENTS_CROSS_SCORE[$aid:$link]}" ]]; then
-      EVENTS_CROSS_SCORE["$aid:$link"]=1
-      (( EVENTS_SCORE["$link"]+=score ))
-    fi
-  fi
-
-  [[ "$ACCOUNT_NAME" ]] && notify "$eid"
-}
-
-# fun: event_sign <eid>
-# txt: return true if EID is signed
-event_sign ()
-{
-  echo "${EVENTS_SIGN[$1]}"
-}
-
-# fun: event_replies <eid>
-# txt: given an specific eid return the eids of the replies of that post
-event_replies ()
-{
-  local -a sorted_replies=()
-  local idx
-
-  for reply in ${EVENTS_CROSS_REPLY["$1"]}; do
-    idx="${reply#*:}"; idx="${idx%%:*}$(printf %03d "$((RANDOM % 100))")"
-    [[ "$reply" = "$1" ]] && E=3 error "$ERR_TIME_DUPLICATED" "$label" "$1"
-    sorted_replies[$idx]="$reply"
-  done
-
-  echo "${sorted_replies[@]}"
-}
-
-# fun: event_labels <eid>
-# txt: given an specific eid return the eids of the tags of that post
-event_labels ()
-{
-  local -a sorted_labels=()
-  local idx
-
-  for label in ${EVENTS_CROSS_TAGS["$1"]}; do
-    idx="${label#*:}"; idx="${idx%%:*}$(printf %03d "$((RANDOM % 100))")"
-    [[ "$label" = "$1" ]] && E=3 error "$ERR_TIME_DUPLICATED" "$label" "$1"
-    sorted_labels[$idx]="$label"
-  done
-
-  echo "${sorted_labels[@]}"
-}
-
-# fun: event_score <eid>
-# txt: return the score of the specified event
-event_score ()
-{
-  echo "${EVENTS_SCORE[$1]:-0}"
-}
-
-# fun: event_iter
-# txt: print a list of events saved in memory
-event_iter ()
-{
-  echo "${EVENTS_SORTED[@]}"
-}
-
-# fun: event_kind <eid>
-# txt: given an event id, get the kind of the event
-event_kind ()
-{
-  echo "${EVENTS_KIND["$1"]}"
-}
-
-# fun: event_date <eid>
-# txt: given an event id, get the date of the event
-event_date ()
-{
-  echo "${EVENTS_DATE["$1"]}"
-}
-
-# fun: event_link <eid>
-# txt: given an event id, get the link of the event (only for TAGS and
-#      REPLIES)
-event_link ()
-{
-  echo "${EVENTS_LINK["$1"]}"
-}
-
-# fun: event_tags <eid>
-# txt: given an event id, get the tags of the event (only for TAGS)
-event_tags ()
-{
-  echo "${EVENTS_TAGS["$1"]}"
-}
-
-# fun: event_mesg <eid>
-# txt: given an event id, get the message of the event (only for REPLY and
-#      POST)
-event_mesg ()
-{
-  echo "${EVENTS_MESG["$1"]}"
-}
-
-# fun: event_create <args>
-# txt: create new event. Args can vary depends of event type, the order of
-#      the arguments should be:
-#      For posts: date kind mesg
-#      For reply: date kind link mesg
-#      For tags:  date kind link tags
-#      For dms: date kind recipient mesg-base64
-# env: EID: set this variable to the value of the EID to the created element.
-event_create ()
-{
-  local auto_push content_markdown mesg line l
-  local -a content
-
-  auto_push="$(config_eval "account.${ACCOUNT_NAME}.auto-push" account.auto-push)"
-
-  EID="$ACCOUNT_OID:$1"
-
-  case "$2" in
-    P) mesg="$3"; line="$*";;
-    E) mesg="$4"; line="$*";;
-    R|T|S)
-      mesg="$4"
-      case "$3" in
-        *:*:*) line="$*" ;;
-        *:*)
-          if [[ "${EVENTS_MESG["$3"]}" ]]; then
-            oid "${EVENTS_MESG["$3"]}"
-            line="$1 $2 $3:${OID_CACHE["${EVENTS_MESG["$3"]}"]} $4"
-          else
-            E=1 error $"Try to reference a non-existant EID: $3"
-          fi;;
-        *) E=1 error $"Invalid EID reference: $*";;
+  local flag="$1" eid="$2"
+
+  [[ "${flag}" ]] || return 0
+
+  case "$flag" in
+    new) [[ "${TIMELINE_WAS_PRINTED[$eid]}" ]] || return 0;;
+    trust)
+      [[ "${EVENTS_SIGN["$eid"]//\*/}" != "${EVENTS_SIGN["$eid"]}" ]] &&
+        return 0;;
+    signed-good)
+      [[ "${EVENTS_SIGN["$eid"]//G/}" != "${EVENTS_SIGN["$eid"]}" ]] &&
+        return 0;;
+    signed-bad)
+      [[ "${EVENTS_SIGN["$eid"]//B/}" != "${EVENTS_SIGN["$eid"]}" ]] &&
+        return 0;;
+    signed-unknown)
+      [[ "${EVENTS_SIGN["$eid"]//U/}" != "${EVENTS_SIGN["$eid"]}" ]] &&
+        return 0;;
+    signed-expired)
+      [[ "${EVENTS_SIGN["$eid"]//X/}" != "${EVENTS_SIGN["$eid"]}" ]] &&
+        return 0
+      [[ "${EVENTS_SIGN["$eid"]//Y/}" != "${EVENTS_SIGN["$eid"]}" ]] &&
+        return 0;;
+    signed-revoked)
+      [[ "${EVENTS_SIGN["$eid"]//R/}" != "${EVENTS_SIGN["$eid"]}" ]] &&
+        return 0;;
+    signed-missing)
+      [[ "${EVENTS_SIGN["$eid"]//E/}" != "${EVENTS_SIGN["$eid"]}" ]] &&
+        return 0;;
+    signed)
+      case "${EVENTS_SIGN["$eid"]}" in
+        G*|B*|U*|X*|Y*|R*|E*) return 0;;
       esac;;
   esac
-  oid "$mesg"
-  EID+=":${OID_CACHE["$mesg"]}"
+  return 1
+}
 
-  mapfile -t content < "${ACCOUNT_PATH}/$TIMELINE_CONTENT"
+# fun: filter_view <view> <eid>
+# txt: return true if EID need to be filtered
+filter_view ()
+{
+  local fpattern="$1" eid="$2"
+  read -ra view <<< "${CONFIG["views.$fpattern"]}"
 
-  echo "$line" > "${ACCOUNT_PATH}/$TIMELINE_CONTENT"
-  for l in "${content[@]}"; do
-    echo "$l" >> "${ACCOUNT_PATH}/$TIMELINE_CONTENT"
-  done
-
-  content_markdown="${CONFIG["account.${ACCOUNT_NAME}.content-markdown"]}"
-
-  if ! [[ "$content_markdown" ]]; then
-    content_markdown="${CONFIG[account.content-markdown]}"
-  fi
-
-  if [[ "$content_markdown" = "true" ]]; then
-    markdown_generate
-  fi
-
-  account_commit "event: $line"
-
-  if [[ "$auto_push" = "true" ]]; then
-    account_push
+  if [[ "${#view[@]}" -ne 0 ]]; then
+    filter_eval "$eid" "${view[@]}"
+  else
+    E=1 fatal $"No view named: %s" "$fpattern"
   fi
 }
 
-# fun: event_info <eid>
-# txt: given an eid, print the infortmation related with this event
-event_info ()
+# fun: filter_score {score-min|score-max} <value> <eid>
+# txt: return true if EID need to be filtered according to score values
+#      passsed as argument.
+filter_score ()
 {
-  local eid="$1" date kind mesg tags reply link tag
+  local kind="$1" value="$2" eid="$3"
+  local score
 
-  date="${EVENTS_DATE["$1"]}"
-  kind="${EVENTS_KIND["$1"]}"
+  score="$(event_score "$eid")"
 
-  if [[ -z "$kind" ]]; then
-    E=1 error $"Not found information for EID '$eid'"
-    return 1
-  fi
-
-  mesg="${EVENTS_MESG["$eid"]}"
-  tags="${EVENTS_TAGS["$eid"]}"
-  link="${EVENTS_LINK["$eid"]}"
-  
-  printf "%-10s %s\n" $"EID:"   "$eid"
-  printf "%-10s %s (%s)\n" $"UID:"   "${eid%%:*}" "$(username "$eid")"
-  # shellcheck disable=SC2183
-  printf "%-10s %s (%(%Y-%m-%d %H:%M:%S)T)\n" $"Date:"  "$date" "$date"
-  printf "%-10s %s\n" $"Kind:"   "${kind^^}"
-  printf "%-10s %s\n" $"Link:"   "${link}"
-  printf "%-10s %s\n" $"Tags:"   "${tags}"
-  printf "%-10s %s\n" $"Mesg:"   "${mesg}"
-  printf $"Tagged by:\n"
-
-  local -A taggedas=()
-  for item in $(event_labels "$eid"); do
-    printf "  -  %s\n" "$item"
-    for tag in ${EVENTS_TAGS["$item"]}; do
-      taggedas["$tag"]=1
-    done
-  done
-  printf $"Tagged as:\n"
-  for item in "${!taggedas[@]}"; do
-    printf "  -  %s\n" "$item"
-  done
-  printf $"Replied by:\n"
-  for item in $(event_replies "$eid"); do
-    printf "  -  %s\n" "$item"
-  done
-
-  case "${EVENTS_SIGN["$eid"]//\*/}" in
-    G|B|U|X|Y|R|E)
-      printf "%-10s %s\n" $"Signed:" $"Yes"
-      printf $"Signature information:\n"
-
-      git_helper -C "${EVENTS_COMMIT["$eid"]%% *}" \
-        verify-commit "${EVENTS_COMMIT["$eid"]##* }" 2>&1 | prefix "     "
-      ;;
+  case "$kind" in
+    score-min)
+      [[ "${score:-0}" -lt "${value}" ]] && return 0
+    ;;
+    score-max)
+      [[ "${score:-0}" -gt "${value}" ]] && return 0
+    ;;
     *)
-      printf "%-10s %s\n" $"Signed:" $"No"
-      ;;
+      E=1 fatal $"Invalid score filter: %s" "$kind"
+    ;;
   esac
 
-  if [[ "${EVENTS_ENCROUT["$eid"]}" ]]; then
-    printf "%-10s %s\n" $"Encrypted:" $"Yes"
-    printf "%-10s %s\n" $"Encrypted Flags": "${EVENTS_CFLAGS["$eid"]}"
-    printf "%-10s %s\n" $"Keyring:" "${CONFIG["account.$ACCOUNT_NAME.keyring"]}"
-    printf $"Decryption Process Information:\n"
-
-    echo "${EVENTS_ENCROUT["$eid"]}" | prefix "     "
-  else
-    printf "%-10s %s\n" $"Encrypted:" $"No"
-  fi
+  return 1
 }
 
-# fun: event_load <account_id> <filename>
-# txt: given an content filename, parse it and store events in memory
-event_load ()
+# fun: filter_text <pattern> <eid>
+# txt: return true if especified eid contains text which match with pattern
+#      passed as argument (glob pattern supported only).
+filter_text ()
 {
-  local max_user_posts fname="$2" account="$1"
-  local commit line aname="${CONFIG["user.alias-$account"]:-$account}"
-  local -A gitlog
+  local fpattern="$1" eid="$2"
 
-  max_user_posts="${CONFIG["account.${aname}.max-posts"]:-${CONFIG[account.max-posts]:-20}}"
+  # shellcheck disable=SC2254
+  case "${EVENTS_MESG["$eid"]}" in
+    *$fpattern*) return 0;;
+  esac
+  return 1
+}
 
-  # shellcheck disable=SC1090
-  source <(
-    git_helper -C "${fname%/*}" log -s --pretty=format:"gitlog[%H]='%G?'" \
-      --no-color "$fname"
-  )
+# fun: filter_mention <eid>
+# txt: return true if myself is mentioned in eid
+filter_mention ()
+{
+  local eid="$1" uid pattern
+  uid="${ACCOUNT_OID}"
+  local -a reat=()
 
-  _i() {
-    case "${2}" in
-      ''|\#*) return
+  # no acctive account
+  [[ "$uid" ]] || return 1
+
+  reat=( "@$uid" "@${uid:0:8}" "$(username "$uid")" )
+
+  if [[ "${CONFIG[timeline.react-on-all]}" = "true" ]]; then
+    reat+=( "@all" "@here" )
+  fi
+
+  for pattern in "${reat[@]}"; do
+    filter_text "*${pattern}*" "$eid" && return 0
+  done
+
+  return 1
+}
+
+# fun: filter_engagement <eid>
+# txt: return true if the event has engagement with your account
+filter_engagement ()
+{
+  local eid="$1" uid="${ACCOUNT_OID}" link
+
+  # no acctive account
+  [[ "$uid" ]] || return 1
+
+  case "${EVENTS_KIND["$eid"]}" in
+    P) return 1;;
+    R|T|S)
+      link="${EVENTS_LINK["$eid"]}"
+      link="${link#*:}"; link="${link%:*}"
+      [[ "$link" = "$uid" ]] && return 0
+      ;;
+  esac
+  return 1
+}
+
+# fun: filter_add <expr>
+# txt: Add an expression filter
+filter_add ()
+{
+  FILTER_LIST+=( "$@" )
+}
+
+# fun: filter_eval <eid> [<expr>...]
+# txt: evaluate filtering of the eid for the specified mode. If this funcion
+#      return 0, means that the item is filtered, otherwise is not filtered.
+filter_eval ()
+{
+  local eid="$1" ret=0; shift
+
+  [[ "$#" -eq 0 ]] && set -- "${FILTER_LIST[@]}"
+  for exp in "$@"; do
+    case "$exp" in
+      -*) filter_eval_expr "$eid" "${exp#-}" && ret=1 || ret=0;;
+      *) filter_eval_expr "$eid" "${exp#+}" && ret=0 || ret=1;;
     esac
+  done
+  return $ret
+}
 
-    commit="${2%% *}";
-    line="${2#$commit *) }";
+# fun: filter_eval_expr <eid> <expr>
+# txt: eval an expression and return true if filtered or false if not
+filter_eval_expr ()
+{
+  local eid="$1" expr="$2"
 
-    event_load_line "$account" "${fname%/*}" "$commit" \
-      "${gitlog["$commit"]}" "${line//$'\e'[\[(]*([0-9;])[@-n]/}" "$1"
-  }
-
-  # shellcheck disable=SC2034
-  mapfile -c 1 -n "${max_user_posts}" -C _i < <(
-    git_helper -C "${fname%/*}" blame -s -l "$fname"
-  )
+  case "$expr" in
+    '') ;;
+    tag:*)
+      filter_tag "${expr#tag:}" "$eid" && return 0
+      ;;
+    score-min:*|score-max:*)
+      filter_score "${expr%%:*}" "${expr#*:}" "$eid" && return 0
+      ;;
+    flag:*)
+      filter_flag "${expr#flag:}" "$eid" && return 0
+      ;;
+    view:*)
+      filter_view "${expr#view:}" "$eid" && return 0
+      ;;
+    mention)
+      filter_mention "$eid" && return 0
+      ;;
+    engagement)
+      filter_engagement "$eid" && return 0
+      ;;
+    *)
+      filter_text "${expr#text:}" "$eid" && return 0
+      ;;
+  esac
+  return 1
 }
 main "$@"

@@ -9,8 +9,8 @@ tl-git - Bypass commands directly to the underlying git repository
 
 # DESCRIPTION
 
-The *tl-git* is intented to work at low level with your account repository.
-Using this command you can execute any git command in the account repo.
+The *tl-git* is intended to work at low level with your account repository.
+Using this command you can execute any git command in the account repository.
 
 # CONFIGURATION SETTINGS
 
