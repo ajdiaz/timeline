@@ -107,13 +107,13 @@ network_refresh_repo ()
 
   if [[ -d "${cache}/$uid" ]]; then
     # repo already exists, just rebase
-    if ! command git -C "${cache}/$uid" pull --rebase 2>&1; then
+    if ! git_helper -C "${cache}/$uid" pull --rebase 2>&1; then
       error $"Unable to pull repository '%s' from '%s'" "$uid" "$url"
       return 1
     fi
   else
     # repo does not exists yet, cloning...
-    if ! command git clone --depth 1 "$url" "$cache/$uid" 2>&1; then
+    if ! git_helper clone --depth 1 "$url" "$cache/$uid" 2>&1; then
       error $"Unable to clone repository '%s' from '%s'" "$uid" "$url"
       return 1
     fi

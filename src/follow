@@ -13,7 +13,7 @@ follow_list ()
         echo "${line%.url=*}" "${line#*.url=}"
       ;;
     esac
-  done < <(command git -C "$path" config -f .gitmodules -l 2>/dev/null)
+  done < <(git_helper -C "$path" config -f .gitmodules -l 2>/dev/null)
 }
 
 
@@ -25,19 +25,27 @@ follow_add ()
   local pull_url="${1}" name="$2"
   oid "$pull_url"
   
-  command git -C "${ACCOUNT_PATH}" submodule add \
+  git_helper -C "${ACCOUNT_PATH}" submodule add \
     "$pull_url" "${TIMELINE_FOLLOW}/${OID_CACHE["$pull_url"]}"
-  command git -C "${ACCOUNT_PATH}" submodule init
-  command git -C "${ACCOUNT_PATH}" submodule update --remote
+  git_helper -C "${ACCOUNT_PATH}" submodule init
+  git_helper -C "${ACCOUNT_PATH}" submodule update --remote
 
   account_commit "follow: add ${OID_CACHE["${pull_url}"]}"
   account_push
+
+  if [[ "${CONFIG[crypto.auto-import]}" = "true" ]]
+  then
+    [[ -r "${ACCOUNT_PATH}/${TIMELINE_FOLLOW}/${OID_CACHE["$pull_url"]}/ENCRKEY" ]] &&
+      crypto_import "${ACCOUNT_PATH}/${TIMELINE_FOLLOW}/${OID_CACHE["$pull_url"]}/ENCRKEY"
+
+    [[ -r "${ACCOUNT_PATH}/${TIMELINE_FOLLOW}/${OID_CACHE["$pull_url"]}/SIGNKEY" ]] &&
+      crypto_import "${ACCOUNT_PATH}/${TIMELINE_FOLLOW}/${OID_CACHE["$pull_url"]}/SIGNKEY"
+  fi
 
   if [[ "$name" ]]; then
     config_set "user.alias-${OID_CACHE["$pull_url"]}" "$name"
     config_save "${CONFIG_FILE}"
   fi
-
 }
 
 # fun: follow_del <uid>
@@ -49,15 +57,15 @@ follow_del ()
   mpath="${TIMELINE_FOLLOW}/$uid"
 
   # remove gitconfig sections
-  mute command git -C "$ACCOUNT_PATH" config -f .git/config \
+  mute git_helper -C "$ACCOUNT_PATH" config -f .git/config \
     --remove-section "submodule.$mpath"
 
-  mute command git -C "$ACCOUNT_PATH" config -f .gitmodules \
+  mute git_helper -C "$ACCOUNT_PATH" config -f .gitmodules \
     --remove-section "submodule.$mpath"
 
   account_commit "follow: del ${uid}"
 
-  command git -C "$ACCOUNT_PATH" rm --cached "$mpath"
+  git_helper -C "$ACCOUNT_PATH" rm --cached "$mpath"
   rm -rf "${ACCOUNT_PATH:?}/.git/modules/$mpath"
  
   if [[ -d "$ACCOUNT_PATH/$mpath" ]]; then

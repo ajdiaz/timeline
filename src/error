@@ -30,3 +30,17 @@ error ()
     exit "$E"
   fi
 }
+
+# fun: error_multi
+# txt: get messages from stdin and print informational messages to stderr
+error_multi ()
+{
+  format_compose timeline.error name "${CONFIG[timeline.error.name]:-ERROR}"
+  format_compose timeline.error date "$(printf "%(%s)T")"
+  _i() {
+    format_compose timeline.error mesg "${2%$'\n'}"
+    format_dumps timeline.error >&2
+  }
+  # shellcheck disable=SC2034
+  mapfile -c 1 -C _i
+}

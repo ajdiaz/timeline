@@ -1,12 +1,12 @@
 ## vim:ft=sh
 
-# env: ACCOUNT_NAME: A variable contains the name of the acctive account.
+# env: ACCOUNT_NAME: A variable contains the name of the active account.
 export ACCOUNT_NAME=
 
-# env: ACCOUNT_PATH: A variable contains the path of the acctive account.
+# env: ACCOUNT_PATH: A variable contains the path of the active account.
 export ACCOUNT_PATH=
 
-# env: ACCOUNT_OID: A variable contains the OID of the acctive account.
+# env: ACCOUNT_OID: A variable contains the OID of the active account.
 export ACCOUNT_OID=
 
 # fun: account_list
@@ -52,16 +52,22 @@ account_load ()
   fi
 
   ACCOUNT_NAME="$name"
-  pull_url="$(config_get "account.$ACCOUNT_NAME.pull-url")"
+  pull_url="${CONFIG["account.$ACCOUNT_NAME.pull-url"]}"
+
+  [[ "$pull_url" ]] ||
+    E=2 fatal $"Unknown account $ACCOUNT_NAME"
+
   oid "$pull_url"
   ACCOUNT_OID="${OID_CACHE["$pull_url"]}"
   ACCOUNT_PATH="$(config_get "account.$ACCOUNT_NAME.path")"
 
-  changes="$(command git -C "${ACCOUNT_PATH}" status --porcelain 2>&1)" ||
+  export GNUPGHOME="${CONFIG[account.$ACCOUNT_NAME.keyring]}"
+
+  changes="$(git_helper -C "${ACCOUNT_PATH}" status --porcelain 2>&1)" ||
     E=3 error $"Unable to check account status"
   if [[ "$changes" ]]; then
     error $"Account is dirty. Maybe you edit your account manually and badly."
-    error $"To repair just run: git reset --hard master in $ACCOUNT_PATH"
+    error $"To repair just run: git -C '%s' reset --hard master" "$ACCOUNT_PATH"
     exit 100
   fi
 }
@@ -75,38 +81,78 @@ account_exists ()
 {
   local path=
   
-  [[ "$1" ]] && path="$(config_get "account.$1.path")"
+  [[ "$1" ]] && path="${CONFIG["account.$1.path"]}"
 
   if [[ -z "$path" ]]; then
     path="${ACCOUNT_PATH}"
   fi
-  [ -d "${path%.git}/.git" ]
+  [[ -d "${path%.git}/.git" ]]
 }
 
-# fun: account_create <name> <push_url> <pull_url> [keyid] [path]
+# fun: account_keygen <oid> <tstamp> <name>
+# txt: generate a new keypair for the account named name and the oid oid and
+#      specific tstamp
+account_keygen ()
+{
+  local name="$3" tstamp="$2" oid="$1"
+
+  config_set "account.$name.keyring" "$(try_path "${CONFIG[crypto.keyring-path]}")/$name"
+
+  mkdir -p "${CONFIG["account.$name.keyring"]}" &&
+    chmod 700 "${CONFIG["account.$name.keyring"]}"
+
+  export GNUPGHOME="${CONFIG["account.$name.keyring"]}"
+
+  crypto_keygen "$oid" "$tstamp" \
+    "${CONFIG[account.$name.passphrase-file]:-/dev/null}" 2>&1
+}
+
+# fun: account_create <name> <push_url> <pull_url> [path]
 # txt: create a new account named as name, with specific push and pull url,
 #      if path is provided then set the account path to this one, otherwise,
 #      use the default path for accounts as prefix
 account_create ()
 {
-  local name="$1" push_url="$2" pull_url="$3" keyid="$4" path="$5"
+  local name="$1" push_url="$2" pull_url="$3" path="$4" tstamp
 
-  if [[ "${CONFIG["account.$name.path"]}" ]]; then
+  tstamp="$(timestamp)"
+
+  [[ "${CONFIG["account.$name.path"]}" ]] &&
     E=1 fatal $"Another account already exists with that name"
-  else
-    path="${path:-$(try_path "$(config_get account.path)")/$name}"
-    config_set "account.$name.push-url" "$push_url"
-    config_set "account.$name.pull-url" "$pull_url"
-    config_set "account.$name.path" "$path"
-    config_set "account.$name.keyid" "$keyid"
-    oid "$pull_url"
-    config_set "user.alias-${OID_CACHE["$pull_url"]}" "$name"
-    account_init "$name"
-    config_save "${CONFIG_FILE}"
-  fi
+
+  account_exists "$name" &&
+    E=1 fatal $"Trying to initializating an already initialized account"
+  
+  path="${path:-$(try_path "$(config_get account.path)")/$name}"
+  config_set "account.$name.push-url" "$push_url"
+  config_set "account.$name.pull-url" "$pull_url"
+  config_set "account.$name.path" "$path"
+
+  oid "$pull_url"
+
+  config_set "user.alias-${OID_CACHE["$pull_url"]}" "$name"
+
+  [[ "${CONFIG[account.auto-keygen]}" = "true" ]] &&
+    account_keygen "${OID_CACHE[$pull_url]}" "$tstamp" "$name"
+
+  # create empty dir for init
+  mkdir -p "$path" ||
+    E=1 fatal $"Unable to create account directory: %s" "$path"
+
+  git_helper -C "$path" init ${TIMELINE_EXPERIMENTAL_SHA256:+--object-format=sha256}
+  account_config "$path" "$pull_url" "$1" "$tstamp"
+
+  config_save "${CONFIG_FILE}"
+
+  git_helper -C "$path" add .
+
+  git_helper -C "$path" commit -m 'init' 2>&1
+  git_helper -C "$path" remote add origin "$push_url" 2>&1
+  git_helper -C "$path" push -u origin master 2>&1 ||
+    E=2 fatal $"Unable to push initial commit"
 }
 
-# fun: account_clone <name> <push_url> <pull_url> [keyid] [path]
+# fun: account_clone <name> <push_url> <pull_url> [path]
 # txt: clone new account named as name, from the specific push url,
 #      if path is provided then set the account path to this one, otherwise,
 #      use the default path for accounts as prefix
@@ -118,7 +164,7 @@ account_clone ()
     local force=false
   fi
 
-  local name="$1" push_url="$2" pull_url="$3" keyid="$4" path="$5"
+  local name="$1" push_url="$2" pull_url="$3" path="$4"
 
   if ! $force && [[ "${CONFIG["account.$name.path"]}" ]]; then
     E=1 fatal $"Another account already exists with that name"
@@ -126,64 +172,53 @@ account_clone ()
     path="${path:-$(try_path "$(config_get account.path)")/$name}"
     config_set "account.$name.push-url" "$push_url"
     config_set "account.$name.pull-url" "$pull_url"
-    config_set "account.$name.keyid" "$keyid"
     config_set "account.$name.path" "$path"
+
     oid "$pull_url"
+
+    [[ -z "${CONFIG[account.$name.keyring]}" ]] &&
+      [[ "${CONFIG[account.auto-keygen]}" = "true" ]] &&
+        account_keygen "${OID_CACHE[$pull_url]}" "$tstamp" "$name"
+
     config_set "user.alias-${OID_CACHE["$pull_url"]}" "$name"
-    command git clone "$push_url" "$path"
-    command git -C "$path" submodule init
-    account_config "$path" "$pull_url" "$keyid"
+    git_helper clone "$push_url" "$path" 2>&1
+    git_helper -C "$path" submodule init 2>&1
+
+    account_config "$path" "$pull_url" "$name" "timeline"
+
     config_save "${CONFIG_FILE}"
   fi
 }
 
-# fun: account_init <name>
-# txt: initialized the accoutn passed as argument
-account_init ()
-{
-  if account_exists "$1"; then
-    E=1 fatal $"Trying to initializating an already initialized account"
-  else
-    local path push_url pull_url keyid
-
-    path="$(config_get "account.$1.path")"
-    pull_url="$(config_get "account.$1.pull-url")"
-    push_url="$(config_get "account.$1.push-url")"
-    keyid="$(keyid "$1")"
-
-    # create empty dir for init
-    mkdir -p "$path" ||
-      E=1 fatal $"Unable to create account directory: %s" "$path"
-
-    command git -C "$path" init ${TIMELINE_EXPERIMENTAL_SHA256:+--object-format=sha256}
-    account_config "$path" "$pull_url" "$keyid"
-    command git -C "$path" add .
-    if [[ "$keyid" ]]; then
-      command git -C "$path" commit -S -m 'Initial commit'
-    else
-      command git -C "$path" commit -m 'Initial commit'
-    fi
-    command git -C "$path" remote add origin "$push_url"
-  fi
-}
-
-# fun: account_config <path> <pull_url> [keyid]
+# fun: account_config <path> <pull_url> <name> <tstamp>
 # txt: configure user and other required things in the repo
 account_config ()
 {
-  local path="$1" pull_url="$2" keyid="$3"
+  local path="$1" pull_url="$2" name="$3" tstamp="$4" keyid
   oid "$pull_url"
 
-  command git -C "$path" config user.name "${OID_CACHE["$pull_url"]}"
-  command git -C "$path" config user.email "${OID_CACHE["$pull_url"]}@timeline"
-  command git -C "$path" config core.preloadindex true
-  command git -C "$path" config core.fscache true
-  command git -C "$path" config gc.auto 256
-  command git -C "$path" config core.ignoreStat true
-  [[ "$keyid" ]] &&
-    command git -C "$path" config user.signingkey "$keyid"
+  git_helper -C "$path" config user.name "${OID_CACHE["$pull_url"]}"
+  git_helper -C "$path" config user.email "${OID_CACHE["$pull_url"]}@timeline"
+  git_helper -C "$path" config core.preloadindex true
+  git_helper -C "$path" config core.fscache true
+  git_helper -C "$path" config gc.auto 256
+
   command touch "${path:?}/CONTENT"
   command mkdir -p "${path:?}/FOLLOW"
+
+  if [[ "$tstamp" ]]; then
+    keyid="$(crypto_keyid "${OID_CACHE["$pull_url"]}" "$tstamp")"
+
+    if [[ "$keyid" ]]; then
+      account_set_signkey "$name" "$keyid"
+      crypto_export "${OID_CACHE["$pull_url"]}" "${path:?}/SIGNKEY"
+      account_set_encrkey "$name" "$keyid"
+      crypto_export "${OID_CACHE["$pull_url"]}" "${path:?}/ENCRKEY"
+
+      export GNUPGHOME="${CONFIG[account.$name.keyring]}"
+    fi
+  fi
+
 }
 
 # fun: account_commit [message]
@@ -192,11 +227,13 @@ account_commit ()
 {
   [[ "$ACCOUNT_PATH" ]] || E=1 fatal $"No active account to commit"
 
-  command git -C "$ACCOUNT_PATH" add .
-  if [[ "$(keyid "${ACCOUNT_NAME}")" ]]; then
-    command git -C "$ACCOUNT_PATH" commit -S -m "${1:-autosave}"
+  git_helper -C "$ACCOUNT_PATH" add .
+
+  if config_eval "account.$ACCOUNT_NAME.signkey" "account.signkey" >/dev/null
+  then
+    git_helper -C "$ACCOUNT_PATH" commit -S -m "${1:-autosave}"
   else
-    command git -C "$ACCOUNT_PATH" commit -m "${1:-autosave}"
+    git_helper -C "$ACCOUNT_PATH" commit -m "${1:-autosave}"
   fi
 }
 
@@ -206,7 +243,7 @@ account_commit ()
 account_push ()
 {
   # TODO Add support for multiple branches
-  command git -C "${ACCOUNT_PATH}" push "${1:-origin}" master
+  git_helper -C "${ACCOUNT_PATH}" push "${1:-origin}" master
 }
 
 # fun: account_refresh <path> [remote]
@@ -214,19 +251,25 @@ account_push ()
 #     if missing, `origin`.
 account_refresh ()
 {
-  local path="$1"; shift
+  local line path="$1" commit=false; shift
 
-  command git -C "$path" fetch --all
+  git_helper -C "$path" fetch --all --jobs "${CONFIG[git.jobs]:-4}" 2>&1
   # TODO Add support for multiple branches
-  command git -C "$path" rebase "${1:-origin}/master"
-  command git -C "$path" submodule update --remote \
-    --jobs "${CONFIG[git.jobs]:-1}"
+  git_helper -C "$path" rebase "${1:-origin}/master" 2>&1
+  git_helper -C "$path" submodule update --remote \
+    --jobs "${CONFIG[git.jobs]:-4}" 2>&1
 
-  if [[ "$(command git -C "$path" status -s)" ]]; then
+  while read -r _ line; do
+    commit=true
+    case "$line" in
+      FOLLOW/*) account_import "$path/$line";;
+    esac
+  done < <(git_helper -C "$path" status -s)
+
+  ${commit} &&
     account_commit "chore: update submodules"
-  fi
 
-  command git -C "$path" repack -a -d --depth=250 --window=250 
+  git_helper -C "$path" repack -a -d --depth=250 --window=250 2>&1
 }
 
 # fun: account_delete [name]
@@ -251,12 +294,24 @@ account_delete ()
   config_save "${CONFIG_FILE}"
 }
 
-# fun: account_set_keyid <name> <keyid>
-# txt: set keyid for an existant account
-account_set_keyid ()
+# fun: account_set_signkey <name> <keyid>
+# txt: set signing keyid for an existant account
+account_set_signkey ()
 {
-  command git -C "$(config_get "account.$1.path")" config user.signingkey "$2"
-  config_set "account.$1.keyid" "$2"
+  if [[ "$2" ]]; then
+    git_helper -C "$(config_get "account.$1.path")" config user.signingkey "$2"
+  else
+    git_helper -C "$(config_get "account.$1.path")" config --unset user.signingkey
+  fi
+
+  config_set "account.$1.signkey" "$2"
+}
+
+# fun: account_set_encrkey <name> <keyid>
+# txt: set encryption keyid for an existant account
+account_set_encrkey ()
+{
+  config_set "account.$1.encrkey" "$2"
 }
 
 # fun: account_preview <url> [filter]
@@ -270,7 +325,7 @@ account_preview ()
 
   [[ "$depth" = "-1" ]] && depth=""
 
-  command git clone ${depth:+--depth "${depth}"} "$1" "${tmpdir}" 2>&1 |
+  git_helper clone ${depth:+--depth "${depth}"} "$1" "${tmpdir}" 2>&1 |
     info_multi ||
       E=1 error $"Unable to clone remote repo"
 
@@ -278,4 +333,35 @@ account_preview ()
   timeline_load "${tmpdir}" "${OID_CACHE["$1"]}"
   shift
   timeline_list "$@"
+}
+
+# fun: account_keys
+# txt: print the associated keys for the current account
+account_keys ()
+{
+  local fpr flags
+
+  while read -r fpr flags; do
+    [[ "$fpr" = "${CONFIG[account.$ACCOUNT_NAME.signkey]}" ]] &&
+      flags+='S'
+
+    [[ "$fpr" = "${CONFIG[account.$ACCOUNT_NAME.encrkey]}" ]] &&
+      flags+='E'
+
+    echo "$fpr $flags"
+  done < <(crypto_list "=${ACCOUNT_OID}@timeline")
+}
+
+# fun: account_import <path>
+# txt: get public keys references in path
+account_import ()
+{
+  local line path="$1";
+
+  # shellcheck disable=SC2016
+  while read -r line; do
+    case "$line" in
+      ENCRKEY|SIGNKEY) crypto_import "$path/$line"
+    esac
+  done < <(git_helper -C "$path" show --pretty="" --name-only)
 }

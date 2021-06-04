@@ -9,15 +9,23 @@ declare -xA CONFIG=(
   [oid.max-cache-size]=1000
   [interactive.show-banner]=true
   [account.auto-push]=true
+  [account.auto-keygen]=true
   [account.content-markdown]=true
   [account.preview-depth]=100
   [account.default]=''
-  [account.keyid]=''
+  [account.signkey]=''
+  [account.encrkey]=''
+  [account.encrypt-to-me]=true
   [account.max-posts]=20
   [account.path]="${XDG_DATA_HOME:-$HOME/.local/share}/tl/account:$HOME/.tl/account"
   [plugin.path]="${XDG_DATA_HOME:-$HOME/.local/share}/tl/plugin:$HOME/.tl/plugin"
   [cache.path]="${XDG_CACHE_HOME:-$HOME/.cache}/tl:$HOME/.tl/cache"
   [git.jobs]='4'
+  [crypto.gnupg-binary]="gpg"
+  [crypto.auto-import]=true
+  [crypto.ignore-anon]=false
+  [crypto.always-anon]=false
+  [crypto.keyring-path]="${XDG_DATA_HOME:-$HOME/.local/share}/tl/keyring:$HOME/.tl/keyring"
   [network.depth]=10
   [prompt.format]='%b%s:%b '
   [prompt.fields]='account'
@@ -26,6 +34,8 @@ declare -xA CONFIG=(
   [history.enabled]=true
   [history.file]="${XDG_DATA_HOME:-$HOME/.local/share/}tl/history"
   [timeline.show-untrusted-items]=true
+  [timeline.show-all-encrypted]=false
+  [timeline.show-anon-failed]=false
   [timeline.show-replies]=true
   [timeline.show-tags]=true
   [timeline.react-on-all]=true
@@ -49,15 +59,21 @@ declare -xA CONFIG=(
   [timeline.post.style-flags]='normal'
   [timeline.post.style-mesg]='normal'
   [timeline.post.style-score]='normal'
+  [timeline.post.flag-encrypted-good]='K'
+  [timeline.post.flag-encrypted-bad]='!'
+  [timeline.post.flag-encrypted-revoked]='R'
+  [timeline.post.flag-encrypted-unknown]='m'
+  [timeline.post.flag-encrypted-expired]='X'
+  [timeline.post.flag-encrypted-none]=' '
   [timeline.post.flag-signed-good]='S'
   [timeline.post.flag-signed-bad]='!'
-  [timeline.post.flag-signed-unknown]='?'
+  [timeline.post.flag-signed-unknown]='s'
   [timeline.post.flag-signed-expired]='X'
   [timeline.post.flag-signed-revoked]='R'
   [timeline.post.flag-signed-missing]='m'
   [timeline.post.flag-signed-none]=' '
   [timeline.post.flag-tagged]='T'
-  [timeline.post.flag-replied]='R'
+  [timeline.post.flag-replied]='r'
   [timeline.post.flag-new]='N'
   [timeline.tag.format]='%b%-3d%b %b%(%Y%m%d %H%M%S)T%b %b%10s%b [%b%s%b] (%b%d%b) %b%s%b'
   [timeline.tag.fields]='index,date,name,flags,score,tags'
@@ -77,15 +93,21 @@ declare -xA CONFIG=(
   [timeline.tag.style-score]='normal'
   [timeline.tag.style-flags]='normal'
   [timeline.tag.style-tags]='normal'
+  [timeline.tag.flag-encrypted-good]='K'
+  [timeline.tag.flag-encrypted-bad]='!'
+  [timeline.tag.flag-encrypted-revoked]='R'
+  [timeline.tag.flag-encrypted-unknown]='m'
+  [timeline.tag.flag-encrypted-expired]='X'
+  [timeline.tag.flag-encrypted-none]=' '
   [timeline.tag.flag-signed-good]='S'
   [timeline.tag.flag-signed-bad]='!'
-  [timeline.tag.flag-signed-unknown]='?'
+  [timeline.tag.flag-signed-unknown]='s'
   [timeline.tag.flag-signed-expired]='X'
   [timeline.tag.flag-signed-revoked]='R'
   [timeline.tag.flag-signed-missing]='m'
   [timeline.tag.flag-signed-none]=' '
   [timeline.tag.flag-tagged]='T'
-  [timeline.tag.flag-replied]='R'
+  [timeline.tag.flag-replied]='r'
   [timeline.tag.flag-new]='N'
   [timeline.tag.flag-trusted]='*'
   [timeline.reply.format]='%b%-3d%b %b%(%Y%m%d %H%M%S)T%b %b%10s%b [%b%s%b] (%b%d%b) %b%s%b'
@@ -106,15 +128,21 @@ declare -xA CONFIG=(
   [timeline.reply.style-score]='normal'
   [timeline.reply.style-flags]='normal'
   [timeline.reply.style-mesg]='normal'
+  [timeline.reply.flag-encrypted-good]='K'
+  [timeline.reply.flag-encrypted-bad]='!'
+  [timeline.reply.flag-encrypted-revoked]='R'
+  [timeline.reply.flag-encrypted-unknown]='m'
+  [timeline.reply.flag-encrypted-expired]='X'
+  [timeline.reply.flag-encrypted-none]=' '
   [timeline.reply.flag-signed-good]='S'
   [timeline.reply.flag-signed-bad]='!'
-  [timeline.reply.flag-signed-unknown]='?'
+  [timeline.reply.flag-signed-unknown]='s'
   [timeline.reply.flag-signed-expired]='X'
   [timeline.reply.flag-signed-revoked]='R'
   [timeline.reply.flag-signed-missing]='m'
   [timeline.reply.flag-signed-none]=' '
   [timeline.reply.flag-tagged]='T'
-  [timeline.reply.flag-replied]='R'
+  [timeline.reply.flag-replied]='r'
   [timeline.reply.flag-new]='N'
   [timeline.reply.flag-trusted]='*'
   [timeline.fatal.format]='*** %b%(%Y%m%d %H%M%S)T%b %b%10s%b %b%s%b'
@@ -199,6 +227,9 @@ declare -xA CONFIG=(
   [alias.dir]='directory'
   [alias.ds]='directory search'
   [alias.pre]='account preview'
+  [alias.keys]='account keys'
+  [alias.keygen]='account keygen'
+  [alias.revoke]='account keyrevoke'
   [input.emojis]=false
 )
 
@@ -320,7 +351,7 @@ config_load ()
   local IFS='='
   while read -r key val; do
     CONFIG["$key"]="$val"
-  done < <(command git config -f "$1" -l)
+  done < <(git_helper config -f "$1" -l)
 }
 
 # fun: config_get <key>
@@ -334,6 +365,18 @@ config_get ()
     E=1 error $"Unknown configuration variable '%s'" "$1"
 
   echo "$val"
+}
+
+# fun: config_eval <key>+
+# txt: return the first occurence of a key in the config or empty string if
+#      keys are not found.
+config_eval ()
+{
+  local key
+  for key in "$@"; do
+    [[ "${CONFIG["$key"]}" ]] && echo "${CONFIG["$key"]}" && return 0
+  done
+  return 1
 }
 
 # fun: config_set <key> <val>
@@ -369,6 +412,8 @@ config_save ()
 {
   local val
 
+  [[ "$1" ]] || E=2 fatal $"No config file path provided for config_save"
+
   if [[ ! -d "${1%/*}" ]]; then
     mkdir -p "${1%/*}"
   fi
@@ -377,10 +422,10 @@ config_save ()
     val="${CONFIG["$var"]}"
 
     if [[ "$val" ]]; then
-      command git config -f "$1" "$var" "${CONFIG["$var"]}"
+      git_helper config -f "$1" "$var" "${CONFIG["$var"]}"
     else
-      mute command git config -f "$1" --remove-section "${var}" ||
-        command git config -f "$1" --unset "${var}"
+      mute git_helper config -f "$1" --remove-section "${var}" ||
+        git_helper config -f "$1" --unset "${var}"
     fi
   done
 }

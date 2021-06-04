@@ -6,17 +6,28 @@ declare -gA OID_CACHE
 
 # fun: fun <function_name>
 # txt: return true if function is defined
-fun ()
+fun () { declare -f "$1" >/dev/null 2>&1; }
+
+# fun: input <pass_text>
+# txt: return true if the text typed by the user match with the pass_text
+input ()
 {
-  declare -f "$1" >/dev/null 2>&1
+  local reply i
+  read -r reply
+  for i in "$@"; do
+    [[ "$i" = "$reply" ]] && return 0
+  done
+
+  return 1
 }
+
+# fun: prefix <item>
+# txt: prefix each line in stdin with a item and output to stdout
+prefix () { local line; while read -r line; do echo "$1$line"; done; }
 
 # fun: mute <command> [args]
 # txt: run command quietly
-mute ()
-{
-  "$@" >/dev/null 2>&1
-}
+mute () { "$@" >/dev/null 2>&1; }
 
 # fun: timestamp
 # txt: print current timestamp in UTC
@@ -41,7 +52,7 @@ join ()
 oid ()
 {
   if [[ -z "${OID_CACHE["$1"]}" ]]; then
-    OID_CACHE["$1"]="$(command git hash-object --stdin <<<"${1%.git}")"
+    OID_CACHE["$1"]="$(git_helper hash-object --stdin <<<"${1%.git}")"
   fi
 }
 
@@ -93,7 +104,7 @@ try_path ()
 valid_url ()
 {
   case "$1" in
-    ssh://*|http://*|https://*) return 0
+    ssh://*|http://*|https://*|file://*) return 0
   esac
   return 1
 }
@@ -128,18 +139,37 @@ username ()
   echo "@${uname}"
 }
 
+# fun: uid <name>
+# txt: reverse search for name in list of account alias
+uid ()
+{
+  local key
+  for key in "${!CONFIG[@]}"; do
+    case "$key" in
+      user.alias-*)
+        [[ "${CONFIG[$key]}" = "$1" ]] && echo "${key#*-}" && return 0;;
+    esac
+  done
+}
+
+# fun: expand_user <userlist>
+# txt: expand a user list to a list of valids uids
+expand_user ()
+{
+  local u
+  for u in ${1//,/ }; do
+    case "$u" in
+      =*) echo "${CONFIG["group.${u%=}"]}";;
+      *) uid "${u%@}";;
+    esac
+  done
+}
+
 # fun: is_decimal <num>
 # txt: return true if num is a decimal based number.
 is_decimal () {
   [[ "$1" = "0" ]] && return 0
   mute let i="10#${1#-}" 2>/dev/null
-}
-
-# fun: keyid <name>
-# txt: get the keyid configured for account name passed as argument
-keyid ()
-{
-  echo "${CONFIG[account.$1.keyid]:-${CONFIG[account.keyid]}}"
 }
 
 # fun: any <list> <list>
@@ -164,6 +194,13 @@ any ()
   return 1
 }
 
+# fun: git_helper <cmds>+
+# txt: send commands to git assuming some things
+git_helper ()
+{
+  HOME=/dev/null command git "$@"
+}
+
 # fun: on_exit <callback>
 # txt: run callback on exit
 declare -a _on_exit=()
@@ -185,7 +222,7 @@ on_exit ()
 #      when exectution ends.
 temp_file ()
 {
-  local name="${TMPDIR:-/tmp}/temp_$$.$RANDOM"
+  local name="${TMPDIR:-/tmp}/temp_$$.$RANDOM$RANDOM"
   : > "$name"
   echo "$name"
 }

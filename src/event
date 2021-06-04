@@ -12,6 +12,8 @@ declare -A EVENTS_MESG=()
 declare -A EVENTS_SIGN=()
 declare -A EVENTS_SCORE=()
 declare -A EVENTS_COMMIT=()
+declare -A EVENTS_ENCROUT=()
+declare -A EVENTS_CFLAGS=()
 
 declare -A EVENTS_CROSS_REPLY=()
 declare -A EVENTS_CROSS_TAGS=()
@@ -20,7 +22,7 @@ declare -a EVENTS_SORTED=()
 
 ERR_TIME_DUPLICATED=$"Duplicated timestamp for events %s and %s"
 
-# fun: event_load_line <account_id> <commit> <flags> <content>
+# fun: event_load_line <account_id> <fname> <commit> <flags> <content> <index> <encrout> <cflag>
 # txt: parse a event line passed as argument and fill properly fields in
 #      a associative array called EVENT. The account id is the OID
 #      associated to the pull_url of the account.
@@ -32,10 +34,14 @@ ERR_TIME_DUPLICATED=$"Duplicated timestamp for events %s and %s"
 event_load_line ()
 {
   local aid="$1" fname="$2" commit="$3" flags="$4" line="${5%$'\n'}"
-  local datet="${line%% *}" idx
+  local encrout="$7" cflag="$8" show_untrusted t_output t_status
+  local idx link mesg tags score hmac='' eid
+
+  local datet="${line%% *}"
   local kind="${line#$datet }"; kind="${kind%% *}"
   local rest="${line#$datet $kind }"
-  local link mesg tags score hmac='' eid show_untrusted
+
+  local -a status
 
   idx="$(( ${datet}000 + $6 ))"
 
@@ -73,11 +79,49 @@ event_load_line ()
       oid "$link $score"
       hmac="${OID_CACHE["$link $score"]}"
       ;;
+    E|ENCRYPTED)
+      local ignore_anon rcpt="${rest%% *}"; mesg="${rest#$rcpt }"
+
+      ignore_anon="$(config_eval \
+        "account.$ACCOUNT_NAME.crypto-ignore-anon" \
+        "account.crypto-ignore-anon"
+      )"
+
+      if [[ "$rcpt" = "${ACCOUNT_OID}" ]] ||
+        [[ ("$rcpt" = "@all") && ($ignore_anon != "false") ]]; then
+        t_output="$(temp_file)"; t_status="$(temp_file)"
+
+        crypto_decrypt "${ACCOUNT_OID}" "$mesg" \
+          "${CONFIG[account.$ACCOUNT_NAME.passphrase-file]:-/dev/null}" \
+          "$t_status" > "$t_output" 2>&1
+
+        mesg="$REPLY"
+
+        while read -ra status; do
+          case "${status[1]}" in
+            DECRYPTION_KEY)
+              crypto_keyflags "${status[2]}"
+              cflag="${REPLY}" && break;;
+          esac
+        done < "$t_status"
+
+        if  [[ "$mesg" ]]; then
+          event_load_line "$1" "$2" "$3" "$4" "$mesg" "$6" "$(< "$t_output")" "$cflag"
+        elif [[ "${CONFIG[timeline.show-anon-failed]}" = "true" ]]; then
+          error $"Unable to decrypt anonymous message from %s." "$(username "$aid")"
+        fi
+
+      elif [[ "${CONFIG[timeline.show-all-encrypted]}" = "true" ]]; then
+        info $"Encrypted message from %s to %s." "$(username "$aid")" "$(username "$rcpt")"
+      fi
+      return 0;;
     *)
       error $"Ignored malformed event: '$line'"
       return 0
       ;;
   esac
+
+  [[ "$encrout" ]] && unset OID_CACHE["$mesg"]
 
   if [[ "$show_untrusted" = "true" ]]; then
     eid="$aid:$datet"
@@ -95,6 +139,8 @@ event_load_line ()
   EVENTS_MESG["$eid"]="$mesg"
   EVENTS_SIGN["$eid"]="$flags"
   EVENTS_COMMIT["$eid"]="$fname $commit"
+  EVENTS_ENCROUT["$eid"]="$encrout"
+  EVENTS_CFLAGS["$eid"]="$cflag"
 
   # XXX some array abused. Because arrays allows any index number, and are
   # sorted by definition, we do not need to sort anything.
@@ -210,22 +256,20 @@ event_mesg ()
 #      For posts: date kind mesg
 #      For reply: date kind link mesg
 #      For tags:  date kind link tags
+#      For dms: date kind recipient mesg-base64
 # env: EID: set this variable to the value of the EID to the created element.
 event_create ()
 {
   local auto_push content_markdown mesg line l
   local -a content
 
-  auto_push="${CONFIG["account.${ACCOUNT_NAME}.auto-push"]}"
-
-  if ! [[ "$auto_push" ]]; then
-    auto_push="$(config_get account.auto-push)"
-  fi
+  auto_push="$(config_eval "account.${ACCOUNT_NAME}.auto-push" account.auto-push)"
 
   EID="$ACCOUNT_OID:$1"
 
   case "$2" in
     P) mesg="$3"; line="$*";;
+    E) mesg="$4"; line="$*";;
     R|T|S)
       mesg="$4"
       case "$3" in
@@ -285,14 +329,14 @@ event_info ()
   tags="${EVENTS_TAGS["$eid"]}"
   link="${EVENTS_LINK["$eid"]}"
   
-  printf $"%-10s %s\n" "EID:"   "$eid"
-  printf $"%-10s %s (%s)\n" "UID:"   "${eid%%:*}" "$(username "$eid")"
+  printf "%-10s %s\n" $"EID:"   "$eid"
+  printf "%-10s %s (%s)\n" $"UID:"   "${eid%%:*}" "$(username "$eid")"
   # shellcheck disable=SC2183
-  printf $"%-10s %s (%(%Y-%m-%d %H:%M:%S)T)\n" "Date:"  "$date" "$date"
-  printf $"%-10s %s\n" "Kind:"   "${kind^^}"
-  printf $"%-10s %s\n" "Link:"   "${link}"
-  printf $"%-10s %s\n" "Tags:"   "${tags}"
-  printf $"%-10s %s\n" "Mesg:"   "${mesg}"
+  printf "%-10s %s (%(%Y-%m-%d %H:%M:%S)T)\n" $"Date:"  "$date" "$date"
+  printf "%-10s %s\n" $"Kind:"   "${kind^^}"
+  printf "%-10s %s\n" $"Link:"   "${link}"
+  printf "%-10s %s\n" $"Tags:"   "${tags}"
+  printf "%-10s %s\n" $"Mesg:"   "${mesg}"
   printf $"Tagged by:\n"
 
   local -A taggedas=()
@@ -311,18 +355,29 @@ event_info ()
     printf "  -  %s\n" "$item"
   done
 
-  case "${EVENTS_SIGN["$eid"]}" in
+  case "${EVENTS_SIGN["$eid"]//\*/}" in
     G|B|U|X|Y|R|E)
-      printf "Signed: Yes\n"
-      printf "Signature information:\n"
+      printf "%-10s %s\n" $"Signed:" $"Yes"
+      printf $"Signature information:\n"
 
-      command git -C "${EVENTS_COMMIT["$eid"]%% *}" \
-        verify-commit "${EVENTS_COMMIT["$eid"]##* }" 2>&1
+      git_helper -C "${EVENTS_COMMIT["$eid"]%% *}" \
+        verify-commit "${EVENTS_COMMIT["$eid"]##* }" 2>&1 | prefix "     "
       ;;
     *)
-      printf "Signed: No\n"
+      printf "%-10s %s\n" $"Signed:" $"No"
       ;;
   esac
+
+  if [[ "${EVENTS_ENCROUT["$eid"]}" ]]; then
+    printf "%-10s %s\n" $"Encrypted:" $"Yes"
+    printf "%-10s %s\n" $"Encrypted Flags": "${EVENTS_CFLAGS["$eid"]}"
+    printf "%-10s %s\n" $"Keyring:" "${CONFIG["account.$ACCOUNT_NAME.keyring"]}"
+    printf $"Decryption Process Information:\n"
+
+    echo "${EVENTS_ENCROUT["$eid"]}" | prefix "     "
+  else
+    printf "%-10s %s\n" $"Encrypted:" $"No"
+  fi
 }
 
 # fun: event_load <account_id> <filename>
@@ -337,7 +392,7 @@ event_load ()
 
   # shellcheck disable=SC1090
   source <(
-    command git -C "${fname%/*}" log -s --pretty=format:"gitlog[%H]='%G?'" \
+    git_helper -C "${fname%/*}" log -s --pretty=format:"gitlog[%H]='%G?'" \
       --no-color "$fname"
   )
 
@@ -355,6 +410,6 @@ event_load ()
 
   # shellcheck disable=SC2034
   mapfile -c 1 -n "${max_user_posts}" -C _i < <(
-    command git -C "${fname%/*}" blame -s -l "$fname"
+    git_helper -C "${fname%/*}" blame -s -l "$fname"
   )
 }

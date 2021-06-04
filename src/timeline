@@ -109,6 +109,18 @@ timeline_list_thread ()
       ;;
   esac
 
+  if [[ "${EVENTS_CFLAGS["$eid"]}" ]]; then
+    case "${EVENTS_CFLAGS["$eid"]}" in
+      'u') flags+="${CONFIG["timeline.$kind.flag-encrypted-good"]}";;
+      '-') flags+="${CONFIG["timeline.$kind.flag-encrypted-unknown"]}";;
+      'r') flags+="${CONFIG["timeline.$kind.flag-encrypted-revoked"]}";;
+      'e') flags+="${CONFIG["timeline.$kind.flag-encrypted-expired"]}";;
+      *) flags+="${CONFIG["timeline.$kind.flag-encrypted-bad"]}";;
+    esac
+  else
+    flags+="${CONFIG["timeline.$kind.flag-encrypted-none"]}"
+  fi
+
   case "${sign}" in
     G*) flags+="${CONFIG["timeline.$kind.flag-signed-good"]}";;
     B*) flags+="${CONFIG["timeline.$kind.flag-signed-bad"]}";;
@@ -116,7 +128,8 @@ timeline_list_thread ()
     X*|Y*) flags+="${CONFIG["timeline.$kind.flag-signed-expired"]}";;
     R*) flags+="${CONFIG["timeline.$kind.flag-signed-revoked"]}";;
     E*) flags+="${CONFIG["timeline.$kind.flag-signed-missing"]}";;
-    *) flags+="${CONFIG["timeline.$kind.flag-signed-none"]}";;
+    N*) flags+="${CONFIG["timeline.$kind.flag-signed-none"]}";;
+    *) flags+="${sign}";;
   esac
 
   if [[ "${CONFIG["timeline.show-untrusted-items"]}" = "true" ]]; then

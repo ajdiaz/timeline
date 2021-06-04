@@ -17,27 +17,14 @@ command_account ()
   fi
 }
 
-# help:account:fun: account create [--keyid <keyi>] <name> <push_url> <pull_url> [path]
+# help:account:fun: account create <name> <push_url> <pull_url> [path]
 # help:account:txt: Create a new account (aka git repository) which will
 # help:account:txt: push data to specified push_url and publish public url
 # help:account:txt: as specified pull_url. Optionally, you can set the path
 # help:account:txt: where repository lives, if omit, uses default path for
-# help:account:txt: accounts. The '--keyid' flag sets a GPG keyid for
-# help:account:txt: signing commits.
+# help:account:txt: accounts.
 command_account_create ()
 {
-  local keyid=
-
-  case "$1" in
-    --keyid)
-        keyid="$2"
-        if ! [[ "$keyid" ]]; then
-          E=2 error "Account create with --keyid flag requires keyid argument"
-        fi
-        shift 2
-        ;;
-  esac
-
   local name="$1" push_url="$2" pull_url="$3" path="$4"
 
   if [[ -z "$1" ]]; then
@@ -48,7 +35,7 @@ command_account_create ()
     elif ! valid_url "$pull_url"; then
       E=1 error "$INVALIDURL" "$pull_url"
     else
-      account_create "$name" "$push_url" "$pull_url" "$keyid" "$path" |
+      account_create "$name" "$push_url" "$pull_url" "$path" |
         info_multi
       config_load "${CONFIG_FILE}"
       command_account_active "$name"
@@ -86,12 +73,11 @@ command_account_delete ()
 # help:account:txt: use config data to regenerate the account.
 command_account_rebuild ()
 {
-  local name="$1" keyid push_url pull_url path
+  local name="$1" push_url pull_url path
 
   if [[ -z "$1" ]]; then
     E=1 error $"Account command rebuild requires 'name'."
   else
-    keyid="${CONFIG["account.$name.keyid"]}"
     push_url="${CONFIG["account.$name.push-url"]}"
     pull_url="${CONFIG["account.$name.pull-url"]}"
     path="${CONFIG["account.$name.path"]}"
@@ -100,7 +86,17 @@ command_account_rebuild ()
       E=1 error $"Unable to rebuild. Account '$name' was not configured yet."
     fi
 
-    account_clone --force "$name" "$push_url" "$pull_url" "$keyid" "$path" |
+    if ! config_eval "account.$name.signkey" "account.signkey" >/dev/null; then
+      error $"The account $name has not associated signkey."
+      error $"Use 'account genkey' to generate new keypair or 'account signkey' to set previous generated one."
+    fi
+
+    if ! config_eval "account.$name.encrkey" "account.encrkey" >/dev/null; then
+      error $"The account $name has not associated encrkey."
+      error $"Use 'account genkey' to generate new keypair or 'account encrkey' to set previous generated one."
+    fi
+
+    account_clone --force "$name" "$push_url" "$pull_url" "$path" |
         info_multi
       config_load "${CONFIG_FILE}"
       command_account_active "$name"
@@ -109,24 +105,111 @@ command_account_rebuild ()
   fi
 }
 
-# help:account:fun: account clone [--keyid <keyid>] <name> <push_url> <pull_url> [path]
+# help:account:fun: account keygen [--no-default-sign] [--no-default-encr]
+# help:account:txt: Generate new keypair for the current account. If the
+# help:account:txt: --no-default flag is present, then do not switch default
+# help:account:txt: keys to encrypt or sign and keep the old ones by default.
+command_account_keygen ()
+{
+  local tstamp keyid commit=false
+
+  command_account_active "${ACCOUNT_NAME}"
+
+  tstamp="$(timestamp)"
+
+  account_keygen "${ACCOUNT_OID}" "$tstamp" "${ACCOUNT_NAME}" 2>&1 | info_multi
+
+  keyid="$(crypto_keyid "${ACCOUNT_OID}" "$tstamp")"
+
+  gpg_helper --quick-set-expire "$keyid" seconds=10 '*'
+
+  [[ "$keyid" ]] ||
+    E=4 fatal $"Unable to retrieve KeyID for generated one"
+
+  if [[ "$1" != "--no-default-sign" ]] && [[ "$2" != "--no-default-sign" ]]; then
+    account_set_signkey "${ACCOUNT_NAME}" "$keyid"
+    crypto_export "${ACCOUNT_OID}" "${ACCOUNT_PATH}/SIGNKEY"
+    commit=true
+  fi
+
+  if [[ "$1" != "--no-default-encr" ]] && [[ "$2" != "--no-default-encr" ]]; then
+    account_set_encrkey "${ACCOUNT_NAME}" "$keyid"
+    crypto_export "${ACCOUNT_OID}" "${ACCOUNT_PATH}/ENCRKEY"
+    commit=true
+  fi
+
+  config_save "${CONFIG_FILE}"
+
+  if ${commit}; then
+    account_commit $"bump: new public key" | info_multi
+    if [[ "$(config_eval "account.${ACCOUNT_NAME}.auto-push" account.auto-push)" = "true" ]];
+    then
+      account_push 2>&1 | info_multi
+    fi
+  fi
+}
+
+# help:account:fun: account keyrevoke <key_id>
+# help:account:txt: Revoke a key associated with the current account
+command_account_keyrevoke ()
+{
+  local force=false
+
+  [[ "$1" == "--force" ]] && shift && force=true
+
+  command_account_active "${ACCOUNT_NAME}"
+
+  if ! ${force}; then
+    if [[ "$(config_eval "account.$ACCOUNT_NAME.signkey" account.signkey)" = "$1" ]]
+    then
+      error $"You are going to revoke the signing key for this account."
+      E=3 fatal $"Use --force if you are sure of what are you doing."
+    fi
+    if [[ "$(config_eval "account.$ACCOUNT_NAME.encrkey" account.encrkey)" = "$1" ]]
+    then
+      error $"You are going to revoke the encryption key for this account."
+      E=3 fatal $"Use --force if you are sure of what are you doing."
+    fi
+  fi
+
+  crypto_uid "$1" "${ACCOUNT_OID}@timeline" ||
+    E=2 fatal $"The provided KeyID was not generated for this account"
+
+  crypto_revoke "${ACCOUNT_NAME}" "$1" ||
+    E=2 fatal $"Unable to revoke key $1"
+  crypto_export "${ACCOUNT_OID}" "${ACCOUNT_PATH}/SIGNKEY"
+  crypto_export "${ACCOUNT_OID}" "${ACCOUNT_PATH}/ENCRKEY"
+
+  [[ "${CONFIG[account.$ACCOUNT_NAME.signkey]}" = "$1" ]] &&
+    account_set_signkey "$ACCOUNT_NAME" ""
+
+  if [[ "${CONFIG[account.signkey]}" = "$1" ]]; then
+    account_set_signkey "$ACCOUNT_NAME" ""
+    config_set account.signkey ""
+  fi
+
+  [[ "${CONFIG[account.$ACCOUNT_NAME.encrkey]}" = "$1" ]] &&
+    account_set_encrkey "$ACCOUNT_NAME" ""
+
+  if [[ "${CONFIG[account.encrkey]}" = "$1" ]]; then
+    account_set_encrkey "$ACCOUNT_NAME" ""
+    config_set "account.encrkey" ""
+  fi
+
+  config_save "${CONFIG_FILE}"
+
+  account_commit $"clean: revoke key $1"
+  if [[ "$(config_eval "account.${ACCOUNT_NAME}.auto-push" account.auto-push)" = "true" ]]; then
+    account_push
+  fi
+}
+
+# help:account:fun: account clone <name> <push_url> <pull_url> [path]
 # help:account:txt: Clone an account (aka git repository) from specified
 # help:account:txt: push_url passed as argument, and also configure the
 # help:account:txt: provided pull_url, like 'account create' does.
 command_account_clone ()
 {
-  local keyid=
-
-  case "$1" in
-    --keyid)
-        keyid="$2"
-        if ! [[ "$keyid" ]]; then
-          E=2 error "Account clone with --keyid flag requires keyid argument"
-        fi
-        shift 2
-        ;;
-  esac
-
   local name="$1" push_url="$2" pull_url="$3" path="$4"
 
   if [[ -z "$1" ]]; then
@@ -137,7 +220,7 @@ command_account_clone ()
     elif ! valid_url "$pull_url"; then
       E=1 error "$INVALIDURL" "$pull_url"
     else
-      account_clone "$name" "$push_url" "$pull_url" "$keyid" "$path" |
+      account_clone "$name" "$push_url" "$pull_url" "$path" |
         info_multi
       config_load "${CONFIG_FILE}"
       command_account_active "$name"
@@ -189,16 +272,30 @@ command_account_active ()
   fi
 }
 
-# help:account:fun: account keyid <keyid>
-# help:account:txt: Set keydi for signing commits in the current enabled
+# help:account:fun: account signkey <keyid>
+# help:account:txt: Set keyid for signing commits in the current enabled
 # help:account:txt: account.
-command_account_keyid ()
+command_account_signkey ()
 {
   if [[ $# -ne 1 ]]; then
-    E=2 error "Account keyid requires one argument: keyid"
+    E=2 error "Account sign key requires one argument: keyid"
   else
     command_account_active "${ACCOUNT_NAME}"
-    account_set_keyid "$ACCOUNT_NAME" "$1"
+    account_set_signkey "$ACCOUNT_NAME" "$1"
+    config_save "${CONFIG_FILE}"
+  fi
+}
+
+# help:account:fun: account encrkey <keyid>
+# help:account:txt: Set keyid for encrypt messags in the current enabled
+# help:account:txt: account.
+command_account_encrkey ()
+{
+  if [[ $# -ne 1 ]]; then
+    E=2 error "Account encryption key requires one argument: keyid"
+  else
+    command_account_active "${ACCOUNT_NAME}"
+    account_set_encrkey "$ACCOUNT_NAME" "$1"
     config_save "${CONFIG_FILE}"
   fi
 }
@@ -226,12 +323,30 @@ command_account_preview ()
   account_preview "$1"
 }
 
+# help:account:fun: account keys
+# help:account:txt: print available keys for current account. The flags S and
+# help:account:txt: E will be printed for keys current enable for signing and
+# help:account:txt: encryption respectively
+command_account_keys ()
+{
+  command_account_active "${ACCOUNT_NAME}"
+  account_keys | info_multi
+}
+
 # help:fun: git <command>...
 # help:txt: Execute raw git commands in the active account.
 command_git ()
 {
-  command_account_refresh
-  command git -C "${ACCOUNT_PATH}" "$@"
+  command_account_active "${ACCOUNT_NAME}"
+  git_helper -C "${ACCOUNT_PATH}" "$@"
+}
+
+# help:fun: gpg <command>...
+# help:txt: Execute raw gpg commands in the active account.
+command_gpg ()
+{
+  command_account_active "${ACCOUNT_NAME}"
+  gpg_helper "$@"
 }
 
 # help:fun: timeline {list|refresh|info} {args...}
@@ -399,11 +514,11 @@ command_abbr ()
   esac
 }
 
-# help:fun: user [<name> <uid>]
+# help:fun: user alias [<name> <uid>]
 # help:txt: Show user aliases registered in configuration if not arguments
 # help:txt: provided. If two arguments passed create a new user aliases,
 # help:txt: replacing UID by nickname in timeline.
-command_user ()
+command_user_alias ()
 {
   case $# in
     0)
@@ -420,7 +535,7 @@ command_user ()
   esac
 }
 
-# help:fun: event {post|reply|tag} {args...}
+# help:fun: event {post|reply|tag|message} {args...}
 # help:txt: Create new event or show information about existent one
 command_event ()
 {
@@ -432,24 +547,64 @@ command_event ()
   fi
 }
 
-# help:event:fun: event post <message> [<tags>+]
-# help:event:txt: Post a new message in our timeline
+# help:event:fun: event post [--encrypt <rcpt> | --encrypt-anon <rcpt>] <message> [<tags>+]
+# help:event:txt: Post a new message in our timeline. The --encrypt flag will result in
+# help:event:txt: an encrypted post. The --encrypt-anon do the same that --encrypt but
+# help:event:txt: without exfiltrate recipient.
 command_event_post ()
 {
+  local u rcpt='' anon pfile="${CONFIG[account.$ACCOUNT_NAME.passphrase-file]:-/dev/null}"
+
+  anon="$(config_eval \
+    "account.$ACCOUNT_NAME.crypto-always-anon"  \
+    "account.crypto-always-anon"
+  )"
+
+
+  case "$1" in
+    --encrypt|--encrypt-anon)
+      [[ "$2" ]] ||
+        E=2 fatal $"Options --encrypt and --encrypt-anon require a recipient"
+
+      [[ "$(config_eval "account.$ACCOUNT_NAME.encrypt-to-me" account.encrypt-to-me)" = "true" ]] &&
+        rcpt="$2,$ACCOUNT_NAME" ||
+        rcpt="$2"
+
+      [[ "$1" = "--encrypt-anon" ]] && anon=--anon
+      shift 2 ;;
+  esac
+
   if [[ $# -eq 0 ]]; then
     E=2 error $"Event post required an argument: message"
   else
-    local eid tag msg="$1" ts; shift
+    local eid tag msg="$1" ts oid; shift
     ts="$(timestamp)"
     command_account_active "${ACCOUNT_NAME}"
     command_account_refresh
     {
-      abbr_replace "$msg"
-      event_create "$ts" P "$REPLY" 2>&1
+      abbr_replace "$msg"; msg="$REPLY"
+      oid="$(oid "$REPLY")"
+      if [[ "$rcpt" ]]; then
+        for u in $(expand_user "$rcpt"); do
+          crypto_encrypt $anon "$u" "$ts P $msg" "$pfile" 2>&1
+          u="${anon:-$u}"; u="${u//--anon/@all}"
+          event_create "$ts" E "$u" "$REPLY" 2>&1
+        done
+      else
+        event_create "$ts" P "$REPLY" 2>&1
+      fi
       eid="$EID"
       for tag in "$@"; do
         sleep 1  # Because we can only post one event per second.
-        event_create "$ts" T "$eid" "$tag" 2>&1
+        if [[ "$rcpt" ]]; then
+          for u in $(expand_user "$rcpt"); do
+            crypto_encrypt $anon "$u" "$(timestamp) T $ACCOUNT_OID:$ts:$oid $tag" "$pfile" 2>&1
+            u="${anon:-$u}"; u="${u//--anon/@all}"
+            event_create "$ts" E "$u" "$REPLY" 2>&1
+          done
+        else
+          event_create "$ts" T "$eid" "$tag" 2>&1
+        fi
       done
     } | info_multi
     timeline_load

@@ -19,7 +19,8 @@ push data to specified push_url and publish public url
 as specified pull_url. Optionally, you can set the pat
 where repository lives, if omit, uses default path for
 accounts (see **FILES** below). The *\-\-keyid* flag sets a GPG keyid for
-signing commits.
+signing commits, if not present *tl* will create one for you (read
+**tl-crypto**(7) for more information).
 
 **delete** [\-\-force] \<name\>
 
@@ -57,6 +58,11 @@ to configure parameters.
 : Set the GPG KeyID to sign commits for the current active account. You can
 use this command to set a key in account previously created but where KeyID was
 not configured.
+
+**genkey**
+
+: Generate a timeline keypair instead of configurig external one with **keyid**
+to sign and encrypt messages.
 
 **refresh**
 
@@ -142,7 +148,7 @@ for account expect the user name of the account (friendly name) not the OID.
 
 # SEE ALSO
 
-**tl-tutorial**(7), **timeline**(7), **tl**(1), **tl-user**(1), **tl-config**(1), **gpg**(1)
+**tl-tutorial**(7), **timeline**(7), **tl**(1), **tl-user**(1), **tl-config**(1), **tl-crypto**(1), **gpg**(1)
 
 # TIMELINE
 
