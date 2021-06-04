@@ -296,7 +296,6 @@ if test -t 1; then
        CONFIG['timeline.reply.color-score']=3,
        CONFIG['timeline.reply.color-name']=CONSISTENT,
        CONFIG['timeline.reply.color-flags']=11,
-       CONFIG['timeline.reply.prefix']='⤷ ' # XXX 256colors -> unicode!!!
        CONFIG['timeline.tag.color']=240,
        CONFIG['timeline.tag.color-date']=240,
        CONFIG['timeline.tag.color-tags']=136,
