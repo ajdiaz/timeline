@@ -262,7 +262,7 @@ account_refresh ()
   while read -r _ line; do
     commit=true
     case "$line" in
-      FOLLOW/*) account_import "$path/$line";;
+      FOLLOW/*) account_import "${line#FOLLOW/}" "$path/$line";;
     esac
   done < <(git_helper -C "$path" status -s)
 
@@ -352,16 +352,16 @@ account_keys ()
   done < <(crypto_list "=${ACCOUNT_OID}@timeline")
 }
 
-# fun: account_import <path>
+# fun: account_import  <account> <path>
 # txt: get public keys references in path
 account_import ()
 {
-  local line path="$1";
+  local line account="$1" path="$2";
 
   # shellcheck disable=SC2016
   while read -r line; do
     case "$line" in
-      ENCRKEY|SIGNKEY) crypto_import "$path/$line"
+      ENCRKEY|SIGNKEY) crypto_import "$account" "$path/$line"
     esac
   done < <(git_helper -C "$path" show --pretty="" --name-only)
 }

@@ -56,17 +56,36 @@ crypto_keyid ()
     echo "${out[1]// /}"
 }
 
-# fun: crypto_import <keyfile>
-# txt: import a key into the timeline keyring
+# fun: crypto_import <account_id> <keyfile>
+# txt: import a key from the account_id into the timeline keyring
 crypto_import ()
 {
-  crypto_requirements
+  local status account="$1" keyfile="$2" kind keyid uid
 
-  if [[ "$1" ]]; then
-    gpg_helper --import < "$1" || E=3 error $"Unable to import key file %s" "$1"
-  else
-    gpg_helper --import || E=3 error $"Unable to import key from stdin"
-  fi
+  crypto_requirements
+  status="$(temp_file)"
+
+  gpg_helper --status-file "$status" --import "$keyfile" ||
+    E=3 error $"Unable to import key file %s" "$keyfile"
+
+  while read -r _ kind keyid uid _; do
+    case "$kind" in
+      IMPORTED) 
+        if [[ "${uid%@*}" != "$account" ]]; then
+          if gpg_helper --yes --delete-keys "$keyid"; then
+            error $"Ignoring key %s: account does not match %s != %s" \
+              "$keyid" "${uid%@*}" "$account"
+          else
+            error $"\!\!\! SECURITY RISK \!\!\!"
+            error $"You've been imported an invalid key."
+            error $"Key %s does not belong to account owner %s" "$keyid" "$account."
+            error $"Timeline was try to remove it from the keyring, but something weird happened."
+            error $"Read manual tl-crypto(1) to know more about how to handle this."
+            E=3 fatal $"Unable to remove an invalid key."
+          fi
+        fi
+    esac
+  done < "$status"
 }
 
 # fun: crypto_export <account_id> <file>

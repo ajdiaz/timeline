@@ -36,10 +36,10 @@ follow_add ()
   if [[ "${CONFIG[crypto.auto-import]}" = "true" ]]
   then
     [[ -r "${ACCOUNT_PATH}/${TIMELINE_FOLLOW}/${OID_CACHE["$pull_url"]}/ENCRKEY" ]] &&
-      crypto_import "${ACCOUNT_PATH}/${TIMELINE_FOLLOW}/${OID_CACHE["$pull_url"]}/ENCRKEY"
+      crypto_import "${OID_CACHE["$pull_url"]}" "${ACCOUNT_PATH}/${TIMELINE_FOLLOW}/${OID_CACHE["$pull_url"]}/ENCRKEY"
 
     [[ -r "${ACCOUNT_PATH}/${TIMELINE_FOLLOW}/${OID_CACHE["$pull_url"]}/SIGNKEY" ]] &&
-      crypto_import "${ACCOUNT_PATH}/${TIMELINE_FOLLOW}/${OID_CACHE["$pull_url"]}/SIGNKEY"
+      crypto_import "${OID_CACHE["$pull_url"]}" "${ACCOUNT_PATH}/${TIMELINE_FOLLOW}/${OID_CACHE["$pull_url"]}/SIGNKEY"
   fi
 
   if [[ "$name" ]]; then
