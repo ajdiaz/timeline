@@ -1,0 +1,61 @@
+SECURITY ISSUES
+===============
+
+This file will contains all security issues fixed in Timeline code, including
+the commit where the problem begin and the commit where was fixed. Also the
+relase(s) affected.
+
+
+## Invalid key import
+
+This error allows an attacker (Eve) to publish in her account a key with a
+valid UID for Bob, so when Alice who follows both import the keys of Eve, Eve
+can impersonate Bob.
+
++--------------------+----------+
+| Severity           | Critical |
+| From               | 32e4fe6  |
+| To                 | 6ff2bcf  |
+| Affected Releases: | *none*   |
++--------------------+----------+
+
+
+## Infinite loop on duplicated entried
+
+Timeline do not support duplicated events at the same timestamp. A regression
+introduced early in development allows a malicious attacker to generate an
+infinite loop.
+
++--------------------+----------+
+| Severity           | Minor    |
+| From               | 9145a26  |
+| To                 | c18b007  |
+| Affected Releases: | 1.3      |
+|                    | 1.4      |
+|                    | 1.5      |
+|                    | 1.5      |
+|                    | 1.6      |
+|                    | 1.7      |
+|                    | 1.8      |
++--------------------+----------+
+
+
+## Untrusted events
+
+This error allows a malicious agent to post a message and get some engagement
+for after that change the content of the original post and take advantage of
+the old message engagement.
+
++--------------------+----------+
+| Severity           | Critical |
+| From               | fbf5da3  |
+| To                 | f4c6717  |
+| Affected Releases: | 1.0      |
+|                    | 1.1      |
+|                    | 1.2      |
+|                    | 1.3      |
+|                    | 1.4      |
+|                    | 1.5      |
+|                    | 1.5      |
+|                    | 1.6      |
++--------------------+----------+
