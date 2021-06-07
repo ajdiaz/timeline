@@ -49,6 +49,20 @@ to not set the key as default for encryption and signing, respectively. See
 You can use the command `tl account keys` to see the current available keys
 for your account.
 
+## Generate keys for already existent account.
+
+If you have a previous account without the crypto signing/encryption support,
+and you want to enable it, just type
+
+```{console}
+tl account keygen
+```
+
+This will create a new key pair and configure your account properly.
+
+**NOTE!** All previous signing key that you was configured will be forgotten,
+and new key pair will be used, unless on generation you set *--no-default-sign*.
+
 # KEY IMPORTATION
 
 If the configuration setting *crypto.auto-import* is set to true, then on
@@ -153,6 +167,7 @@ a global *account.keyring*. Finally you must set your default keys using the
 commands *account encrkey* and *account signkey*. Is also recommended to disable
 *account.auto-keygen* and *crypto.auto-import* to avoid the creation and the
 importation of other keys and kept clean your keyring.
+
 
 # CONFIGURATION SETTINGS
 
