@@ -1,5 +1,5 @@
 #! /bin/bash -i
-TIMELINE_VERSION='1.8-22-g9d8dd45'
+TIMELINE_VERSION='1.8-23-g6ff2bcf'
 ## vim:ft=sh
 
 # fun: complete_alternatives <level> <prefix>
@@ -2541,86 +2541,6 @@ format_dumps ()
 }
 ## vim:ft=sh
 
-# fun: directory_requirements
-# txt: ensure that specific requirements for directory management are
-#      present in the system
-directory_requirements ()
-{
-  REQUIREMENTS+=( "+curl" "+grep" )
-  reqs_eval
-}
-
-# fun: directory_refresh [name]
-# txt: download directory files for specific directory or for all directories
-#      listed in config.
-directory_refresh ()
-{
-  local dir
-  directory_requirements
-
-  for dir in "${!CONFIG[@]}"; do
-    case "$dir" in
-      "directory.$1"*)
-        curl -qsSL -o "${CACHE_DIR}/$dir" --fail "${CONFIG[$dir]}" 2>&1 ||
-          E=1 error "Unable to refresh directory: ${dir#directory.}"
-        ;;
-    esac
-  done
-}
-# fun: directory_add [--force] <name> <url>
-# txt: add a directory to the config
-directory_add ()
-{
-  if [[ "$1" == "--force" ]]; then
-    local force=true; shift
-  else
-    local force=false
-  fi
-
-  [[ "$1" ]] || E=2 error $"Name is required for add a directory"
-  [[ "$2" ]] || E=2 error $"URL is required for add a directory"
-
-  if ! $force && [[ "${CONFIG["directory.$1"]}" ]]; then
-    error "Already exists a directory registered with name $1"
-    E=1 error "Use --force to override"
-  fi
-
-  CONFIG["directory.$1"]="$2"
-}
-
-# fun: directory_del <name>
-# txt: del a directory to the config
-directory_del ()
-{
-  [[ "$1" ]] || E=2 error $"Name is required for del a directory"a
-  CONFIG["directory.$1"]=''
-}
-
-# fun: directory_list
-# txt: list all directories in config
-directory_list ()
-{
-  for dir in "${!CONFIG[@]}"; do
-    case "$dir" in
-      directory.*)
-        echo "${dir#directory.}: ${CONFIG["$dir"]}"
-        ;;
-    esac
-  done
-}
-
-# fun: directory_search [pattern]
-# txt: search a pattern in directories
-directory_search ()
-{
-  local dir
-  directory_requirements
-  for dir in "${CACHE_DIR}"/directory.*; do
-    grep -v -e '^#' -e '^[ ]*$' "$dir" | grep -w "$1"
-  done
-}
-## vim:ft=sh
-
 # fun: usage
 # txt: print help screen
 usage ()
@@ -4202,6 +4122,269 @@ config_list ()
   for var in "${!CONFIG[@]}"; do
     echo "${var}=${CONFIG[$var]}"
   done
+}
+## vim:ft=sh
+
+FILTER_LIST=()
+
+# fun: filter_tag <tags_to_filter> <eid>
+# txt: return true if EID need to be filtered
+filter_tag ()
+{
+  local fpattern="$1" eid="$2"
+  local event tag
+
+  [[ "$fpattern" = "*" ]] && return 0
+
+  for event in $(event_labels "$eid"); do
+    for tag in $(event_tags "$event"); do
+      if any "$fpattern" "$tag"; then
+        return 0
+      fi
+    done
+  done
+  return 1
+}
+
+# fun: filter_flag <flag_to_filter> <eid>
+# txt: return true if EID need to be filtered
+filter_flag ()
+{
+  local flag="$1" eid="$2"
+
+  [[ "${flag}" ]] || return 0
+
+  case "$flag" in
+    new) [[ "${TIMELINE_WAS_PRINTED[$eid]}" ]] || return 0;;
+    trust)
+      [[ "${EVENTS_SIGN["$eid"]//\*/}" != "${EVENTS_SIGN["$eid"]}" ]] &&
+        return 0;;
+    signed-good)
+      [[ "${EVENTS_SIGN["$eid"]//G/}" != "${EVENTS_SIGN["$eid"]}" ]] &&
+        return 0;;
+    signed-bad)
+      [[ "${EVENTS_SIGN["$eid"]//B/}" != "${EVENTS_SIGN["$eid"]}" ]] &&
+        return 0;;
+    signed-unknown)
+      [[ "${EVENTS_SIGN["$eid"]//U/}" != "${EVENTS_SIGN["$eid"]}" ]] &&
+        return 0;;
+    signed-expired)
+      [[ "${EVENTS_SIGN["$eid"]//X/}" != "${EVENTS_SIGN["$eid"]}" ]] &&
+        return 0
+      [[ "${EVENTS_SIGN["$eid"]//Y/}" != "${EVENTS_SIGN["$eid"]}" ]] &&
+        return 0;;
+    signed-revoked)
+      [[ "${EVENTS_SIGN["$eid"]//R/}" != "${EVENTS_SIGN["$eid"]}" ]] &&
+        return 0;;
+    signed-missing)
+      [[ "${EVENTS_SIGN["$eid"]//E/}" != "${EVENTS_SIGN["$eid"]}" ]] &&
+        return 0;;
+    signed)
+      case "${EVENTS_SIGN["$eid"]}" in
+        G*|B*|U*|X*|Y*|R*|E*) return 0;;
+      esac;;
+  esac
+  return 1
+}
+
+# fun: filter_view <view> <eid>
+# txt: return true if EID need to be filtered
+filter_view ()
+{
+  local fpattern="$1" eid="$2"
+  read -ra view <<< "${CONFIG["views.$fpattern"]}"
+
+  if [[ "${#view[@]}" -ne 0 ]]; then
+    filter_eval "$eid" "${view[@]}"
+  else
+    E=1 fatal $"No view named: %s" "$fpattern"
+  fi
+}
+
+# fun: filter_score {score-min|score-max} <value> <eid>
+# txt: return true if EID need to be filtered according to score values
+#      passsed as argument.
+filter_score ()
+{
+  local kind="$1" value="$2" eid="$3"
+  local score
+
+  score="$(event_score "$eid")"
+
+  case "$kind" in
+    score-min)
+      [[ "${score:-0}" -lt "${value}" ]] && return 0
+    ;;
+    score-max)
+      [[ "${score:-0}" -gt "${value}" ]] && return 0
+    ;;
+    *)
+      E=1 fatal $"Invalid score filter: %s" "$kind"
+    ;;
+  esac
+
+  return 1
+}
+
+# fun: filter_text <pattern> <eid>
+# txt: return true if especified eid contains text which match with pattern
+#      passed as argument (glob pattern supported only).
+filter_text ()
+{
+  local fpattern="$1" eid="$2"
+
+  # shellcheck disable=SC2254
+  case "${EVENTS_MESG["$eid"]}" in
+    *$fpattern*) return 0;;
+  esac
+  return 1
+}
+
+# fun: filter_mention <eid>
+# txt: return true if myself is mentioned in eid
+filter_mention ()
+{
+  local eid="$1" uid pattern
+  uid="${ACCOUNT_OID}"
+  local -a reat=()
+
+  # no acctive account
+  [[ "$uid" ]] || return 1
+
+  reat=( "@$uid" "@${uid:0:8}" "$(username "$uid")" )
+
+  if [[ "${CONFIG[timeline.react-on-all]}" = "true" ]]; then
+    reat+=( "@all" "@here" )
+  fi
+
+  for pattern in "${reat[@]}"; do
+    filter_text "*${pattern}*" "$eid" && return 0
+  done
+
+  return 1
+}
+
+# fun: filter_engagement <eid>
+# txt: return true if the event has engagement with your account
+filter_engagement ()
+{
+  local eid="$1" uid="${ACCOUNT_OID}" link
+
+  # no acctive account
+  [[ "$uid" ]] || return 1
+
+  case "${EVENTS_KIND["$eid"]}" in
+    P) return 1;;
+    R|T|S)
+      link="${EVENTS_LINK["$eid"]}"
+      link="${link#*:}"; link="${link%:*}"
+      [[ "$link" = "$uid" ]] && return 0
+      ;;
+  esac
+  return 1
+}
+
+# fun: filter_add <expr>
+# txt: Add an expression filter
+filter_add ()
+{
+  FILTER_LIST+=( "$@" )
+}
+
+# fun: filter_eval <eid> [<expr>...]
+# txt: evaluate filtering of the eid for the specified mode. If this funcion
+#      return 0, means that the item is filtered, otherwise is not filtered.
+filter_eval ()
+{
+  local eid="$1" ret=0; shift
+
+  [[ "$#" -eq 0 ]] && set -- "${FILTER_LIST[@]}"
+  for exp in "$@"; do
+    case "$exp" in
+      -*) filter_eval_expr "$eid" "${exp#-}" && ret=1 || ret=0;;
+      *) filter_eval_expr "$eid" "${exp#+}" && ret=0 || ret=1;;
+    esac
+  done
+  return $ret
+}
+
+# fun: filter_eval_expr <eid> <expr>
+# txt: eval an expression and return true if filtered or false if not
+filter_eval_expr ()
+{
+  local eid="$1" expr="$2"
+
+  case "$expr" in
+    '') ;;
+    tag:*)
+      filter_tag "${expr#tag:}" "$eid" && return 0
+      ;;
+    score-min:*|score-max:*)
+      filter_score "${expr%%:*}" "${expr#*:}" "$eid" && return 0
+      ;;
+    flag:*)
+      filter_flag "${expr#flag:}" "$eid" && return 0
+      ;;
+    view:*)
+      filter_view "${expr#view:}" "$eid" && return 0
+      ;;
+    mention)
+      filter_mention "$eid" && return 0
+      ;;
+    engagement)
+      filter_engagement "$eid" && return 0
+      ;;
+    *)
+      filter_text "${expr#text:}" "$eid" && return 0
+      ;;
+  esac
+  return 1
+}
+## vim:ft=sh
+
+# fun: [E=code] fatal <message>
+# txt: print fatal message to stderr, if environment variable `$E` is
+#      present, then exists with specified error code in `$E` (only if
+#      non-interactive)
+fatal ()
+{
+  E="${E:-1}" error "$@"
+}
+
+# fun: error <message>
+# txt: print error message to stderr
+error ()
+{
+  if [ "$E" ]; then
+    local err_kind="fatal"
+  else
+    local err_kind="error"
+  fi
+
+  format_compose "timeline.$err_kind" name \
+    "$(config_get timeline.${err_kind}.name)"
+  format_compose "timeline.$err_kind" date "$(timestamp)"
+  # shellcheck disable=SC2059
+  format_compose "timeline.$err_kind" mesg "$(printf -- "$@")"
+  format_dumps "timeline.$err_kind" >&2
+
+  if [ "$E" ]; then
+    exit "$E"
+  fi
+}
+
+# fun: error_multi
+# txt: get messages from stdin and print informational messages to stderr
+error_multi ()
+{
+  format_compose timeline.error name "${CONFIG[timeline.error.name]:-ERROR}"
+  format_compose timeline.error date "$(printf "%(%s)T")"
+  _i() {
+    format_compose timeline.error mesg "${2%$'\n'}"
+    format_dumps timeline.error >&2
+  }
+  # shellcheck disable=SC2034
+  mapfile -c 1 -C _i
 }
 ## vim:ft=sh
 
@@ -5932,342 +6115,83 @@ EOF
 }
 ## vim:ft=sh
 
-FILTER_LIST=()
-
-# fun: filter_tag <tags_to_filter> <eid>
-# txt: return true if EID need to be filtered
-filter_tag ()
+# fun: directory_requirements
+# txt: ensure that specific requirements for directory management are
+#      present in the system
+directory_requirements ()
 {
-  local fpattern="$1" eid="$2"
-  local event tag
-
-  [[ "$fpattern" = "*" ]] && return 0
-
-  for event in $(event_labels "$eid"); do
-    for tag in $(event_tags "$event"); do
-      if any "$fpattern" "$tag"; then
-        return 0
-      fi
-    done
-  done
-  return 1
+  REQUIREMENTS+=( "+curl" "+grep" )
+  reqs_eval
 }
 
-# fun: filter_flag <flag_to_filter> <eid>
-# txt: return true if EID need to be filtered
-filter_flag ()
+# fun: directory_refresh [name]
+# txt: download directory files for specific directory or for all directories
+#      listed in config.
+directory_refresh ()
 {
-  local flag="$1" eid="$2"
+  local dir
+  directory_requirements
 
-  [[ "${flag}" ]] || return 0
-
-  case "$flag" in
-    new) [[ "${TIMELINE_WAS_PRINTED[$eid]}" ]] || return 0;;
-    trust)
-      [[ "${EVENTS_SIGN["$eid"]//\*/}" != "${EVENTS_SIGN["$eid"]}" ]] &&
-        return 0;;
-    signed-good)
-      [[ "${EVENTS_SIGN["$eid"]//G/}" != "${EVENTS_SIGN["$eid"]}" ]] &&
-        return 0;;
-    signed-bad)
-      [[ "${EVENTS_SIGN["$eid"]//B/}" != "${EVENTS_SIGN["$eid"]}" ]] &&
-        return 0;;
-    signed-unknown)
-      [[ "${EVENTS_SIGN["$eid"]//U/}" != "${EVENTS_SIGN["$eid"]}" ]] &&
-        return 0;;
-    signed-expired)
-      [[ "${EVENTS_SIGN["$eid"]//X/}" != "${EVENTS_SIGN["$eid"]}" ]] &&
-        return 0
-      [[ "${EVENTS_SIGN["$eid"]//Y/}" != "${EVENTS_SIGN["$eid"]}" ]] &&
-        return 0;;
-    signed-revoked)
-      [[ "${EVENTS_SIGN["$eid"]//R/}" != "${EVENTS_SIGN["$eid"]}" ]] &&
-        return 0;;
-    signed-missing)
-      [[ "${EVENTS_SIGN["$eid"]//E/}" != "${EVENTS_SIGN["$eid"]}" ]] &&
-        return 0;;
-    signed)
-      case "${EVENTS_SIGN["$eid"]}" in
-        G*|B*|U*|X*|Y*|R*|E*) return 0;;
-      esac;;
-  esac
-  return 1
-}
-
-# fun: filter_view <view> <eid>
-# txt: return true if EID need to be filtered
-filter_view ()
-{
-  local fpattern="$1" eid="$2"
-  read -ra view <<< "${CONFIG["views.$fpattern"]}"
-
-  if [[ "${#view[@]}" -ne 0 ]]; then
-    filter_eval "$eid" "${view[@]}"
-  else
-    E=1 fatal $"No view named: %s" "$fpattern"
-  fi
-}
-
-# fun: filter_score {score-min|score-max} <value> <eid>
-# txt: return true if EID need to be filtered according to score values
-#      passsed as argument.
-filter_score ()
-{
-  local kind="$1" value="$2" eid="$3"
-  local score
-
-  score="$(event_score "$eid")"
-
-  case "$kind" in
-    score-min)
-      [[ "${score:-0}" -lt "${value}" ]] && return 0
-    ;;
-    score-max)
-      [[ "${score:-0}" -gt "${value}" ]] && return 0
-    ;;
-    *)
-      E=1 fatal $"Invalid score filter: %s" "$kind"
-    ;;
-  esac
-
-  return 1
-}
-
-# fun: filter_text <pattern> <eid>
-# txt: return true if especified eid contains text which match with pattern
-#      passed as argument (glob pattern supported only).
-filter_text ()
-{
-  local fpattern="$1" eid="$2"
-
-  # shellcheck disable=SC2254
-  case "${EVENTS_MESG["$eid"]}" in
-    *$fpattern*) return 0;;
-  esac
-  return 1
-}
-
-# fun: filter_mention <eid>
-# txt: return true if myself is mentioned in eid
-filter_mention ()
-{
-  local eid="$1" uid pattern
-  uid="${ACCOUNT_OID}"
-  local -a reat=()
-
-  # no acctive account
-  [[ "$uid" ]] || return 1
-
-  reat=( "@$uid" "@${uid:0:8}" "$(username "$uid")" )
-
-  if [[ "${CONFIG[timeline.react-on-all]}" = "true" ]]; then
-    reat+=( "@all" "@here" )
-  fi
-
-  for pattern in "${reat[@]}"; do
-    filter_text "*${pattern}*" "$eid" && return 0
-  done
-
-  return 1
-}
-
-# fun: filter_engagement <eid>
-# txt: return true if the event has engagement with your account
-filter_engagement ()
-{
-  local eid="$1" uid="${ACCOUNT_OID}" link
-
-  # no acctive account
-  [[ "$uid" ]] || return 1
-
-  case "${EVENTS_KIND["$eid"]}" in
-    P) return 1;;
-    R|T|S)
-      link="${EVENTS_LINK["$eid"]}"
-      link="${link#*:}"; link="${link%:*}"
-      [[ "$link" = "$uid" ]] && return 0
-      ;;
-  esac
-  return 1
-}
-
-# fun: filter_add <expr>
-# txt: Add an expression filter
-filter_add ()
-{
-  FILTER_LIST+=( "$@" )
-}
-
-# fun: filter_eval <eid> [<expr>...]
-# txt: evaluate filtering of the eid for the specified mode. If this funcion
-#      return 0, means that the item is filtered, otherwise is not filtered.
-filter_eval ()
-{
-  local eid="$1" ret=0; shift
-
-  [[ "$#" -eq 0 ]] && set -- "${FILTER_LIST[@]}"
-  for exp in "$@"; do
-    case "$exp" in
-      -*) filter_eval_expr "$eid" "${exp#-}" && ret=1 || ret=0;;
-      *) filter_eval_expr "$eid" "${exp#+}" && ret=0 || ret=1;;
+  for dir in "${!CONFIG[@]}"; do
+    case "$dir" in
+      "directory.$1"*)
+        curl -qsSL -o "${CACHE_DIR}/$dir" --fail "${CONFIG[$dir]}" 2>&1 ||
+          E=1 error "Unable to refresh directory: ${dir#directory.}"
+        ;;
     esac
   done
-  return $ret
 }
-
-# fun: filter_eval_expr <eid> <expr>
-# txt: eval an expression and return true if filtered or false if not
-filter_eval_expr ()
+# fun: directory_add [--force] <name> <url>
+# txt: add a directory to the config
+directory_add ()
 {
-  local eid="$1" expr="$2"
-
-  case "$expr" in
-    '') ;;
-    tag:*)
-      filter_tag "${expr#tag:}" "$eid" && return 0
-      ;;
-    score-min:*|score-max:*)
-      filter_score "${expr%%:*}" "${expr#*:}" "$eid" && return 0
-      ;;
-    flag:*)
-      filter_flag "${expr#flag:}" "$eid" && return 0
-      ;;
-    view:*)
-      filter_view "${expr#view:}" "$eid" && return 0
-      ;;
-    mention)
-      filter_mention "$eid" && return 0
-      ;;
-    engagement)
-      filter_engagement "$eid" && return 0
-      ;;
-    *)
-      filter_text "${expr#text:}" "$eid" && return 0
-      ;;
-  esac
-  return 1
-}
-## vim:ft=sh
-
-# fun: [E=code] fatal <message>
-# txt: print fatal message to stderr, if environment variable `$E` is
-#      present, then exists with specified error code in `$E` (only if
-#      non-interactive)
-fatal ()
-{
-  E="${E:-1}" error "$@"
-}
-
-# fun: error <message>
-# txt: print error message to stderr
-error ()
-{
-  if [ "$E" ]; then
-    local err_kind="fatal"
+  if [[ "$1" == "--force" ]]; then
+    local force=true; shift
   else
-    local err_kind="error"
+    local force=false
   fi
 
-  format_compose "timeline.$err_kind" name \
-    "$(config_get timeline.${err_kind}.name)"
-  format_compose "timeline.$err_kind" date "$(timestamp)"
-  # shellcheck disable=SC2059
-  format_compose "timeline.$err_kind" mesg "$(printf -- "$@")"
-  format_dumps "timeline.$err_kind" >&2
+  [[ "$1" ]] || E=2 error $"Name is required for add a directory"
+  [[ "$2" ]] || E=2 error $"URL is required for add a directory"
 
-  if [ "$E" ]; then
-    exit "$E"
+  if ! $force && [[ "${CONFIG["directory.$1"]}" ]]; then
+    error "Already exists a directory registered with name $1"
+    E=1 error "Use --force to override"
   fi
+
+  CONFIG["directory.$1"]="$2"
 }
 
-# fun: error_multi
-# txt: get messages from stdin and print informational messages to stderr
-error_multi ()
+# fun: directory_del <name>
+# txt: del a directory to the config
+directory_del ()
 {
-  format_compose timeline.error name "${CONFIG[timeline.error.name]:-ERROR}"
-  format_compose timeline.error date "$(printf "%(%s)T")"
-  _i() {
-    format_compose timeline.error mesg "${2%$'\n'}"
-    format_dumps timeline.error >&2
-  }
-  # shellcheck disable=SC2034
-  mapfile -c 1 -C _i
+  [[ "$1" ]] || E=2 error $"Name is required for del a directory"a
+  CONFIG["directory.$1"]=''
 }
-## vim:ft=sh
 
-# fun: follow_list <path>
-# txt: given a path get the submodules into FOLLOW directory
-follow_list ()
+# fun: directory_list
+# txt: list all directories in config
+directory_list ()
 {
-  local line path="$1"
-
-  while read -r line; do
-    line="${line#*${TIMELINE_FOLLOW}/}"
-    case "$line" in
-      *'.url='*)
-        echo "${line%.url=*}" "${line#*.url=}"
-      ;;
+  for dir in "${!CONFIG[@]}"; do
+    case "$dir" in
+      directory.*)
+        echo "${dir#directory.}: ${CONFIG["$dir"]}"
+        ;;
     esac
-  done < <(git_helper -C "$path" config -f .gitmodules -l 2>/dev/null)
+  done
 }
 
-
-# fun: follow_add <pull_url> [name]
-# txt: Add new following using pull_url passed as argument. Optional name
-#      will add a config entry for user alias to this name.
-follow_add ()
+# fun: directory_search [pattern]
+# txt: search a pattern in directories
+directory_search ()
 {
-  local pull_url="${1}" name="$2"
-  oid "$pull_url"
-  
-  git_helper -C "${ACCOUNT_PATH}" submodule add \
-    "$pull_url" "${TIMELINE_FOLLOW}/${OID_CACHE["$pull_url"]}"
-  git_helper -C "${ACCOUNT_PATH}" submodule init
-  git_helper -C "${ACCOUNT_PATH}" submodule update --remote
-
-  account_commit "follow: add ${OID_CACHE["${pull_url}"]}"
-  account_push
-
-  if [[ "${CONFIG[crypto.auto-import]}" = "true" ]]
-  then
-    [[ -r "${ACCOUNT_PATH}/${TIMELINE_FOLLOW}/${OID_CACHE["$pull_url"]}/ENCRKEY" ]] &&
-      crypto_import "${OID_CACHE["$pull_url"]}" "${ACCOUNT_PATH}/${TIMELINE_FOLLOW}/${OID_CACHE["$pull_url"]}/ENCRKEY"
-
-    [[ -r "${ACCOUNT_PATH}/${TIMELINE_FOLLOW}/${OID_CACHE["$pull_url"]}/SIGNKEY" ]] &&
-      crypto_import "${OID_CACHE["$pull_url"]}" "${ACCOUNT_PATH}/${TIMELINE_FOLLOW}/${OID_CACHE["$pull_url"]}/SIGNKEY"
-  fi
-
-  if [[ "$name" ]]; then
-    config_set "user.alias-${OID_CACHE["$pull_url"]}" "$name"
-    config_save "${CONFIG_FILE}"
-  fi
-}
-
-# fun: follow_del <uid>
-# txt: remove following for user identified by specific UID
-follow_del ()
-{
-  local uid="$1"
-
-  mpath="${TIMELINE_FOLLOW}/$uid"
-
-  # remove gitconfig sections
-  mute git_helper -C "$ACCOUNT_PATH" config -f .git/config \
-    --remove-section "submodule.$mpath"
-
-  mute git_helper -C "$ACCOUNT_PATH" config -f .gitmodules \
-    --remove-section "submodule.$mpath"
-
-  account_commit "follow: del ${uid}"
-
-  git_helper -C "$ACCOUNT_PATH" rm --cached "$mpath"
-  rm -rf "${ACCOUNT_PATH:?}/.git/modules/$mpath"
- 
-  if [[ -d "$ACCOUNT_PATH/$mpath" ]]; then
-    rm -rf "${ACCOUNT_PATH:?}/${mpath:?}"
-  fi
-
-  account_push
+  local dir
+  directory_requirements
+  for dir in "${CACHE_DIR}"/directory.*; do
+    grep -v -e '^#' -e '^[ ]*$' "$dir" | grep -w "$1"
+  done
 }
 ## vim:ft=sh
 
@@ -6897,5 +6821,81 @@ gpg_helper ()
     --personal-cipher-preferences AES256 \
     --personal-digest-preferences SHA256 \
     "$@"
+}
+## vim:ft=sh
+
+# fun: follow_list <path>
+# txt: given a path get the submodules into FOLLOW directory
+follow_list ()
+{
+  local line path="$1"
+
+  while read -r line; do
+    line="${line#*${TIMELINE_FOLLOW}/}"
+    case "$line" in
+      *'.url='*)
+        echo "${line%.url=*}" "${line#*.url=}"
+      ;;
+    esac
+  done < <(git_helper -C "$path" config -f .gitmodules -l 2>/dev/null)
+}
+
+
+# fun: follow_add <pull_url> [name]
+# txt: Add new following using pull_url passed as argument. Optional name
+#      will add a config entry for user alias to this name.
+follow_add ()
+{
+  local pull_url="${1}" name="$2"
+  oid "$pull_url"
+  
+  git_helper -C "${ACCOUNT_PATH}" submodule add \
+    "$pull_url" "${TIMELINE_FOLLOW}/${OID_CACHE["$pull_url"]}"
+  git_helper -C "${ACCOUNT_PATH}" submodule init
+  git_helper -C "${ACCOUNT_PATH}" submodule update --remote
+
+  account_commit "follow: add ${OID_CACHE["${pull_url}"]}"
+  account_push
+
+  if [[ "${CONFIG[crypto.auto-import]}" = "true" ]]
+  then
+    [[ -r "${ACCOUNT_PATH}/${TIMELINE_FOLLOW}/${OID_CACHE["$pull_url"]}/ENCRKEY" ]] &&
+      crypto_import "${OID_CACHE["$pull_url"]}" "${ACCOUNT_PATH}/${TIMELINE_FOLLOW}/${OID_CACHE["$pull_url"]}/ENCRKEY"
+
+    [[ -r "${ACCOUNT_PATH}/${TIMELINE_FOLLOW}/${OID_CACHE["$pull_url"]}/SIGNKEY" ]] &&
+      crypto_import "${OID_CACHE["$pull_url"]}" "${ACCOUNT_PATH}/${TIMELINE_FOLLOW}/${OID_CACHE["$pull_url"]}/SIGNKEY"
+  fi
+
+  if [[ "$name" ]]; then
+    config_set "user.alias-${OID_CACHE["$pull_url"]}" "$name"
+    config_save "${CONFIG_FILE}"
+  fi
+}
+
+# fun: follow_del <uid>
+# txt: remove following for user identified by specific UID
+follow_del ()
+{
+  local uid="$1"
+
+  mpath="${TIMELINE_FOLLOW}/$uid"
+
+  # remove gitconfig sections
+  mute git_helper -C "$ACCOUNT_PATH" config -f .git/config \
+    --remove-section "submodule.$mpath"
+
+  mute git_helper -C "$ACCOUNT_PATH" config -f .gitmodules \
+    --remove-section "submodule.$mpath"
+
+  account_commit "follow: del ${uid}"
+
+  git_helper -C "$ACCOUNT_PATH" rm --cached "$mpath"
+  rm -rf "${ACCOUNT_PATH:?}/.git/modules/$mpath"
+ 
+  if [[ -d "$ACCOUNT_PATH/$mpath" ]]; then
+    rm -rf "${ACCOUNT_PATH:?}/${mpath:?}"
+  fi
+
+  account_push
 }
 main "$@"
