@@ -787,7 +787,7 @@ command_event_info ()
   event_info "$eid" | info_multi
 }
 
-# help:fun: follow {list|add|del} {args...}
+# help:fun: follow {list|add|del|keys} {args...}
 # help:txt: Manage your followings.
 command_follow ()
 {
@@ -847,6 +847,15 @@ command_follow_del ()
   follow_del "$uid" 2>&1 | info_multi
 }
 
+# help:follow:fun: follow keys [account_name] 
+# help:follow:txt: Print keys for the specific account in present, or for all
+# help:follow:txt: none is specified
+command_follow_keys ()
+{
+  command_account_active "${ACCOUNT_NAME}"
+  follow_keys "$1" 2>&1 | info_multi
+}
+
 # help:fun: network {list|refresh} {args...}
 # help:txt: Manage the network graph and discover new users.
 command_network ()
@@ -864,7 +873,7 @@ command_network ()
 # help:network:txt: new users or update current ones.
 command_network_list ()
 {
-  command_account_active "${ACCONT_NAME}"
+  command_account_active "${ACCOUNT_NAME}"
   network_load "${ACCOUNT_PATH}"
   network_list
 }

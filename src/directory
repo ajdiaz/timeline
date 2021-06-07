@@ -51,7 +51,7 @@ directory_add ()
 # txt: del a directory to the config
 directory_del ()
 {
-  [[ "$1" ]] || E=2 error $"Name is required for del a directory"a
+  [[ "$1" ]] || E=2 error $"Name is required for del a directory"
   CONFIG["directory.$1"]=''
 }
 

@@ -28,6 +28,11 @@ long OID. When a new following is added, also imported the proper keyring.
 : Stop follow an account identified by specific OID, or the specific *pull_url*
 as was registered on **add** command.
 
+**keys** [account_name]
+
+: Print keys available for specific account name if present or for all following
+accounts if none is present.
+
 
 # CONFIGURATION
 
