@@ -117,11 +117,9 @@ command_account_keygen ()
 
   tstamp="$(timestamp)"
 
-  account_keygen "${ACCOUNT_OID}" "$tstamp" "${ACCOUNT_NAME}" 2>&1 | info_multi
+  account_keygen "${ACCOUNT_OID}" "$tstamp" "${ACCOUNT_NAME}"
 
   keyid="$(crypto_keyid "${ACCOUNT_OID}" "$tstamp")"
-
-  gpg_helper --quick-set-expire "$keyid" seconds=10 '*'
 
   [[ "$keyid" ]] ||
     E=4 fatal $"Unable to retrieve KeyID for generated one"

@@ -50,7 +50,7 @@ crypto_keyid ()
 {
   local -a out
   mapfile -d $'\n' out < <(
-    gpg_helper --keyid-format long -k "$1${2:+@$2}" 2>/dev/null
+    gpg_helper --keyid-format long -k "$1${2:+@$2}"
   )
   [[ "${out[1]// /}" ]] &&
     echo "${out[1]// /}"
@@ -258,5 +258,6 @@ gpg_helper ()
     --trust-model always \
     --personal-cipher-preferences AES256 \
     --personal-digest-preferences SHA256 \
+    --disable-cipher-algo 3DES,IDEA,CAST5,BLOWFISH \
     "$@"
 }

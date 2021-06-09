@@ -63,6 +63,11 @@ This will create a new key pair and configure your account properly.
 **NOTE!** All previous signing key that you was configured will be forgotten,
 and new key pair will be used, unless on generation you set *--no-default-sign*.
 
+After the creation of the keys you can remove the configuration setting
+*account.keyid* and *account.\<account_name\>.keyid* if exists. These values
+was in use previous to release 1.9, when timeline does not support its own
+keyring and are not in use anymore.
+
 # KEY IMPORTATION
 
 If the configuration setting *crypto.auto-import* is set to true, then on

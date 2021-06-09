@@ -1,5 +1,5 @@
 #! /bin/bash -i
-TIMELINE_VERSION='1.8-24-gee7c30b'
+TIMELINE_VERSION='1.8-27-g0ffa587'
 ## vim:ft=sh
 
 # fun: complete_alternatives <level> <prefix>
@@ -4388,6 +4388,199 @@ error_multi ()
 }
 ## vim:ft=sh
 
+# fun: directory_requirements
+# txt: ensure that specific requirements for directory management are
+#      present in the system
+directory_requirements ()
+{
+  REQUIREMENTS+=( "+curl" "+grep" )
+  reqs_eval
+}
+
+# fun: directory_refresh [name]
+# txt: download directory files for specific directory or for all directories
+#      listed in config.
+directory_refresh ()
+{
+  local dir
+  directory_requirements
+
+  for dir in "${!CONFIG[@]}"; do
+    case "$dir" in
+      "directory.$1"*)
+        curl -qsSL -o "${CACHE_DIR}/$dir" --fail "${CONFIG[$dir]}" 2>&1 ||
+          E=1 error "Unable to refresh directory: ${dir#directory.}"
+        ;;
+    esac
+  done
+}
+# fun: directory_add [--force] <name> <url>
+# txt: add a directory to the config
+directory_add ()
+{
+  if [[ "$1" == "--force" ]]; then
+    local force=true; shift
+  else
+    local force=false
+  fi
+
+  [[ "$1" ]] || E=2 error $"Name is required for add a directory"
+  [[ "$2" ]] || E=2 error $"URL is required for add a directory"
+
+  if ! $force && [[ "${CONFIG["directory.$1"]}" ]]; then
+    error "Already exists a directory registered with name $1"
+    E=1 error "Use --force to override"
+  fi
+
+  CONFIG["directory.$1"]="$2"
+}
+
+# fun: directory_del <name>
+# txt: del a directory to the config
+directory_del ()
+{
+  [[ "$1" ]] || E=2 error $"Name is required for del a directory"
+  CONFIG["directory.$1"]=''
+}
+
+# fun: directory_list
+# txt: list all directories in config
+directory_list ()
+{
+  for dir in "${!CONFIG[@]}"; do
+    case "$dir" in
+      directory.*)
+        echo "${dir#directory.}: ${CONFIG["$dir"]}"
+        ;;
+    esac
+  done
+}
+
+# fun: directory_search [pattern]
+# txt: search a pattern in directories
+directory_search ()
+{
+  local dir
+  directory_requirements
+  for dir in "${CACHE_DIR}"/directory.*; do
+    grep -v -e '^#' -e '^[ ]*$' "$dir" | grep -w "$1"
+  done
+}
+## vim:ft=sh
+
+# fun: follow_list <path>
+# txt: given a path get the submodules into FOLLOW directory
+follow_list ()
+{
+  local line path="$1"
+
+  while read -r line; do
+    line="${line#*${TIMELINE_FOLLOW}/}"
+    case "$line" in
+      *'.url='*)
+        echo "${line%.url=*}" "${line#*.url=}"
+      ;;
+    esac
+  done < <(git_helper -C "$path" config -f .gitmodules -l 2>/dev/null)
+}
+
+
+# fun: follow_add <pull_url> [name]
+# txt: Add new following using pull_url passed as argument. Optional name
+#      will add a config entry for user alias to this name.
+follow_add ()
+{
+  local pull_url="${1}" name="$2"
+  oid "$pull_url"
+  
+  git_helper -C "${ACCOUNT_PATH}" submodule add \
+    "$pull_url" "${TIMELINE_FOLLOW}/${OID_CACHE["$pull_url"]}"
+  git_helper -C "${ACCOUNT_PATH}" submodule init
+  git_helper -C "${ACCOUNT_PATH}" submodule update --remote
+
+  account_commit "follow: add ${OID_CACHE["${pull_url}"]}"
+  account_push
+
+  if [[ "${CONFIG[crypto.auto-import]}" = "true" ]]
+  then
+    [[ -r "${ACCOUNT_PATH}/${TIMELINE_FOLLOW}/${OID_CACHE["$pull_url"]}/ENCRKEY" ]] &&
+      crypto_import "${OID_CACHE["$pull_url"]}" "${ACCOUNT_PATH}/${TIMELINE_FOLLOW}/${OID_CACHE["$pull_url"]}/ENCRKEY"
+
+    [[ -r "${ACCOUNT_PATH}/${TIMELINE_FOLLOW}/${OID_CACHE["$pull_url"]}/SIGNKEY" ]] &&
+      crypto_import "${OID_CACHE["$pull_url"]}" "${ACCOUNT_PATH}/${TIMELINE_FOLLOW}/${OID_CACHE["$pull_url"]}/SIGNKEY"
+  fi
+
+  if [[ "$name" ]]; then
+    config_set "user.alias-${OID_CACHE["$pull_url"]}" "$name"
+    config_save "${CONFIG_FILE}"
+  fi
+}
+
+# fun: follow_del <uid>
+# txt: remove following for user identified by specific UID
+follow_del ()
+{
+  local uid="$1"
+
+  mpath="${TIMELINE_FOLLOW}/$uid"
+
+  # remove gitconfig sections
+  mute git_helper -C "$ACCOUNT_PATH" config -f .git/config \
+    --remove-section "submodule.$mpath"
+
+  mute git_helper -C "$ACCOUNT_PATH" config -f .gitmodules \
+    --remove-section "submodule.$mpath"
+
+  account_commit "follow: del ${uid}"
+
+  git_helper -C "$ACCOUNT_PATH" rm --cached "$mpath"
+  rm -rf "${ACCOUNT_PATH:?}/.git/modules/$mpath"
+ 
+  if [[ -d "$ACCOUNT_PATH/$mpath" ]]; then
+    rm -rf "${ACCOUNT_PATH:?}/${mpath:?}"
+  fi
+
+  account_push
+}
+
+# fun: follow_keys [user]
+# txt: print the keys available for the specific following user if present, or
+#      for all following people if none is specified.
+follow_keys ()
+{
+  local -a line out
+
+  [[ "$1" ]] &&
+    set -- "$(uid "$1")"
+
+  _state () {
+    case "$1" in
+      e) echo "expired";;
+      r) echo "revoked";;
+      n) echo "invalid";;
+      *) echo "valid($1)";;
+    esac
+  }
+
+  _print () {
+    local i
+    echo "${out[1]} ${out[0]}"
+    for((i=2;i<${#out[@]};i++)); do
+      echo "    ${out[i]}"
+    done
+  }
+
+  while IFS=: read -ra line; do
+    case "${line[0]}" in
+      pub) out=( "$(_state "${line[1]}")" );;
+      fpr) out+=( "${line[9]}" );;
+      uid) out+=( "${line[9]} $(_state "${line[1]}")" );;
+      sub) out[0]+="/$(_state "${line[1]}")"; _print;;
+    esac
+  done < <(gpg_helper -k --with-colons ${1:+"$1@timeline"})
+}
+## vim:ft=sh
+
 # env: ACCOUNT_NAME: A variable contains the name of the active account.
 export ACCOUNT_NAME=
 
@@ -4755,268 +4948,6 @@ account_import ()
 }
 ## vim:ft=sh
 
-# fun: crypto_requirements
-# txt: ensure that specific requirements for crypto management are
-#      present in the system
-crypto_requirements ()
-{
-  REQUIREMENTS+=( "+gpg" )
-  reqs_eval
-}
-
-# fun: crypto_keygen <account_id> <tstamp> <passphrase-file>
-# txt: generate key pair for the specific account and echoes the key_id of the
-#      generated one. The crver is v1 by default. Read tl-crypto(7) man page
-#      for details.
-crypto_keygen ()
-{
-  crypto_requirements
-
-  local keyid
-
-  gpg_helper \
-    --passphrase-file "$3" \
-    --quick-gen-key "$1@$2" "ed25519" cert,sign never ||
-    E=3 error $"Unable to create master key for account $1 (v1)."
-
-  keyid="$(crypto_keyid "$1@$2")"
-
-  [[ "$keyid" ]] || E=3 fatal $"Unable to retrieve recent generate keyID"
-
-  gpg_helper \
-    --passphrase-file "$3" \
-    --quick-add-key "$keyid" "cv25519" encr never ||
-    E=3 error $"Unable to create encryption key for account $1 (v1)"
-
-  gpg_helper \
-    --passphrase-file "$3" \
-    --quick-add-uid "$keyid" "$1@timeline" ||
-    E=3 error $"Unable to create user-id for account $1 (v1)"
-
-  echo -e "5\ny\nsave\n" | 
-    gpg_helper --no-batch --command-fd 0 \
-      --expert --edit-key "$keyid" trust >/dev/null 2>/dev/null ||
-      E=3 error $"Unable to trust keyID $keyid"
-}
-
-# fun: crypto_keyid <account_id>
-# txt: get the fingerprint for the key associated to specific account id.
-crypto_keyid ()
-{
-  local -a out
-  mapfile -d $'\n' out < <(
-    gpg_helper --keyid-format long -k "$1${2:+@$2}" 2>/dev/null
-  )
-  [[ "${out[1]// /}" ]] &&
-    echo "${out[1]// /}"
-}
-
-# fun: crypto_import <account_id> <keyfile>
-# txt: import a key from the account_id into the timeline keyring
-crypto_import ()
-{
-  local status account="$1" keyfile="$2" kind keyid uid
-
-  crypto_requirements
-  status="$(temp_file)"
-
-  gpg_helper --status-file "$status" --import "$keyfile" ||
-    E=3 error $"Unable to import key file %s" "$keyfile"
-
-  while read -r _ kind keyid uid _; do
-    case "$kind" in
-      IMPORTED) 
-        if [[ "${uid%@*}" != "$account" ]]; then
-          if gpg_helper --yes --delete-keys "$keyid"; then
-            error $"Ignoring key %s: account does not match %s != %s" \
-              "$keyid" "${uid%@*}" "$account"
-          else
-            error $"\!\!\! SECURITY RISK \!\!\!"
-            error $"You've been imported an invalid key."
-            error $"Key %s does not belong to account owner %s" "$keyid" "$account."
-            error $"Timeline was try to remove it from the keyring, but something weird happened."
-            error $"Read manual tl-crypto(1) to know more about how to handle this."
-            E=3 fatal $"Unable to remove an invalid key."
-          fi
-        fi
-    esac
-  done < "$status"
-}
-
-# fun: crypto_export <account_id> <file>
-# txt: export public key of the specific account id to file
-crypto_export ()
-{
-  crypto_requirements
-  gpg_helper --no-comments --no-emit-version \
-    --armor --export "$1@timeline" > "$2" ||
-    E=3 error $"Unable to export keys for account $1"
-}
-
-# fun: crypto_revoke <account_name> <key_id>
-# txt: revoke a specific key_id
-crypto_revoke ()
-{
-  local rcert
-  local homedir="${CONFIG[account.$1.keyring]}"
-  crypto_requirements
-
-  [[ -r "${homedir}/openpgp-revocs.d/$2.rev" ]] ||
-    E=4 fatal $"KeyID $1 does not have revocation certificate."
-
-  rcert="$(< "${homedir}/openpgp-revocs.d/$2.rev")"
-  gpg_helper --import <<< "${rcert//:---/---}" || # remove : guard 
-    E=4 fatal $"Unable to revoke key"
-}
-
-# fun: crypto_uid <key_id> [match]
-# txt: echoes the uid of the key_id or, if match provided, return true if
-#      the uid match the pattern.
-crypto_uid ()
-{
-  local line
-  while read -r line; do
-    case "$line" in
-      uid:*)
-        IFS=: read -r -a line <<< "$line"
-        if [[ "$2" ]]; then
-          [[ "${line[9]}" = "$2" ]] && return 0
-        else
-          echo "${line[9]}"
-        fi
-        ;;
-    esac
-  done < <(gpg_helper --with-colons -k "$1")
-  ! [[ "$2" ]]
-}
-
-# fun: crypto_validate <key_id> <crver>
-# txt: validate that specific key_id is conforminr crver specification
-crypto_validate ()
-{
-  local kind val data
-  crypto_requirements
-
-  data="$(gpg_helper --keyid-format long -k "$1@timeline" 2>&1)" ||
-    E=3 error $"Unable to validate key $1 ($2). Error was: '$data'."
-
-  case "$2" in
-    v1)
-      while read -r kind val _; do
-        case "$kind" in
-          pub)
-            [[ "${val#ed25519/}" = "${val}" ]] &&
-              E=3 error $"Key $1 does not conform $2: Pub part is no ED25519"
-            ;;
-          sub)
-            [[ "${val#cv25519/}" = "${val}" ]] &&
-              E=3 error $"Key $1 does not conform $2: Sub part is no CV25519"
-            ;;
-        esac
-      done <<< "$data"
-      ;;
-  esac
-}
-
-# fun: crypto_list
-# txt: echoes a list of keys present in keyring
-crypto_list ()
-{
-  local line flags pub=false
-  while IFS=: read -r -a line; do
-    case "${line[0]}" in
-      pub)
-        case "${line[1]}" in
-          *r*) flags="R";;
-          *) flags="";;
-        esac
-        pub=true;;
-      fpr) "$pub" && echo "${line[9]} $flags";;
-      *) pub=false;;
-    esac
-  done < <(gpg_helper --with-colons -k "$@")
-}
-
-# fun: crypto_encrypt [--anon] <recipient> <message> <passfile>
-# txt: return a encrypted message for the specific recipient in REPLY var
-crypto_encrypt ()
-{
-  local mesg arg='-r'
-  local -a payload
-  crypto_requirements
-
-  [[ "$1" = "--anon" ]] && arg="-R" && shift
-
-  mapfile -t -s 2 payload < <(
-    gpg_helper -vv \
-      --armor --passphrase-file "$3" \
-      --sign --encrypt --no-comments --no-emit-version \
-      "$arg" "$1@timeline" <<< "$2"
-  ) 2>&1
-
-  [[ ${#payload[@]} -eq 0 ]] && exit 4
-
-  payload[-1]=''
-  REPLY="${payload[*]}"
-  REPLY="${REPLY// /}"
-}
-
-# fun: crypto_decrypt <account_id> <message> <passfile> [statusfile]
-# txt: decrypt a previously encrypted message
-crypto_decrypt ()
-{
-  local -a args
-  local -a mesg=(
-    "-----BEGIN PGP MESSAGE-----"
-    ""
-    "$2"
-    "-----END PGP MESSAGE-----"
-  )
-  crypto_requirements
-
-  [[ "$4" ]] && args+=( "--status-file=$4" )
-
-  read -r < <(
-    gpg_helper "${args[@]}" --passphrase-file "$3" -v --armor --decrypt \
-      --try-secret-key "$1@timeline" <<< "$(join $'\n' "${mesg[@]}")"
-  ) 2>&1 || REPLY=''
-}
-
-# fun: crypto_keyflags <keyid>
-# txt: put in $REPLY a list of flags for the keyid passed as argument
-crypto_keyflags ()
-{
-  local -a line
-  local aux
-  REPLY=''
-
-  while IFS=: read -ra line ; do
-    case "${line[0]}" in
-      pub|sub) aux="${line[1]}";;
-      fpr|fp2) [[ "${line[9]}" = "$1" ]] && REPLY="$aux" || true;;
-    esac
-  done < <(gpg_helper --with-colons -k "$1") ||
-    E=3 fatal $"Unable to retrieve keyflags for key %s" "$1"
-}
-
-# fun: gpg_helper [args]
-# txt: run gpg command with some well known parameters
-gpg_helper ()
-{
-  local homedir
-
-  [[ "$GNUPGHOME" ]] ||
-    E=3 fatal $"GNUPGHOME not set executing $*"
-
-  command "${CONFIG[crypto.gnupg-binary]:-exit}" --batch --no-tty \
-    --no-auto-key-retrieve --auto-key-locate "local" \
-    --trust-model always \
-    --personal-cipher-preferences AES256 \
-    --personal-digest-preferences SHA256 \
-    "$@"
-}
-## vim:ft=sh
-
 NOSUBCMD=$"No valid subcomand '%s' for command '%s'"
 INVALIDURL=$"Invalid URL '%s'"
 
@@ -5134,11 +5065,9 @@ command_account_keygen ()
 
   tstamp="$(timestamp)"
 
-  account_keygen "${ACCOUNT_OID}" "$tstamp" "${ACCOUNT_NAME}" 2>&1 | info_multi
+  account_keygen "${ACCOUNT_OID}" "$tstamp" "${ACCOUNT_NAME}"
 
   keyid="$(crypto_keyid "${ACCOUNT_OID}" "$tstamp")"
-
-  gpg_helper --quick-set-expire "$keyid" seconds=10 '*'
 
   [[ "$keyid" ]] ||
     E=4 fatal $"Unable to retrieve KeyID for generated one"
@@ -6753,195 +6682,265 @@ EOF
 }
 ## vim:ft=sh
 
-# fun: directory_requirements
-# txt: ensure that specific requirements for directory management are
+# fun: crypto_requirements
+# txt: ensure that specific requirements for crypto management are
 #      present in the system
-directory_requirements ()
+crypto_requirements ()
 {
-  REQUIREMENTS+=( "+curl" "+grep" )
+  REQUIREMENTS+=( "+gpg" )
   reqs_eval
 }
 
-# fun: directory_refresh [name]
-# txt: download directory files for specific directory or for all directories
-#      listed in config.
-directory_refresh ()
+# fun: crypto_keygen <account_id> <tstamp> <passphrase-file>
+# txt: generate key pair for the specific account and echoes the key_id of the
+#      generated one. The crver is v1 by default. Read tl-crypto(7) man page
+#      for details.
+crypto_keygen ()
 {
-  local dir
-  directory_requirements
+  crypto_requirements
 
-  for dir in "${!CONFIG[@]}"; do
-    case "$dir" in
-      "directory.$1"*)
-        curl -qsSL -o "${CACHE_DIR}/$dir" --fail "${CONFIG[$dir]}" 2>&1 ||
-          E=1 error "Unable to refresh directory: ${dir#directory.}"
-        ;;
+  local keyid
+
+  gpg_helper \
+    --passphrase-file "$3" \
+    --quick-gen-key "$1@$2" "ed25519" cert,sign never ||
+    E=3 error $"Unable to create master key for account $1 (v1)."
+
+  keyid="$(crypto_keyid "$1@$2")"
+
+  [[ "$keyid" ]] || E=3 fatal $"Unable to retrieve recent generate keyID"
+
+  gpg_helper \
+    --passphrase-file "$3" \
+    --quick-add-key "$keyid" "cv25519" encr never ||
+    E=3 error $"Unable to create encryption key for account $1 (v1)"
+
+  gpg_helper \
+    --passphrase-file "$3" \
+    --quick-add-uid "$keyid" "$1@timeline" ||
+    E=3 error $"Unable to create user-id for account $1 (v1)"
+
+  echo -e "5\ny\nsave\n" | 
+    gpg_helper --no-batch --command-fd 0 \
+      --expert --edit-key "$keyid" trust >/dev/null 2>/dev/null ||
+      E=3 error $"Unable to trust keyID $keyid"
+}
+
+# fun: crypto_keyid <account_id>
+# txt: get the fingerprint for the key associated to specific account id.
+crypto_keyid ()
+{
+  local -a out
+  mapfile -d $'\n' out < <(
+    gpg_helper --keyid-format long -k "$1${2:+@$2}"
+  )
+  [[ "${out[1]// /}" ]] &&
+    echo "${out[1]// /}"
+}
+
+# fun: crypto_import <account_id> <keyfile>
+# txt: import a key from the account_id into the timeline keyring
+crypto_import ()
+{
+  local status account="$1" keyfile="$2" kind keyid uid
+
+  crypto_requirements
+  status="$(temp_file)"
+
+  gpg_helper --status-file "$status" --import "$keyfile" ||
+    E=3 error $"Unable to import key file %s" "$keyfile"
+
+  while read -r _ kind keyid uid _; do
+    case "$kind" in
+      IMPORTED) 
+        if [[ "${uid%@*}" != "$account" ]]; then
+          if gpg_helper --yes --delete-keys "$keyid"; then
+            error $"Ignoring key %s: account does not match %s != %s" \
+              "$keyid" "${uid%@*}" "$account"
+          else
+            error $"\!\!\! SECURITY RISK \!\!\!"
+            error $"You've been imported an invalid key."
+            error $"Key %s does not belong to account owner %s" "$keyid" "$account."
+            error $"Timeline was try to remove it from the keyring, but something weird happened."
+            error $"Read manual tl-crypto(1) to know more about how to handle this."
+            E=3 fatal $"Unable to remove an invalid key."
+          fi
+        fi
     esac
-  done
-}
-# fun: directory_add [--force] <name> <url>
-# txt: add a directory to the config
-directory_add ()
-{
-  if [[ "$1" == "--force" ]]; then
-    local force=true; shift
-  else
-    local force=false
-  fi
-
-  [[ "$1" ]] || E=2 error $"Name is required for add a directory"
-  [[ "$2" ]] || E=2 error $"URL is required for add a directory"
-
-  if ! $force && [[ "${CONFIG["directory.$1"]}" ]]; then
-    error "Already exists a directory registered with name $1"
-    E=1 error "Use --force to override"
-  fi
-
-  CONFIG["directory.$1"]="$2"
+  done < "$status"
 }
 
-# fun: directory_del <name>
-# txt: del a directory to the config
-directory_del ()
+# fun: crypto_export <account_id> <file>
+# txt: export public key of the specific account id to file
+crypto_export ()
 {
-  [[ "$1" ]] || E=2 error $"Name is required for del a directory"
-  CONFIG["directory.$1"]=''
+  crypto_requirements
+  gpg_helper --no-comments --no-emit-version \
+    --armor --export "$1@timeline" > "$2" ||
+    E=3 error $"Unable to export keys for account $1"
 }
 
-# fun: directory_list
-# txt: list all directories in config
-directory_list ()
+# fun: crypto_revoke <account_name> <key_id>
+# txt: revoke a specific key_id
+crypto_revoke ()
 {
-  for dir in "${!CONFIG[@]}"; do
-    case "$dir" in
-      directory.*)
-        echo "${dir#directory.}: ${CONFIG["$dir"]}"
-        ;;
-    esac
-  done
+  local rcert
+  local homedir="${CONFIG[account.$1.keyring]}"
+  crypto_requirements
+
+  [[ -r "${homedir}/openpgp-revocs.d/$2.rev" ]] ||
+    E=4 fatal $"KeyID $1 does not have revocation certificate."
+
+  rcert="$(< "${homedir}/openpgp-revocs.d/$2.rev")"
+  gpg_helper --import <<< "${rcert//:---/---}" || # remove : guard 
+    E=4 fatal $"Unable to revoke key"
 }
 
-# fun: directory_search [pattern]
-# txt: search a pattern in directories
-directory_search ()
+# fun: crypto_uid <key_id> [match]
+# txt: echoes the uid of the key_id or, if match provided, return true if
+#      the uid match the pattern.
+crypto_uid ()
 {
-  local dir
-  directory_requirements
-  for dir in "${CACHE_DIR}"/directory.*; do
-    grep -v -e '^#' -e '^[ ]*$' "$dir" | grep -w "$1"
-  done
-}
-## vim:ft=sh
-
-# fun: follow_list <path>
-# txt: given a path get the submodules into FOLLOW directory
-follow_list ()
-{
-  local line path="$1"
-
+  local line
   while read -r line; do
-    line="${line#*${TIMELINE_FOLLOW}/}"
     case "$line" in
-      *'.url='*)
-        echo "${line%.url=*}" "${line#*.url=}"
+      uid:*)
+        IFS=: read -r -a line <<< "$line"
+        if [[ "$2" ]]; then
+          [[ "${line[9]}" = "$2" ]] && return 0
+        else
+          echo "${line[9]}"
+        fi
+        ;;
+    esac
+  done < <(gpg_helper --with-colons -k "$1")
+  ! [[ "$2" ]]
+}
+
+# fun: crypto_validate <key_id> <crver>
+# txt: validate that specific key_id is conforminr crver specification
+crypto_validate ()
+{
+  local kind val data
+  crypto_requirements
+
+  data="$(gpg_helper --keyid-format long -k "$1@timeline" 2>&1)" ||
+    E=3 error $"Unable to validate key $1 ($2). Error was: '$data'."
+
+  case "$2" in
+    v1)
+      while read -r kind val _; do
+        case "$kind" in
+          pub)
+            [[ "${val#ed25519/}" = "${val}" ]] &&
+              E=3 error $"Key $1 does not conform $2: Pub part is no ED25519"
+            ;;
+          sub)
+            [[ "${val#cv25519/}" = "${val}" ]] &&
+              E=3 error $"Key $1 does not conform $2: Sub part is no CV25519"
+            ;;
+        esac
+      done <<< "$data"
       ;;
-    esac
-  done < <(git_helper -C "$path" config -f .gitmodules -l 2>/dev/null)
+  esac
 }
 
-
-# fun: follow_add <pull_url> [name]
-# txt: Add new following using pull_url passed as argument. Optional name
-#      will add a config entry for user alias to this name.
-follow_add ()
+# fun: crypto_list
+# txt: echoes a list of keys present in keyring
+crypto_list ()
 {
-  local pull_url="${1}" name="$2"
-  oid "$pull_url"
-  
-  git_helper -C "${ACCOUNT_PATH}" submodule add \
-    "$pull_url" "${TIMELINE_FOLLOW}/${OID_CACHE["$pull_url"]}"
-  git_helper -C "${ACCOUNT_PATH}" submodule init
-  git_helper -C "${ACCOUNT_PATH}" submodule update --remote
-
-  account_commit "follow: add ${OID_CACHE["${pull_url}"]}"
-  account_push
-
-  if [[ "${CONFIG[crypto.auto-import]}" = "true" ]]
-  then
-    [[ -r "${ACCOUNT_PATH}/${TIMELINE_FOLLOW}/${OID_CACHE["$pull_url"]}/ENCRKEY" ]] &&
-      crypto_import "${OID_CACHE["$pull_url"]}" "${ACCOUNT_PATH}/${TIMELINE_FOLLOW}/${OID_CACHE["$pull_url"]}/ENCRKEY"
-
-    [[ -r "${ACCOUNT_PATH}/${TIMELINE_FOLLOW}/${OID_CACHE["$pull_url"]}/SIGNKEY" ]] &&
-      crypto_import "${OID_CACHE["$pull_url"]}" "${ACCOUNT_PATH}/${TIMELINE_FOLLOW}/${OID_CACHE["$pull_url"]}/SIGNKEY"
-  fi
-
-  if [[ "$name" ]]; then
-    config_set "user.alias-${OID_CACHE["$pull_url"]}" "$name"
-    config_save "${CONFIG_FILE}"
-  fi
-}
-
-# fun: follow_del <uid>
-# txt: remove following for user identified by specific UID
-follow_del ()
-{
-  local uid="$1"
-
-  mpath="${TIMELINE_FOLLOW}/$uid"
-
-  # remove gitconfig sections
-  mute git_helper -C "$ACCOUNT_PATH" config -f .git/config \
-    --remove-section "submodule.$mpath"
-
-  mute git_helper -C "$ACCOUNT_PATH" config -f .gitmodules \
-    --remove-section "submodule.$mpath"
-
-  account_commit "follow: del ${uid}"
-
-  git_helper -C "$ACCOUNT_PATH" rm --cached "$mpath"
-  rm -rf "${ACCOUNT_PATH:?}/.git/modules/$mpath"
- 
-  if [[ -d "$ACCOUNT_PATH/$mpath" ]]; then
-    rm -rf "${ACCOUNT_PATH:?}/${mpath:?}"
-  fi
-
-  account_push
-}
-
-# fun: follow_keys [user]
-# txt: print the keys available for the specific following user if present, or
-#      for all following people if none is specified.
-follow_keys ()
-{
-  local -a line out
-
-  [[ "$1" ]] &&
-    set -- "$(uid "$1")"
-
-  _state () {
-    case "$1" in
-      e) echo "expired";;
-      r) echo "revoked";;
-      n) echo "invalid";;
-      *) echo "valid($1)";;
-    esac
-  }
-
-  _print () {
-    local i
-    echo "${out[1]} ${out[0]}"
-    for((i=2;i<${#out[@]};i++)); do
-      echo "    ${out[i]}"
-    done
-  }
-
-  while IFS=: read -ra line; do
+  local line flags pub=false
+  while IFS=: read -r -a line; do
     case "${line[0]}" in
-      pub) out=( "$(_state "${line[1]}")" );;
-      fpr) out+=( "${line[9]}" );;
-      uid) out+=( "${line[9]} $(_state "${line[1]}")" );;
-      sub) out[0]+="/$(_state "${line[1]}")"; _print;;
+      pub)
+        case "${line[1]}" in
+          *r*) flags="R";;
+          *) flags="";;
+        esac
+        pub=true;;
+      fpr) "$pub" && echo "${line[9]} $flags";;
+      *) pub=false;;
     esac
-  done < <(gpg_helper -k --with-colons ${1:+"$1@timeline"})
+  done < <(gpg_helper --with-colons -k "$@")
+}
+
+# fun: crypto_encrypt [--anon] <recipient> <message> <passfile>
+# txt: return a encrypted message for the specific recipient in REPLY var
+crypto_encrypt ()
+{
+  local mesg arg='-r'
+  local -a payload
+  crypto_requirements
+
+  [[ "$1" = "--anon" ]] && arg="-R" && shift
+
+  mapfile -t -s 2 payload < <(
+    gpg_helper -vv \
+      --armor --passphrase-file "$3" \
+      --sign --encrypt --no-comments --no-emit-version \
+      "$arg" "$1@timeline" <<< "$2"
+  ) 2>&1
+
+  [[ ${#payload[@]} -eq 0 ]] && exit 4
+
+  payload[-1]=''
+  REPLY="${payload[*]}"
+  REPLY="${REPLY// /}"
+}
+
+# fun: crypto_decrypt <account_id> <message> <passfile> [statusfile]
+# txt: decrypt a previously encrypted message
+crypto_decrypt ()
+{
+  local -a args
+  local -a mesg=(
+    "-----BEGIN PGP MESSAGE-----"
+    ""
+    "$2"
+    "-----END PGP MESSAGE-----"
+  )
+  crypto_requirements
+
+  [[ "$4" ]] && args+=( "--status-file=$4" )
+
+  read -r < <(
+    gpg_helper "${args[@]}" --passphrase-file "$3" -v --armor --decrypt \
+      --try-secret-key "$1@timeline" <<< "$(join $'\n' "${mesg[@]}")"
+  ) 2>&1 || REPLY=''
+}
+
+# fun: crypto_keyflags <keyid>
+# txt: put in $REPLY a list of flags for the keyid passed as argument
+crypto_keyflags ()
+{
+  local -a line
+  local aux
+  REPLY=''
+
+  while IFS=: read -ra line ; do
+    case "${line[0]}" in
+      pub|sub) aux="${line[1]}";;
+      fpr|fp2) [[ "${line[9]}" = "$1" ]] && REPLY="$aux" || true;;
+    esac
+  done < <(gpg_helper --with-colons -k "$1") ||
+    E=3 fatal $"Unable to retrieve keyflags for key %s" "$1"
+}
+
+# fun: gpg_helper [args]
+# txt: run gpg command with some well known parameters
+gpg_helper ()
+{
+  local homedir
+
+  [[ "$GNUPGHOME" ]] ||
+    E=3 fatal $"GNUPGHOME not set executing $*"
+
+  command "${CONFIG[crypto.gnupg-binary]:-exit}" --batch --no-tty \
+    --no-auto-key-retrieve --auto-key-locate "local" \
+    --trust-model always \
+    --personal-cipher-preferences AES256 \
+    --personal-digest-preferences SHA256 \
+    --disable-cipher-algo 3DES,IDEA,CAST5,BLOWFISH \
+    "$@"
 }
 main "$@"
