@@ -96,10 +96,9 @@ command_account_rebuild ()
       error $"Use 'account genkey' to generate new keypair or 'account encrkey' to set previous generated one."
     fi
 
-    account_clone --force "$name" "$push_url" "$pull_url" "$path" |
-        info_multi
-      config_load "${CONFIG_FILE}"
-      command_account_active "$name"
+    account_clone --force "$name" "$push_url" "$pull_url" "$path" | info_multi
+    config_load "${CONFIG_FILE}"
+    command_account_active "$name"
     # shellcheck disable=SC2119
     command_timeline_refresh
   fi

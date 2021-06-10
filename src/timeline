@@ -128,7 +128,7 @@ timeline_list_thread ()
     X*|Y*) flags+="${CONFIG["timeline.$kind.flag-signed-expired"]}";;
     R*) flags+="${CONFIG["timeline.$kind.flag-signed-revoked"]}";;
     E*) flags+="${CONFIG["timeline.$kind.flag-signed-missing"]}";;
-    N*) flags+="${CONFIG["timeline.$kind.flag-signed-none"]}";;
+    N*|'') flags+="${CONFIG["timeline.$kind.flag-signed-none"]}";;
     *) flags+="${sign}";;
   esac
 

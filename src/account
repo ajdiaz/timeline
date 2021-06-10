@@ -164,7 +164,7 @@ account_clone ()
     local force=false
   fi
 
-  local name="$1" push_url="$2" pull_url="$3" path="$4"
+  local name="$1" push_url="$2" pull_url="$3" path="$4" tstamp=""
 
   if ! $force && [[ "${CONFIG["account.$name.path"]}" ]]; then
     E=1 fatal $"Another account already exists with that name"
@@ -176,15 +176,20 @@ account_clone ()
 
     oid "$pull_url"
 
-    [[ -z "${CONFIG[account.$name.keyring]}" ]] &&
-      [[ "${CONFIG[account.auto-keygen]}" = "true" ]] &&
-        account_keygen "${OID_CACHE[$pull_url]}" "$tstamp" "$name"
+    if [[ -z "${CONFIG[account.$name.keyring]}" ]] &&
+      [[ "${CONFIG[account.auto-keygen]}" = "true" ]]; then
+          tstamp="$(timestamp)"
+          account_keygen "${OID_CACHE[$pull_url]}" "$tstamp" "$name"
+    fi
 
     config_set "user.alias-${OID_CACHE["$pull_url"]}" "$name"
     git_helper clone "$push_url" "$path" 2>&1
     git_helper -C "$path" submodule init 2>&1
 
-    account_config "$path" "$pull_url" "$name" "timeline"
+    account_config "$path" "$pull_url" "$name" "$tstamp"
+
+    git_helper -C "$path" add .
+    git_helper -C "$path" commit -m 'clone: recreated keys' 2>&1
 
     config_save "${CONFIG_FILE}"
   fi
@@ -194,7 +199,7 @@ account_clone ()
 # txt: configure user and other required things in the repo
 account_config ()
 {
-  local path="$1" pull_url="$2" name="$3" tstamp="$4" keyid
+  local path="$1" pull_url="$2" name="$3" tstamp="$4" keyid_encr keyid_sign
   oid "$pull_url"
 
   git_helper -C "$path" config user.name "${OID_CACHE["$pull_url"]}"
@@ -207,18 +212,24 @@ account_config ()
   command mkdir -p "${path:?}/FOLLOW"
 
   if [[ "$tstamp" ]]; then
-    keyid="$(crypto_keyid "${OID_CACHE["$pull_url"]}" "$tstamp")"
-
-    if [[ "$keyid" ]]; then
-      account_set_signkey "$name" "$keyid"
-      crypto_export "${OID_CACHE["$pull_url"]}" "${path:?}/SIGNKEY"
-      account_set_encrkey "$name" "$keyid"
-      crypto_export "${OID_CACHE["$pull_url"]}" "${path:?}/ENCRKEY"
-
-      export GNUPGHOME="${CONFIG[account.$name.keyring]}"
-    fi
+    keyid_encr="$(crypto_keyid "${OID_CACHE["$pull_url"]}" "$tstamp")"
+    keyid_sign="${keyid_encr}"
+  else
+    keyid_encr="$(config_eval "account.$name.encrkey" "account.encrkey")"
+    keyid_sign="$(config_eval "account.$name.signkey" "account.signkey")"
   fi
 
+  if [[ "$keyid_sign" ]]; then
+    export GNUPGHOME="${CONFIG[account.$name.keyring]}"
+    account_set_signkey "$name" "$keyid_sign"
+    crypto_export "${OID_CACHE["$pull_url"]}" "${path:?}/SIGNKEY"
+  fi
+
+  if [[ "$keyid_encr" ]]; then
+    export GNUPGHOME="${CONFIG[account.$name.keyring]}"
+    account_set_encrkey "$name" "$keyid_encr"
+    crypto_export "${OID_CACHE["$pull_url"]}" "${path:?}/ENCRKEY"
+  fi
 }
 
 # fun: account_commit [message]
