@@ -67,7 +67,8 @@ account_load ()
     E=3 error $"Unable to check account status"
   if [[ "$changes" ]]; then
     error $"Account is dirty. Maybe you edit your account manually and badly."
-    error $"To repair just run: git -C '%s' reset --hard master" "$ACCOUNT_PATH"
+    error $"To repair just run: git -C '%s' reset --hard %s" \
+      "$ACCOUNT_PATH" "$(get_main_branch)"
     exit 100
   fi
 }
@@ -139,7 +140,8 @@ account_create ()
   mkdir -p "$path" ||
     E=1 fatal $"Unable to create account directory: %s" "$path"
 
-  git_helper -C "$path" init ${TIMELINE_EXPERIMENTAL_SHA256:+--object-format=sha256}
+  git_helper -C "$path" init -b "${CONFIG['git.defaultBrach']:-main}" \
+    ${TIMELINE_EXPERIMENTAL_SHA256:+--object-format=sha256}
   account_config "$path" "$pull_url" "$1" "$tstamp"
 
   config_save "${CONFIG_FILE}"
@@ -148,7 +150,7 @@ account_create ()
 
   git_helper -C "$path" commit -m 'init' 2>&1
   git_helper -C "$path" remote add origin "$push_url" 2>&1
-  git_helper -C "$path" push -u origin master 2>&1 ||
+  git_helper -C "$path" push -u origin "${CONFIG['git.defaultBrach']:-main}" 2>&1 ||
     E=2 fatal $"Unable to push initial commit"
 }
 
@@ -254,7 +256,7 @@ account_commit ()
 account_push ()
 {
   # TODO Add support for multiple branches
-  git_helper -C "${ACCOUNT_PATH}" push "${1:-origin}" master
+  git_helper -C "${ACCOUNT_PATH}" push "${1:-origin}" "$(get_main_branch)"
 }
 
 # fun: account_refresh <path> [remote]
@@ -263,10 +265,11 @@ account_push ()
 account_refresh ()
 {
   local line path="$1" commit=false; shift
+  export path
 
   git_helper -C "$path" fetch --all --jobs "${CONFIG[git.jobs]:-4}" 2>&1
   # TODO Add support for multiple branches
-  git_helper -C "$path" rebase "${1:-origin}/master" 2>&1
+  git_helper -C "$path" rebase "${1:-origin}/$(get_main_branch "$path")" 2>&1
   git_helper -C "$path" submodule update --remote \
     --jobs "${CONFIG[git.jobs]:-4}" 2>&1
 

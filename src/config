@@ -21,6 +21,7 @@ declare -xA CONFIG=(
   [plugin.path]="${XDG_DATA_HOME:-$HOME/.local/share}/tl/plugin:$HOME/.tl/plugin"
   [cache.path]="${XDG_CACHE_HOME:-$HOME/.cache}/tl:$HOME/.tl/cache"
   [git.jobs]='4'
+  [git.defaultBranch]='main'
   [crypto.gnupg-binary]="gpg"
   [crypto.auto-import]=true
   [crypto.ignore-anon]=false

@@ -188,7 +188,11 @@ Here we have the generic options for timeline.
 
 *git.jobs*=*4*
 
-: Set the number of jobs used when git is refreshing modules.
+: Set the number of jobs used when git is refreshing modules and cloning the repositories.
+
+*git.defaultBranch*=*main*
+
+: Set the default branch name when creating the repository.
 
 *prompt.format*=*'%b%s:%b '*, *prompt.fields*=*account*, *prompt.color*=*'7,'*, *prompt.color-name*=*'7,'*
 

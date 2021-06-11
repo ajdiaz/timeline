@@ -211,7 +211,7 @@ messages. See **DECRYPTION PROCESS** above for more information).
 anonymous messages instead of direct ones, even if no anonymity flag is set in
 the command. Read **ENCRYPTION PROCESS** above for more information.
 
-*crypto.keyring-path*=*${XDG_DATA_HOME:-$HOME/.local/share}/tl/keyring:$HOME/.tl/keyring*
+*crypto.keyring-path*=*$XDG_DATA_HOME/tl/keyring:$HOME/.tl/keyring*
 
 : Set the PATH to prefix keyring. When a new keyring is created for an account, timeline
 will search for all paths in this variable if any of them is already created, if so then
