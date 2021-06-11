@@ -201,6 +201,20 @@ git_helper ()
   HOME=/dev/null command git "$@"
 }
 
+# fun: get_main_branch [account_path]
+# txt: get the default branch for git given an account path or using current
+#      enabled account if none present.
+get_main_branch ()
+{
+  local ref
+  read -r _ ref < "${1:-$ACCOUNT_PATH}/.git/refs/remotes/origin/HEAD" 2>/dev/null
+  if [[ "$ref" ]]; then
+    echo "${ref##*/}"
+  else
+    echo "${CONFIG[git.defaultBranch]:-main}"
+  fi
+}
+
 # fun: on_exit <callback>
 # txt: run callback on exit
 declare -a _on_exit=()
