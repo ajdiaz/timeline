@@ -333,7 +333,7 @@ if test -t 1; then
    esac
 fi
 
-if [[ "${LC_MESSAGES//UTF-8/}" != "${LC_MESSAGES}" ]]; then
+if [[ "${LC_NAME//UTF-8/}" != "${LC_NAME}" ]]; then
   # if utf-8 is available in locale
   CONFIG['input.emojis']=true
   CONFIG['timeline.reply.prefix']='⤷ '
