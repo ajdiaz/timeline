@@ -4,7 +4,7 @@
 #      array should be loaded from file with `config_load` function, and
 #      accessed by `config_get` and `config_set` to read and write,
 #      res pectively.
-declare -xA CONFIG=(
+declare -xgA CONFIG=(
   [oid.use-cache]=true
   [oid.max-cache-size]=1000
   [interactive.show-banner]=true
@@ -40,6 +40,7 @@ declare -xA CONFIG=(
   [timeline.show-replies]=true
   [timeline.show-tags]=true
   [timeline.react-on-all]=true
+  [timeline.ignore-locale]=false
   [timeline.filter]='-tag:spam -score-min:0'
   [timeline.own-posts]=true
   [timeline.use-short-ids]=true
@@ -348,10 +349,8 @@ IFS=',' read -ra AVAIL_COLORS <<<"${CONFIG[timeline.consistent-colors]}"
 #      `$CONFIG` environment variable properly.
 config_load ()
 {
-  local IFS='='
-  while read -r key val; do
-    CONFIG["$key"]="$val"
-  done < <(git_helper config -f "$1" -l)
+  _i () { CONFIG["${2%%=*}"]="${2#*=}"; }
+  mapfile -t -C _i -c 1 < <(git_helper config -f "$1" -l)
 }
 
 # fun: config_get <key>

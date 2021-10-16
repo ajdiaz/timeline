@@ -63,7 +63,7 @@ account_load ()
 
   export GNUPGHOME="${CONFIG[account.$ACCOUNT_NAME.keyring]}"
 
-  changes="$(git_helper -C "${ACCOUNT_PATH}" status --porcelain 2>&1)" ||
+  changes="$(git_helper -C "${ACCOUNT_PATH}" status --porcelain 2>/dev/null)" ||
     E=3 error $"Unable to check account status"
   if [[ "$changes" ]]; then
     error $"Account is dirty. Maybe you edit your account manually and badly."

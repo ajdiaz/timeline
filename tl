@@ -1,5 +1,5 @@
 #! /bin/bash -i
-TIMELINE_VERSION='1.8-31-g94eecc9'
+TIMELINE_VERSION='1.8-32-g96da44d'
 ## vim:ft=sh
 
 # fun: complete_alternatives <level> <prefix>
@@ -5253,142 +5253,6 @@ history_append ()
   hist_enabled="$(config_get history.enabled)"
   [ "${hist_enabled}" = "true" ] && history -s "$1"
 }
-#! /usr/bin/env bash
-# 
-# Copyright (C) 2016  Andrés J. Díaz <ajdiaz@ajdiaz.me>
-# 
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-# 
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-# 
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <http://www.gnu.org/licenses/>.
-
-# env: INTERACTIVE: if true, then interactive mode is enabled
-export INTERACTIVE=
-
-# env: CONFIG_FILE: should contain the path to the config file
-export CONFIG_FILE=
-
-# env: CACHE_DIR: should contain the path to the cache directory
-export CACHE_DIR=
-
-# fun: prompt
-# txt: print prompt in interactive mode
-prompt ()
-{
-  format_compose prompt account "${ACCOUNT_NAME:-<none>}"
-  format_dumps prompt
-}
-
-# fun: main_interactive
-# txt: evaluate commands in interactive mode
-main_interactive ()
-{
-  local cmd
-  local -a args
-
-  history_load
-  complete_load
-  command_account_active "${ACCOUNT_NAME}"
-
-  while true; do
-    read -a args -e -r -p "$(T=true prompt)"
-    [ $? -eq 1 ] && break
-    cmd="${args[0]}"
-    local -a args=( "${args[@]:1}" )
-
-    [ "$cmd" ] || continue
-    history_append "$cmd ${args[*]}"
-    main_standalone "$cmd" "${args[@]}"
-  done
-  history_save
-}
-
-# fun: main_standalone <cmd> [args]...
-# txt: evaluate command passed as argument
-main_standalone ()
-{
-  local cmd="$1"; shift
-
-  if fun "command_$cmd"; then
-    "command_$cmd" "$@"
-  else
-    read -ra alias <<< "${CONFIG["alias.$cmd"]}"
-
-    if [[ "${alias[*]}" ]]; then
-      main_standalone "${alias[@]}" "$@"
-    else
-      E=2 fatal $"Invalid command '%s'." "$cmd"
-    fi
-  fi
-}
-
-# fun: main [args]...
-# txt: entry point :D
-main ()
-{
-  local config_path="$HOME/.config/tl/config:$HOME/.tl/config:$HOME/.tlrc"
-  local major minor ver
-
-  # check BASH
-  if [[ "${BASH_VERSINFO[0]}" -lt 5 ]]; then
-    E=1 error $"bash >= 5 is required"
-  fi
-  
-  CONFIG_FILE="$(try_path "$config_path")"
-  INTERACTIVE=false
-
-  reqs_eval
-
-  # check git version since it's a core requirement
-  read -r _ _ ver < <(git --version)
-  IFS=. read -r major minor _ <<<"$ver"
-
-  if [[ "$major" -lt "2" ]] || [[ "$minor" -lt 30 ]]; then
-    E=1 error $"git version >= 2.30 is required"
-  fi
-
-  # accept commands like tl-account as symlink to tl
-  case "${0##*/}" in
-    tl-*) set -- "${0##*/tl-}" "$@";;
-  esac
-
-  args_eval "$@" || shift $?
-
-  [[ -r "${CONFIG_FILE}" ]] && config_load "${CONFIG_FILE}"
-  [[ "$ACCOUNT_NAME" ]] && command_account_active "$ACCOUNT_NAME"
-
-
-  CACHE_DIR="$(try_path "$(config_get cache.path)")"
-  mkdir -p "${CACHE_DIR}"
-
-  # local the OID cache if enabled
-  oid_load
-
-  if [ $# -eq 0 ]; then
-    if [[ "${CONFIG[interactive.show-banner]}" = "true" ]]; then
-      info "timeline  Copyright (C) %(%Y)T Andrés J. Díaz" "$(timestamp)"
-      info "This program comes with ABSOLUTELY NO WARRANTY; for details"
-      info "type 'license'. This is free software, and you are welcome to"
-      info "redistribute it under certain conditions; type 'license' for"
-      info "details."
-    fi
-
-    INTERACTIVE=true
-    main_interactive "$@"
-  else
-    main_standalone "$@"
-  fi
-
-  oid_save
-}
 ## vim:ft=sh
 
 # fun: markdown_generate
@@ -5584,387 +5448,6 @@ notify ()
 
     echo "$date" > "${last_date_file}"
   fi
-}
-## vim:ft=sh
-
-# env: ACCOUNT_NAME: A variable contains the name of the active account.
-export ACCOUNT_NAME=
-
-# env: ACCOUNT_PATH: A variable contains the path of the active account.
-export ACCOUNT_PATH=
-
-# env: ACCOUNT_OID: A variable contains the OID of the active account.
-export ACCOUNT_OID=
-
-# fun: account_list
-# txt: output a new-line separated list of defined accounts.
-account_list ()
-{
-  local account
-
-  for account in $(config_iter account.); do
-    case "$account" in
-      account.*.path)
-        account="${account#account.}"
-        account="${account%.path}"
-        echo "$account"
-      ;;
-    esac
-  done
-}
-
-# fun: account_load [name]
-# txt: load the account named as argument, if argument is omit, then try to
-#      load the account using the `account.default` configuration value or,
-#      if missing and there is only one configured account this one.
-#      Otherwise failed.
-account_load ()
-{
-  local name="$1" pull_url changes
-
-  name="${name:-${CONFIG[account.default]}}"
-
-  if [[ -z "$name" ]]; then
-
-    # try to infer the account name if none is provided
-    
-    read -ra all_accounts < <( account_list)
-
-    case "${#all_accounts[@]}" in
-      0) return 1;;
-      1) name="${all_accounts[0]}";;
-      *) E=1 fatal $"There are may accounts.";;
-    esac
-
-  fi
-
-  ACCOUNT_NAME="$name"
-  pull_url="${CONFIG["account.$ACCOUNT_NAME.pull-url"]}"
-
-  [[ "$pull_url" ]] ||
-    E=2 fatal $"Unknown account $ACCOUNT_NAME"
-
-  oid "$pull_url"
-  ACCOUNT_OID="${OID_CACHE["$pull_url"]}"
-  ACCOUNT_PATH="$(config_get "account.$ACCOUNT_NAME.path")"
-
-  export GNUPGHOME="${CONFIG[account.$ACCOUNT_NAME.keyring]}"
-
-  changes="$(git_helper -C "${ACCOUNT_PATH}" status --porcelain 2>&1)" ||
-    E=3 error $"Unable to check account status"
-  if [[ "$changes" ]]; then
-    error $"Account is dirty. Maybe you edit your account manually and badly."
-    error $"To repair just run: git -C '%s' reset --hard %s" \
-      "$ACCOUNT_PATH" "$(get_main_branch)"
-    exit 100
-  fi
-}
-
-export NOACTIVE=$"There are no active accounts"
-
-# fun: account_exists [name]
-# txt: return true if the account name passed as argument is a initialized
-#      account. If name is omit, then use active account path.
-account_exists ()
-{
-  local path=
-  
-  [[ "$1" ]] && path="${CONFIG["account.$1.path"]}"
-
-  if [[ -z "$path" ]]; then
-    path="${ACCOUNT_PATH}"
-  fi
-  [[ -d "${path%.git}/.git" ]]
-}
-
-# fun: account_keygen <oid> <tstamp> <name>
-# txt: generate a new keypair for the account named name and the oid oid and
-#      specific tstamp
-account_keygen ()
-{
-  local name="$3" tstamp="$2" oid="$1"
-
-  config_set "account.$name.keyring" "$(try_path "${CONFIG[crypto.keyring-path]}")/$name"
-
-  mkdir -p "${CONFIG["account.$name.keyring"]}" &&
-    chmod 700 "${CONFIG["account.$name.keyring"]}"
-
-  export GNUPGHOME="${CONFIG["account.$name.keyring"]}"
-
-  crypto_keygen "$oid" "$tstamp" \
-    "${CONFIG[account.$name.passphrase-file]:-/dev/null}" 2>&1
-}
-
-# fun: account_create <name> <push_url> <pull_url> [path]
-# txt: create a new account named as name, with specific push and pull url,
-#      if path is provided then set the account path to this one, otherwise,
-#      use the default path for accounts as prefix
-account_create ()
-{
-  local name="$1" push_url="$2" pull_url="$3" path="$4" tstamp
-
-  tstamp="$(timestamp)"
-
-  [[ "${CONFIG["account.$name.path"]}" ]] &&
-    E=1 fatal $"Another account already exists with that name"
-
-  account_exists "$name" &&
-    E=1 fatal $"Trying to initializating an already initialized account"
-  
-  path="${path:-$(try_path "$(config_get account.path)")/$name}"
-  config_set "account.$name.push-url" "$push_url"
-  config_set "account.$name.pull-url" "$pull_url"
-  config_set "account.$name.path" "$path"
-
-  oid "$pull_url"
-
-  config_set "user.alias-${OID_CACHE["$pull_url"]}" "$name"
-
-  [[ "${CONFIG[account.auto-keygen]}" = "true" ]] &&
-    account_keygen "${OID_CACHE[$pull_url]}" "$tstamp" "$name"
-
-  # create empty dir for init
-  mkdir -p "$path" ||
-    E=1 fatal $"Unable to create account directory: %s" "$path"
-
-  git_helper -C "$path" init -b "${CONFIG['git.defaultBrach']:-main}" \
-    ${TIMELINE_EXPERIMENTAL_SHA256:+--object-format=sha256}
-  account_config "$path" "$pull_url" "$1" "$tstamp"
-
-  config_save "${CONFIG_FILE}"
-
-  git_helper -C "$path" add .
-
-  git_helper -C "$path" commit -m 'init' 2>&1
-  git_helper -C "$path" remote add origin "$push_url" 2>&1
-  git_helper -C "$path" push -u origin "${CONFIG['git.defaultBrach']:-main}" 2>&1 ||
-    E=2 fatal $"Unable to push initial commit"
-}
-
-# fun: account_clone <name> <push_url> <pull_url> [path]
-# txt: clone new account named as name, from the specific push url,
-#      if path is provided then set the account path to this one, otherwise,
-#      use the default path for accounts as prefix
-account_clone ()
-{
-  if [[ "$1" = "--force" ]]; then
-    local force=true; shift
-  else
-    local force=false
-  fi
-
-  local name="$1" push_url="$2" pull_url="$3" path="$4" tstamp=""
-
-  if ! $force && [[ "${CONFIG["account.$name.path"]}" ]]; then
-    E=1 fatal $"Another account already exists with that name"
-  else
-    path="${path:-$(try_path "$(config_get account.path)")/$name}"
-    config_set "account.$name.push-url" "$push_url"
-    config_set "account.$name.pull-url" "$pull_url"
-    config_set "account.$name.path" "$path"
-
-    oid "$pull_url"
-
-    if [[ -z "${CONFIG[account.$name.keyring]}" ]] &&
-      [[ "${CONFIG[account.auto-keygen]}" = "true" ]]; then
-          tstamp="$(timestamp)"
-          account_keygen "${OID_CACHE[$pull_url]}" "$tstamp" "$name"
-    fi
-
-    config_set "user.alias-${OID_CACHE["$pull_url"]}" "$name"
-    git_helper clone "$push_url" "$path" 2>&1
-    git_helper -C "$path" submodule init 2>&1
-
-    account_config "$path" "$pull_url" "$name" "$tstamp"
-
-    git_helper -C "$path" add .
-    git_helper -C "$path" commit -m 'clone: recreated keys' 2>&1
-
-    config_save "${CONFIG_FILE}"
-  fi
-}
-
-# fun: account_config <path> <pull_url> <name> <tstamp>
-# txt: configure user and other required things in the repo
-account_config ()
-{
-  local path="$1" pull_url="$2" name="$3" tstamp="$4" keyid_encr keyid_sign
-  oid "$pull_url"
-
-  git_helper -C "$path" config user.name "${OID_CACHE["$pull_url"]}"
-  git_helper -C "$path" config user.email "${OID_CACHE["$pull_url"]}@timeline"
-  git_helper -C "$path" config core.preloadindex true
-  git_helper -C "$path" config core.fscache true
-  git_helper -C "$path" config gc.auto 256
-
-  command touch "${path:?}/CONTENT"
-  command mkdir -p "${path:?}/FOLLOW"
-
-  if [[ "$tstamp" ]]; then
-    keyid_encr="$(crypto_keyid "${OID_CACHE["$pull_url"]}" "$tstamp")"
-    keyid_sign="${keyid_encr}"
-  else
-    keyid_encr="$(config_eval "account.$name.encrkey" "account.encrkey")"
-    keyid_sign="$(config_eval "account.$name.signkey" "account.signkey")"
-  fi
-
-  if [[ "$keyid_sign" ]]; then
-    export GNUPGHOME="${CONFIG[account.$name.keyring]}"
-    account_set_signkey "$name" "$keyid_sign"
-    crypto_export "${OID_CACHE["$pull_url"]}" "${path:?}/SIGNKEY"
-  fi
-
-  if [[ "$keyid_encr" ]]; then
-    export GNUPGHOME="${CONFIG[account.$name.keyring]}"
-    account_set_encrkey "$name" "$keyid_encr"
-    crypto_export "${OID_CACHE["$pull_url"]}" "${path:?}/ENCRKEY"
-  fi
-}
-
-# fun: account_commit [message]
-# txt: set a commit point into current active account
-account_commit ()
-{
-  [[ "$ACCOUNT_PATH" ]] || E=1 fatal $"No active account to commit"
-
-  git_helper -C "$ACCOUNT_PATH" add .
-
-  if config_eval "account.$ACCOUNT_NAME.signkey" "account.signkey" >/dev/null
-  then
-    git_helper -C "$ACCOUNT_PATH" commit -S -m "${1:-autosave}"
-  else
-    git_helper -C "$ACCOUNT_PATH" commit -m "${1:-autosave}"
-  fi
-}
-
-# fun: account_push [remote]
-# txt: push active account content to remote passed as argument or, if
-#      missing, to `origin`.
-account_push ()
-{
-  # TODO Add support for multiple branches
-  git_helper -C "${ACCOUNT_PATH}" push "${1:-origin}" "$(get_main_branch)"
-}
-
-# fun: account_refresh <path> [remote]
-# txt: rebase changes to current account from remote passed as argument or,
-#     if missing, `origin`.
-account_refresh ()
-{
-  local line path="$1" commit=false; shift
-  export path
-
-  git_helper -C "$path" fetch --all --jobs "${CONFIG[git.jobs]:-4}" 2>&1
-  # TODO Add support for multiple branches
-  git_helper -C "$path" rebase "${1:-origin}/$(get_main_branch "$path")" 2>&1
-  git_helper -C "$path" submodule update --remote \
-    --jobs "${CONFIG[git.jobs]:-4}" 2>&1
-
-  while read -r _ line; do
-    commit=true
-    case "$line" in
-      FOLLOW/*) account_import "${line#FOLLOW/}" "$path/$line";;
-    esac
-  done < <(git_helper -C "$path" status -s)
-
-  ${commit} &&
-    account_commit "chore: update submodules"
-
-  git_helper -C "$path" repack -a -d --depth=250 --window=250 2>&1
-}
-
-# fun: account_delete [name]
-# txt: delete account by name passed as argument or active account if none
-#      name is provided.
-account_delete ()
-{
-  local name="${1:-$ACCOUNT_NAME}" path pull_url
-
-  path="$(config_get "account.$name.path")"
-  pull_url="$(config_get "account.$name.pull-url")"
-  
-  oid "$pull_url"
-
-  if [[ -d "$path" ]]; then
-    rm -rf "$path"
-  fi
-
-  config_unset "account.$name"
-  config_unset "user.alias-${OID_CACHE["$pull_url"]}"
-
-  config_save "${CONFIG_FILE}"
-}
-
-# fun: account_set_signkey <name> <keyid>
-# txt: set signing keyid for an existant account
-account_set_signkey ()
-{
-  if [[ "$2" ]]; then
-    git_helper -C "$(config_get "account.$1.path")" config user.signingkey "$2"
-  else
-    git_helper -C "$(config_get "account.$1.path")" config --unset user.signingkey
-  fi
-
-  config_set "account.$1.signkey" "$2"
-}
-
-# fun: account_set_encrkey <name> <keyid>
-# txt: set encryption keyid for an existant account
-account_set_encrkey ()
-{
-  config_set "account.$1.encrkey" "$2"
-}
-
-# fun: account_preview <url> [filter]
-# txt: preview the contents of the specified url repo filtered with the
-#      specific if present.
-account_preview ()
-{
-  local tmpdir depth
-  tmpdir="$(temp_dir)"
-  depth="${CONFIG[account.preview-depth]}"
-
-  [[ "$depth" = "-1" ]] && depth=""
-
-  git_helper clone ${depth:+--depth "${depth}"} "$1" "${tmpdir}" 2>&1 |
-    info_multi ||
-      E=1 error $"Unable to clone remote repo"
-
-  oid "$1"
-  timeline_load "${tmpdir}" "${OID_CACHE["$1"]}"
-  shift
-  timeline_list "$@"
-}
-
-# fun: account_keys
-# txt: print the associated keys for the current account
-account_keys ()
-{
-  local fpr flags
-
-  while read -r fpr flags; do
-    [[ "$fpr" = "${CONFIG[account.$ACCOUNT_NAME.signkey]}" ]] &&
-      flags+='S'
-
-    [[ "$fpr" = "${CONFIG[account.$ACCOUNT_NAME.encrkey]}" ]] &&
-      flags+='E'
-
-    echo "$fpr $flags"
-  done < <(crypto_list "=${ACCOUNT_OID}@timeline")
-}
-
-# fun: account_import  <account> <path>
-# txt: get public keys references in path
-account_import ()
-{
-  local line account="$1" path="$2";
-
-  # shellcheck disable=SC2016
-  while read -r line; do
-    case "$line" in
-      ENCRKEY|SIGNKEY) crypto_import "$account" "$path/$line"
-    esac
-  done < <(git_helper -C "$path" show --pretty="" --name-only)
 }
 ## vim: ft=sh
 
@@ -6531,13 +6014,532 @@ timeline_orphans ()
   done
   timeline_index_save
 }
+#! /usr/bin/env bash
+# 
+# Copyright (C) 2016  Andrés J. Díaz <ajdiaz@ajdiaz.me>
+# 
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+# 
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+# 
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# env: INTERACTIVE: if true, then interactive mode is enabled
+export INTERACTIVE=
+
+# env: CONFIG_FILE: should contain the path to the config file
+export CONFIG_FILE=
+
+# env: CACHE_DIR: should contain the path to the cache directory
+export CACHE_DIR=
+
+# fun: prompt
+# txt: print prompt in interactive mode
+prompt ()
+{
+  format_compose prompt account "${ACCOUNT_NAME:-<none>}"
+  format_dumps prompt
+}
+
+# fun: main_interactive
+# txt: evaluate commands in interactive mode
+main_interactive ()
+{
+  local cmd
+  local -a args
+
+  history_load
+  complete_load
+  command_account_active "${ACCOUNT_NAME}"
+
+  while true; do
+    read -a args -e -r -p "$(T=true prompt)"
+    [ $? -eq 1 ] && break
+    cmd="${args[0]}"
+    local -a args=( "${args[@]:1}" )
+
+    [ "$cmd" ] || continue
+    history_append "$cmd ${args[*]}"
+    main_standalone "$cmd" "${args[@]}"
+  done
+  history_save
+}
+
+# fun: main_standalone <cmd> [args]...
+# txt: evaluate command passed as argument
+main_standalone ()
+{
+  local cmd="$1"; shift
+
+  [[ "${CONFIG["timeline.ignore-locale"]:-false}" = "true" ]] &&
+    export LC_ALL=C
+
+  if fun "command_$cmd"; then
+    "command_$cmd" "$@"
+  else
+    read -ra alias <<< "${CONFIG["alias.$cmd"]}"
+
+    if [[ "${alias[*]}" ]]; then
+      main_standalone "${alias[@]}" "$@"
+    else
+      E=2 fatal $"Invalid command '%s'." "$cmd"
+    fi
+  fi
+}
+
+# fun: main [args]...
+# txt: entry point :D
+main ()
+{
+  local config_path="$HOME/.config/tl/config:$HOME/.tl/config:$HOME/.tlrc"
+  local major minor ver
+
+  # check BASH
+  if [[ "${BASH_VERSINFO[0]}" -lt 5 ]]; then
+    E=1 error $"bash >= 5 is required"
+  fi
+  
+  CONFIG_FILE="$(try_path "$config_path")"
+  INTERACTIVE=false
+
+  reqs_eval
+
+  # check git version since it's a core requirement
+  read -r _ _ ver < <(git --version)
+  IFS=. read -r major minor _ <<<"$ver"
+
+  if [[ "$major" -lt "2" ]] || [[ "$minor" -lt 30 ]]; then
+    E=1 error $"git version >= 2.30 is required"
+  fi
+
+  # accept commands like tl-account as symlink to tl
+  case "${0##*/}" in
+    tl-*) set -- "${0##*/tl-}" "$@";;
+  esac
+
+  args_eval "$@" || shift $?
+
+  [[ -r "${CONFIG_FILE}" ]] && config_load "${CONFIG_FILE}"
+  [[ "$ACCOUNT_NAME" ]] && command_account_active "$ACCOUNT_NAME"
+
+  CACHE_DIR="$(try_path "$(config_get cache.path)")"
+  mkdir -p "${CACHE_DIR}"
+
+  # local the OID cache if enabled
+  oid_load
+
+  if [ $# -eq 0 ]; then
+    if [[ "${CONFIG[interactive.show-banner]}" = "true" ]]; then
+      info "timeline  Copyright (C) %(%Y)T Andrés J. Díaz" "$(timestamp)"
+      info "This program comes with ABSOLUTELY NO WARRANTY; for details"
+      info "type 'license'. This is free software, and you are welcome to"
+      info "redistribute it under certain conditions; type 'license' for"
+      info "details."
+    fi
+
+    INTERACTIVE=true
+    main_interactive "$@"
+  else
+    main_standalone "$@"
+  fi
+
+  oid_save
+}
+## vim:ft=sh
+
+# env: ACCOUNT_NAME: A variable contains the name of the active account.
+export ACCOUNT_NAME=
+
+# env: ACCOUNT_PATH: A variable contains the path of the active account.
+export ACCOUNT_PATH=
+
+# env: ACCOUNT_OID: A variable contains the OID of the active account.
+export ACCOUNT_OID=
+
+# fun: account_list
+# txt: output a new-line separated list of defined accounts.
+account_list ()
+{
+  local account
+
+  for account in $(config_iter account.); do
+    case "$account" in
+      account.*.path)
+        account="${account#account.}"
+        account="${account%.path}"
+        echo "$account"
+      ;;
+    esac
+  done
+}
+
+# fun: account_load [name]
+# txt: load the account named as argument, if argument is omit, then try to
+#      load the account using the `account.default` configuration value or,
+#      if missing and there is only one configured account this one.
+#      Otherwise failed.
+account_load ()
+{
+  local name="$1" pull_url changes
+
+  name="${name:-${CONFIG[account.default]}}"
+
+  if [[ -z "$name" ]]; then
+
+    # try to infer the account name if none is provided
+    
+    read -ra all_accounts < <( account_list)
+
+    case "${#all_accounts[@]}" in
+      0) return 1;;
+      1) name="${all_accounts[0]}";;
+      *) E=1 fatal $"There are may accounts.";;
+    esac
+
+  fi
+
+  ACCOUNT_NAME="$name"
+  pull_url="${CONFIG["account.$ACCOUNT_NAME.pull-url"]}"
+
+  [[ "$pull_url" ]] ||
+    E=2 fatal $"Unknown account $ACCOUNT_NAME"
+
+  oid "$pull_url"
+  ACCOUNT_OID="${OID_CACHE["$pull_url"]}"
+  ACCOUNT_PATH="$(config_get "account.$ACCOUNT_NAME.path")"
+
+  export GNUPGHOME="${CONFIG[account.$ACCOUNT_NAME.keyring]}"
+
+  changes="$(git_helper -C "${ACCOUNT_PATH}" status --porcelain 2>/dev/null)" ||
+    E=3 error $"Unable to check account status"
+  if [[ "$changes" ]]; then
+    error $"Account is dirty. Maybe you edit your account manually and badly."
+    error $"To repair just run: git -C '%s' reset --hard %s" \
+      "$ACCOUNT_PATH" "$(get_main_branch)"
+    exit 100
+  fi
+}
+
+export NOACTIVE=$"There are no active accounts"
+
+# fun: account_exists [name]
+# txt: return true if the account name passed as argument is a initialized
+#      account. If name is omit, then use active account path.
+account_exists ()
+{
+  local path=
+  
+  [[ "$1" ]] && path="${CONFIG["account.$1.path"]}"
+
+  if [[ -z "$path" ]]; then
+    path="${ACCOUNT_PATH}"
+  fi
+  [[ -d "${path%.git}/.git" ]]
+}
+
+# fun: account_keygen <oid> <tstamp> <name>
+# txt: generate a new keypair for the account named name and the oid oid and
+#      specific tstamp
+account_keygen ()
+{
+  local name="$3" tstamp="$2" oid="$1"
+
+  config_set "account.$name.keyring" "$(try_path "${CONFIG[crypto.keyring-path]}")/$name"
+
+  mkdir -p "${CONFIG["account.$name.keyring"]}" &&
+    chmod 700 "${CONFIG["account.$name.keyring"]}"
+
+  export GNUPGHOME="${CONFIG["account.$name.keyring"]}"
+
+  crypto_keygen "$oid" "$tstamp" \
+    "${CONFIG[account.$name.passphrase-file]:-/dev/null}" 2>&1
+}
+
+# fun: account_create <name> <push_url> <pull_url> [path]
+# txt: create a new account named as name, with specific push and pull url,
+#      if path is provided then set the account path to this one, otherwise,
+#      use the default path for accounts as prefix
+account_create ()
+{
+  local name="$1" push_url="$2" pull_url="$3" path="$4" tstamp
+
+  tstamp="$(timestamp)"
+
+  [[ "${CONFIG["account.$name.path"]}" ]] &&
+    E=1 fatal $"Another account already exists with that name"
+
+  account_exists "$name" &&
+    E=1 fatal $"Trying to initializating an already initialized account"
+  
+  path="${path:-$(try_path "$(config_get account.path)")/$name}"
+  config_set "account.$name.push-url" "$push_url"
+  config_set "account.$name.pull-url" "$pull_url"
+  config_set "account.$name.path" "$path"
+
+  oid "$pull_url"
+
+  config_set "user.alias-${OID_CACHE["$pull_url"]}" "$name"
+
+  [[ "${CONFIG[account.auto-keygen]}" = "true" ]] &&
+    account_keygen "${OID_CACHE[$pull_url]}" "$tstamp" "$name"
+
+  # create empty dir for init
+  mkdir -p "$path" ||
+    E=1 fatal $"Unable to create account directory: %s" "$path"
+
+  git_helper -C "$path" init -b "${CONFIG['git.defaultBrach']:-main}" \
+    ${TIMELINE_EXPERIMENTAL_SHA256:+--object-format=sha256}
+  account_config "$path" "$pull_url" "$1" "$tstamp"
+
+  config_save "${CONFIG_FILE}"
+
+  git_helper -C "$path" add .
+
+  git_helper -C "$path" commit -m 'init' 2>&1
+  git_helper -C "$path" remote add origin "$push_url" 2>&1
+  git_helper -C "$path" push -u origin "${CONFIG['git.defaultBrach']:-main}" 2>&1 ||
+    E=2 fatal $"Unable to push initial commit"
+}
+
+# fun: account_clone <name> <push_url> <pull_url> [path]
+# txt: clone new account named as name, from the specific push url,
+#      if path is provided then set the account path to this one, otherwise,
+#      use the default path for accounts as prefix
+account_clone ()
+{
+  if [[ "$1" = "--force" ]]; then
+    local force=true; shift
+  else
+    local force=false
+  fi
+
+  local name="$1" push_url="$2" pull_url="$3" path="$4" tstamp=""
+
+  if ! $force && [[ "${CONFIG["account.$name.path"]}" ]]; then
+    E=1 fatal $"Another account already exists with that name"
+  else
+    path="${path:-$(try_path "$(config_get account.path)")/$name}"
+    config_set "account.$name.push-url" "$push_url"
+    config_set "account.$name.pull-url" "$pull_url"
+    config_set "account.$name.path" "$path"
+
+    oid "$pull_url"
+
+    if [[ -z "${CONFIG[account.$name.keyring]}" ]] &&
+      [[ "${CONFIG[account.auto-keygen]}" = "true" ]]; then
+          tstamp="$(timestamp)"
+          account_keygen "${OID_CACHE[$pull_url]}" "$tstamp" "$name"
+    fi
+
+    config_set "user.alias-${OID_CACHE["$pull_url"]}" "$name"
+    git_helper clone "$push_url" "$path" 2>&1
+    git_helper -C "$path" submodule init 2>&1
+
+    account_config "$path" "$pull_url" "$name" "$tstamp"
+
+    git_helper -C "$path" add .
+    git_helper -C "$path" commit -m 'clone: recreated keys' 2>&1
+
+    config_save "${CONFIG_FILE}"
+  fi
+}
+
+# fun: account_config <path> <pull_url> <name> <tstamp>
+# txt: configure user and other required things in the repo
+account_config ()
+{
+  local path="$1" pull_url="$2" name="$3" tstamp="$4" keyid_encr keyid_sign
+  oid "$pull_url"
+
+  git_helper -C "$path" config user.name "${OID_CACHE["$pull_url"]}"
+  git_helper -C "$path" config user.email "${OID_CACHE["$pull_url"]}@timeline"
+  git_helper -C "$path" config core.preloadindex true
+  git_helper -C "$path" config core.fscache true
+  git_helper -C "$path" config gc.auto 256
+
+  command touch "${path:?}/CONTENT"
+  command mkdir -p "${path:?}/FOLLOW"
+
+  if [[ "$tstamp" ]]; then
+    keyid_encr="$(crypto_keyid "${OID_CACHE["$pull_url"]}" "$tstamp")"
+    keyid_sign="${keyid_encr}"
+  else
+    keyid_encr="$(config_eval "account.$name.encrkey" "account.encrkey")"
+    keyid_sign="$(config_eval "account.$name.signkey" "account.signkey")"
+  fi
+
+  if [[ "$keyid_sign" ]]; then
+    export GNUPGHOME="${CONFIG[account.$name.keyring]}"
+    account_set_signkey "$name" "$keyid_sign"
+    crypto_export "${OID_CACHE["$pull_url"]}" "${path:?}/SIGNKEY"
+  fi
+
+  if [[ "$keyid_encr" ]]; then
+    export GNUPGHOME="${CONFIG[account.$name.keyring]}"
+    account_set_encrkey "$name" "$keyid_encr"
+    crypto_export "${OID_CACHE["$pull_url"]}" "${path:?}/ENCRKEY"
+  fi
+}
+
+# fun: account_commit [message]
+# txt: set a commit point into current active account
+account_commit ()
+{
+  [[ "$ACCOUNT_PATH" ]] || E=1 fatal $"No active account to commit"
+
+  git_helper -C "$ACCOUNT_PATH" add .
+
+  if config_eval "account.$ACCOUNT_NAME.signkey" "account.signkey" >/dev/null
+  then
+    git_helper -C "$ACCOUNT_PATH" commit -S -m "${1:-autosave}"
+  else
+    git_helper -C "$ACCOUNT_PATH" commit -m "${1:-autosave}"
+  fi
+}
+
+# fun: account_push [remote]
+# txt: push active account content to remote passed as argument or, if
+#      missing, to `origin`.
+account_push ()
+{
+  # TODO Add support for multiple branches
+  git_helper -C "${ACCOUNT_PATH}" push "${1:-origin}" "$(get_main_branch)"
+}
+
+# fun: account_refresh <path> [remote]
+# txt: rebase changes to current account from remote passed as argument or,
+#     if missing, `origin`.
+account_refresh ()
+{
+  local line path="$1" commit=false; shift
+  export path
+
+  git_helper -C "$path" fetch --all --jobs "${CONFIG[git.jobs]:-4}" 2>&1
+  # TODO Add support for multiple branches
+  git_helper -C "$path" rebase "${1:-origin}/$(get_main_branch "$path")" 2>&1
+  git_helper -C "$path" submodule update --remote \
+    --jobs "${CONFIG[git.jobs]:-4}" 2>&1
+
+  while read -r _ line; do
+    commit=true
+    case "$line" in
+      FOLLOW/*) account_import "${line#FOLLOW/}" "$path/$line";;
+    esac
+  done < <(git_helper -C "$path" status -s)
+
+  ${commit} &&
+    account_commit "chore: update submodules"
+
+  git_helper -C "$path" repack -a -d --depth=250 --window=250 2>&1
+}
+
+# fun: account_delete [name]
+# txt: delete account by name passed as argument or active account if none
+#      name is provided.
+account_delete ()
+{
+  local name="${1:-$ACCOUNT_NAME}" path pull_url
+
+  path="$(config_get "account.$name.path")"
+  pull_url="$(config_get "account.$name.pull-url")"
+  
+  oid "$pull_url"
+
+  if [[ -d "$path" ]]; then
+    rm -rf "$path"
+  fi
+
+  config_unset "account.$name"
+  config_unset "user.alias-${OID_CACHE["$pull_url"]}"
+
+  config_save "${CONFIG_FILE}"
+}
+
+# fun: account_set_signkey <name> <keyid>
+# txt: set signing keyid for an existant account
+account_set_signkey ()
+{
+  if [[ "$2" ]]; then
+    git_helper -C "$(config_get "account.$1.path")" config user.signingkey "$2"
+  else
+    git_helper -C "$(config_get "account.$1.path")" config --unset user.signingkey
+  fi
+
+  config_set "account.$1.signkey" "$2"
+}
+
+# fun: account_set_encrkey <name> <keyid>
+# txt: set encryption keyid for an existant account
+account_set_encrkey ()
+{
+  config_set "account.$1.encrkey" "$2"
+}
+
+# fun: account_preview <url> [filter]
+# txt: preview the contents of the specified url repo filtered with the
+#      specific if present.
+account_preview ()
+{
+  local tmpdir depth
+  tmpdir="$(temp_dir)"
+  depth="${CONFIG[account.preview-depth]}"
+
+  [[ "$depth" = "-1" ]] && depth=""
+
+  git_helper clone ${depth:+--depth "${depth}"} "$1" "${tmpdir}" 2>&1 |
+    info_multi ||
+      E=1 error $"Unable to clone remote repo"
+
+  oid "$1"
+  timeline_load "${tmpdir}" "${OID_CACHE["$1"]}"
+  shift
+  timeline_list "$@"
+}
+
+# fun: account_keys
+# txt: print the associated keys for the current account
+account_keys ()
+{
+  local fpr flags
+
+  while read -r fpr flags; do
+    [[ "$fpr" = "${CONFIG[account.$ACCOUNT_NAME.signkey]}" ]] &&
+      flags+='S'
+
+    [[ "$fpr" = "${CONFIG[account.$ACCOUNT_NAME.encrkey]}" ]] &&
+      flags+='E'
+
+    echo "$fpr $flags"
+  done < <(crypto_list "=${ACCOUNT_OID}@timeline")
+}
+
+# fun: account_import  <account> <path>
+# txt: get public keys references in path
+account_import ()
+{
+  local line account="$1" path="$2";
+
+  # shellcheck disable=SC2016
+  while read -r line; do
+    case "$line" in
+      ENCRKEY|SIGNKEY) crypto_import "$account" "$path/$line"
+    esac
+  done < <(git_helper -C "$path" show --pretty="" --name-only)
+}
 ## vim:ft=sh
 
 # env: CONFIG: associative array contains the configuration values. This
 #      array should be loaded from file with `config_load` function, and
 #      accessed by `config_get` and `config_set` to read and write,
 #      res pectively.
-declare -xA CONFIG=(
+declare -xgA CONFIG=(
   [oid.use-cache]=true
   [oid.max-cache-size]=1000
   [interactive.show-banner]=true
@@ -6573,6 +6575,7 @@ declare -xA CONFIG=(
   [timeline.show-replies]=true
   [timeline.show-tags]=true
   [timeline.react-on-all]=true
+  [timeline.ignore-locale]=false
   [timeline.filter]='-tag:spam -score-min:0'
   [timeline.own-posts]=true
   [timeline.use-short-ids]=true
@@ -6881,10 +6884,8 @@ IFS=',' read -ra AVAIL_COLORS <<<"${CONFIG[timeline.consistent-colors]}"
 #      `$CONFIG` environment variable properly.
 config_load ()
 {
-  local IFS='='
-  while read -r key val; do
-    CONFIG["$key"]="$val"
-  done < <(git_helper config -f "$1" -l)
+  _i () { CONFIG["${2%%=*}"]="${2#*=}"; }
+  mapfile -t -C _i -c 1 < <(git_helper config -f "$1" -l)
 }
 
 # fun: config_get <key>

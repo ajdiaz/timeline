@@ -85,6 +85,12 @@ about anonymous encrypted messages.
 
 : If true (by default) show tags in the timeline.
 
+*timeline.ignore-locale*=*false*
+
+: If true (false by default) timeline will ignore the locale set when printing
+events in the standard output. Enabling it will improve the performance of
+timeline, but translations will be missed.
+
 *timeline.react-on-all*=*true*
 
 : If true (by default) timeline will react (usually run a notification) when

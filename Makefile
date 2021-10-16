@@ -10,9 +10,7 @@ OUTBIN=./tl
 DOCSRC=$(wildcard $(DOCDIR)/*.md)
 DOCOBJ=$(DOCSRC:%.md=%)
 
-all: tl doc
-
-full: all sign
+all: tl doc sign
 
 sign: tl
 	gpg --batch --yes -o tl.asc --detach-sign --armor tl

@@ -62,6 +62,9 @@ main_standalone ()
 {
   local cmd="$1"; shift
 
+  [[ "${CONFIG["timeline.ignore-locale"]:-false}" = "true" ]] &&
+    export LC_ALL=C
+
   if fun "command_$cmd"; then
     "command_$cmd" "$@"
   else
@@ -109,7 +112,6 @@ main ()
 
   [[ -r "${CONFIG_FILE}" ]] && config_load "${CONFIG_FILE}"
   [[ "$ACCOUNT_NAME" ]] && command_account_active "$ACCOUNT_NAME"
-
 
   CACHE_DIR="$(try_path "$(config_get cache.path)")"
   mkdir -p "${CACHE_DIR}"
