@@ -24,7 +24,7 @@ error ()
   format_compose "timeline.$err_kind" date "$(timestamp)"
   # shellcheck disable=SC2059
   format_compose "timeline.$err_kind" mesg "$(printf -- "$@")"
-  format_dumps "timeline.$err_kind" >&2
+  format_dumps "timeline.$err_kind" >&4
 
   if [ "$E" ]; then
     exit "$E"
@@ -39,8 +39,13 @@ error_multi ()
   format_compose timeline.error date "$(printf "%(%s)T")"
   _i() {
     format_compose timeline.error mesg "${2%$'\n'}"
-    format_dumps timeline.error >&2
+    format_dumps timeline.error >&4
   }
   # shellcheck disable=SC2034
   mapfile -c 1 -C _i
 }
+
+exec 4>&2
+unset err_handler
+coproc err_handler ( read -r line && error "$line";)
+eval "exec 2>&${err_handler[1]}"

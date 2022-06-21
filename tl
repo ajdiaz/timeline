@@ -1,5 +1,5 @@
 #! /bin/bash -i
-TIMELINE_VERSION='1.8-32-g96da44d'
+TIMELINE_VERSION='1.8-33-g105c50c'
 ## vim:ft=sh
 
 # fun: complete_alternatives <level> <prefix>
@@ -2092,2002 +2092,6 @@ args_eval ()
 }
 ## vim:ft=sh
 
-NOSUBCMD=$"No valid subcomand '%s' for command '%s'"
-INVALIDURL=$"Invalid URL '%s'"
-
-
-
-# help:fun: account {create|delete|rebuild|clone|list|refresh|active|preview|keys|keygen|keyrevoke|encrkey|signkey} {args...}
-# help:txt: Manage timeline local and remote accounts.
-command_account ()
-{
-  local cmd="$1"; shift
-  if fun "command_account_$cmd"; then
-    "command_account_$cmd" "$@"
-  else
-    E=1 error "$NOSUBCMD" "$cmd" "account"
-  fi
-}
-
-# help:account:fun: account create <name> <push_url> <pull_url> [path]
-# help:account:txt: Create a new account (aka git repository) which will
-# help:account:txt: push data to specified push_url and publish public url
-# help:account:txt: as specified pull_url. Optionally, you can set the path
-# help:account:txt: where repository lives, if omit, uses default path for
-# help:account:txt: accounts.
-command_account_create ()
-{
-  local name="$1" push_url="$2" pull_url="$3" path="$4"
-
-  if [[ -z "$1" ]]; then
-    E=1 error $"Account command create requires 'name'."
-  else
-    if ! valid_url "$push_url"; then
-      E=1 error "$INVALIDURL" "$push_url"
-    elif ! valid_url "$pull_url"; then
-      E=1 error "$INVALIDURL" "$pull_url"
-    else
-      account_create "$name" "$push_url" "$pull_url" "$path" |
-        info_multi
-      config_load "${CONFIG_FILE}"
-      command_account_active "$name"
-    fi
-  fi
-}
-
-# help:account:fun: account delete [--force] <name>
-# help:account:txt: Delete the account with name passed as argument.
-# help:account:txt: If '--force' parameter is present, then ignore if
-# help:account:txt: account path exists or not, otherwise account delete
-# help:account:txt: will not delete anything if path does not exists.
-# help:account:txt: CAUTION: this action cannot be undone.
-command_account_delete ()
-{
-  if [[ "$1" == "--force" ]]; then
-    local force=true
-    local name="$2"
-  else
-    local force=false
-    local name="$1"
-  fi
-
-  if [[ -z "$name" ]]; then
-    E=1 error $"Account command delete requires 'name',"
-  elif ! account_exists "$name" && ! ${force}; then
-    E=1 error $"Account '%s' does not exists." "$name"
-  else
-    account_delete "$name" | info_multi
-  fi
-}
-
-# help:account:fun: account rebuild <name>
-# help:account:txt: Recreate an account previously created. This command will
-# help:account:txt: use config data to regenerate the account.
-command_account_rebuild ()
-{
-  local name="$1" push_url pull_url path
-
-  if [[ -z "$1" ]]; then
-    E=1 error $"Account command rebuild requires 'name'."
-  else
-    push_url="${CONFIG["account.$name.push-url"]}"
-    pull_url="${CONFIG["account.$name.pull-url"]}"
-    path="${CONFIG["account.$name.path"]}"
-
-    if [[ -z "$path" ]] || [[ -z "$push_url" ]] || [[ -z "$pull_url" ]]; then
-      E=1 error $"Unable to rebuild. Account '$name' was not configured yet."
-    fi
-
-    if ! config_eval "account.$name.signkey" "account.signkey" >/dev/null; then
-      error $"The account $name has not associated signkey."
-      error $"Use 'account genkey' to generate new keypair or 'account signkey' to set previous generated one."
-    fi
-
-    if ! config_eval "account.$name.encrkey" "account.encrkey" >/dev/null; then
-      error $"The account $name has not associated encrkey."
-      error $"Use 'account genkey' to generate new keypair or 'account encrkey' to set previous generated one."
-    fi
-
-    account_clone --force "$name" "$push_url" "$pull_url" "$path" | info_multi
-    config_load "${CONFIG_FILE}"
-    command_account_active "$name"
-    # shellcheck disable=SC2119
-    command_timeline_refresh
-  fi
-}
-
-# help:account:fun: account keygen [--no-default-sign] [--no-default-encr]
-# help:account:txt: Generate new keypair for the current account. If the
-# help:account:txt: --no-default flag is present, then do not switch default
-# help:account:txt: keys to encrypt or sign and keep the old ones by default.
-command_account_keygen ()
-{
-  local tstamp keyid commit=false
-
-  command_account_active "${ACCOUNT_NAME}"
-
-  tstamp="$(timestamp)"
-
-  account_keygen "${ACCOUNT_OID}" "$tstamp" "${ACCOUNT_NAME}"
-
-  keyid="$(crypto_keyid "${ACCOUNT_OID}" "$tstamp")"
-
-  [[ "$keyid" ]] ||
-    E=4 fatal $"Unable to retrieve KeyID for generated one"
-
-  if [[ "$1" != "--no-default-sign" ]] && [[ "$2" != "--no-default-sign" ]]; then
-    account_set_signkey "${ACCOUNT_NAME}" "$keyid"
-    crypto_export "${ACCOUNT_OID}" "${ACCOUNT_PATH}/SIGNKEY"
-    commit=true
-  fi
-
-  if [[ "$1" != "--no-default-encr" ]] && [[ "$2" != "--no-default-encr" ]]; then
-    account_set_encrkey "${ACCOUNT_NAME}" "$keyid"
-    crypto_export "${ACCOUNT_OID}" "${ACCOUNT_PATH}/ENCRKEY"
-    commit=true
-  fi
-
-  config_save "${CONFIG_FILE}"
-
-  if ${commit}; then
-    account_commit $"bump: new public key" | info_multi
-    if [[ "$(config_eval "account.${ACCOUNT_NAME}.auto-push" account.auto-push)" = "true" ]];
-    then
-      account_push 2>&1 | info_multi
-    fi
-  fi
-}
-
-# help:account:fun: account keyrevoke <key_id>
-# help:account:txt: Revoke a key associated with the current account
-command_account_keyrevoke ()
-{
-  local force=false
-
-  [[ "$1" == "--force" ]] && shift && force=true
-
-  command_account_active "${ACCOUNT_NAME}"
-
-  if ! ${force}; then
-    if [[ "$(config_eval "account.$ACCOUNT_NAME.signkey" account.signkey)" = "$1" ]]
-    then
-      error $"You are going to revoke the signing key for this account."
-      E=3 fatal $"Use --force if you are sure of what are you doing."
-    fi
-    if [[ "$(config_eval "account.$ACCOUNT_NAME.encrkey" account.encrkey)" = "$1" ]]
-    then
-      error $"You are going to revoke the encryption key for this account."
-      E=3 fatal $"Use --force if you are sure of what are you doing."
-    fi
-  fi
-
-  crypto_uid "$1" "${ACCOUNT_OID}@timeline" ||
-    E=2 fatal $"The provided KeyID was not generated for this account"
-
-  crypto_revoke "${ACCOUNT_NAME}" "$1" ||
-    E=2 fatal $"Unable to revoke key $1"
-  crypto_export "${ACCOUNT_OID}" "${ACCOUNT_PATH}/SIGNKEY"
-  crypto_export "${ACCOUNT_OID}" "${ACCOUNT_PATH}/ENCRKEY"
-
-  [[ "${CONFIG[account.$ACCOUNT_NAME.signkey]}" = "$1" ]] &&
-    account_set_signkey "$ACCOUNT_NAME" ""
-
-  if [[ "${CONFIG[account.signkey]}" = "$1" ]]; then
-    account_set_signkey "$ACCOUNT_NAME" ""
-    config_set account.signkey ""
-  fi
-
-  [[ "${CONFIG[account.$ACCOUNT_NAME.encrkey]}" = "$1" ]] &&
-    account_set_encrkey "$ACCOUNT_NAME" ""
-
-  if [[ "${CONFIG[account.encrkey]}" = "$1" ]]; then
-    account_set_encrkey "$ACCOUNT_NAME" ""
-    config_set "account.encrkey" ""
-  fi
-
-  config_save "${CONFIG_FILE}"
-
-  account_commit $"clean: revoke key $1"
-  if [[ "$(config_eval "account.${ACCOUNT_NAME}.auto-push" account.auto-push)" = "true" ]]; then
-    account_push
-  fi
-}
-
-# help:account:fun: account clone <name> <push_url> <pull_url> [path]
-# help:account:txt: Clone an account (aka git repository) from specified
-# help:account:txt: push_url passed as argument, and also configure the
-# help:account:txt: provided pull_url, like 'account create' does.
-command_account_clone ()
-{
-  local name="$1" push_url="$2" pull_url="$3" path="$4"
-
-  if [[ -z "$1" ]]; then
-    E=1 error $"Account command clone requires 'name'."
-  else
-    if ! valid_url "$push_url"; then
-      E=1 error "$INVALIDURL" "$push_url"
-    elif ! valid_url "$pull_url"; then
-      E=1 error "$INVALIDURL" "$pull_url"
-    else
-      account_clone "$name" "$push_url" "$pull_url" "$path" |
-        info_multi
-      config_load "${CONFIG_FILE}"
-      command_account_active "$name"
-    fi
-  fi
-}
-
-# help:account:fun: account list
-# help:account:txt: List all accounts registered in the configuration.
-command_account_list ()
-{
-  account_list | info_multi
-}
-
-# help:fun: help [command]
-# help:txt: show help about the command passed as argument, or, if none,
-# help:txt: show all available commands.
-command_help ()
-{
-  local data
-
-  if [[ $# -eq 0 ]]; then
-    info_multi < <(help_commands)
-  else
-    data="$(help_subcommand "$1")"
-
-    if [[ "$data" ]]; then
-      info_multi <<<"$data"
-    else
-      E=1 error $"Not found help about '%s'" "$1"
-    fi
-  fi
-}
-
-# help:account:fun: account active [name]
-# help:account:txt: Switch to account passed as argument, or, if none, load
-# help:account:txt: the default account. Default account when more than one
-# help:account:txt: is created will be specified by configuration parameter
-# help:account:txt: called 'account.default'.
-command_account_active ()
-{
-  if ! account_load "$1"; then
-    error $"There are no defined accounts."
-    error $"Please create account: %s account create <name> <push> <pull>" "$0"
-    error $"Or clone an existent one: %s account clone <name> <push> <pull>" "$0"
-    E=1 error $"Account does not exist yet"
-  else
-    timeline_index_load
-  fi
-}
-
-# help:account:fun: account signkey <keyid>
-# help:account:txt: Set keyid for signing commits in the current enabled
-# help:account:txt: account.
-command_account_signkey ()
-{
-  if [[ $# -ne 1 ]]; then
-    E=2 error "Account sign key requires one argument: keyid"
-  else
-    command_account_active "${ACCOUNT_NAME}"
-    account_set_signkey "$ACCOUNT_NAME" "$1"
-    config_save "${CONFIG_FILE}"
-  fi
-}
-
-# help:account:fun: account encrkey <keyid>
-# help:account:txt: Set keyid for encrypt messags in the current enabled
-# help:account:txt: account.
-command_account_encrkey ()
-{
-  if [[ $# -ne 1 ]]; then
-    E=2 error "Account encryption key requires one argument: keyid"
-  else
-    command_account_active "${ACCOUNT_NAME}"
-    account_set_encrkey "$ACCOUNT_NAME" "$1"
-    config_save "${CONFIG_FILE}"
-  fi
-}
-
-# help:account:fun: account refresh
-# help:account:txt: Pull changes from the remote repository. This action
-# help:account:txt: should be automatically and you should not use it
-# help:account:txt: manually. But, if you need it, here it is.
-command_account_refresh ()
-{
-  command_account_active "${ACCOUNT_NAME}"
-  {
-    account_commit "refresh: commit before pull" 2>&1 | info_multi
-    account_refresh "${ACCOUNT_PATH}" 2>&1 | info_multi
-    account_push "origin" 2>&1 | info_multi
-  } ||
-      E=1 error $"Unable to refresh local account"
-}
-
-# help:account:fun: account preview <url>
-# help:account:txt: Preview a remote account without following it.
-command_account_preview ()
-{
-  [[ "$1" ]] || E=2 error $"Account url must be provided"
-  account_preview "$1"
-}
-
-# help:account:fun: account keys
-# help:account:txt: print available keys for current account. The flags S and
-# help:account:txt: E will be printed for keys current enable for signing and
-# help:account:txt: encryption respectively
-command_account_keys ()
-{
-  command_account_active "${ACCOUNT_NAME}"
-  account_keys | info_multi
-}
-
-# help:fun: git <command>...
-# help:txt: Execute raw git commands in the active account.
-command_git ()
-{
-  command_account_active "${ACCOUNT_NAME}"
-  git_helper -C "${ACCOUNT_PATH}" "$@"
-}
-
-# help:fun: gpg <command>...
-# help:txt: Execute raw gpg commands in the active account.
-command_gpg ()
-{
-  command_account_active "${ACCOUNT_NAME}"
-  gpg_helper "$@"
-}
-
-# help:fun: timeline {list|refresh|info} {args...}
-# help:txt: Show the current timeline
-command_timeline ()
-{
-  local cmd="$1"; shift
-  if fun "command_timeline_$cmd"; then
-    "command_timeline_$cmd" "$@"
-  else
-    E=1 error "$NOSUBCMD" "$cmd" "timeline"
-  fi
-}
-
-# help:timeline:fun: timeline list [filter]
-# help:timeline:txt: Show current available timeline, but not refresh it from
-# help:timeline:txt: the internet. Usually you want ot use this if you are
-# help:timeline:txt: offline, else use 'timeline refresh' instead.
-# help:timeline:txt: When filter is passed then only show events which match
-# help:timeline:txt: with filter.
-# help:timeline:txt: Valid syntax for filter is:
-# help:timeline:txt:   [not] [tag|mesg|user]:[glob expr] [and|or] [filter]
-command_timeline_list ()
-{
-  command_account_active "$ACCOUNT_NAME"
-  timeline_load
-  timeline_list "$@"
-}
-
-# help:timeline:fun: timeline refresh [filter]
-# help:timeline:txt: Pull changes in the current enabled timeline and show
-# help:timeline:txt: the results.
-# shellcheck disable=SC2120
-command_timeline_refresh ()
-{
-  command_account_refresh
-  timeline_load
-  timeline_list "$@"
-}
-
-# help:timeline:fun: timeline edit
-# help:timeline:txt: Interactively edit your timeline. It's an advanced mode,
-# help:timeline:txt: use with careful.
-command_timeline_edit ()
-{
-  command_account_active "$ACCOUNT_NAME"
-  command_account_refresh
-  timeline_edit
-}
-
-# help:timeline:fun: timeline orphans
-# help:timeline:txt: show the events in the timeline which are marked as
-# help:timeline:txt: orphans, usually these are events that hmac does not
-# help:timeline:txt: match.
-command_timeline_orphans ()
-{
-  command_account_active "$ACCOUNT_NAME"
-  timeline_load
-  timeline_orphans
-}
-
-# help:fun: config {list|get|set|save|edit} {args...}
-# help:txt: Change configuration settings
-command_config ()
-{
-  local cmd="$1"; shift
-  if fun "command_config_$cmd"; then
-    "command_config_$cmd" "$@"
-  else
-    E=1 error "$NOSUBCMD" "$cmd" "config"
-  fi
-}
-
-# help:config:fun: config list
-# help:config:txt: List all configuration values.
-command_config_list ()
-{
-  config_list | info_multi
-}
-
-# help:config:fun: config get <key>
-# help:config:txt: Show the value of specific configuration key
-command_config_get ()
-{
-  if [[ $# -ne 1 ]]; then
-    E=1 error $"Config get requires an arguments: key"
-  else
-    local var
-    var="${CONFIG["$*"]}"
-    if [[ "$var" ]]; then
-      info "%s=%s" "$*" "$var"
-    else
-      error $"Configuration key %s is not defined" "$*"
-    fi
-  fi
-}
-
-# help:config:fun: config set <key> <value>
-# help:config:txt: Set a new configuration value
-command_config_set ()
-{
-  if [[ $# -ne 2 ]]; then
-    E=1 error $"Config set requires two arguments: key and value"
-  else
-    local key="$1"; shift
-    config_set "$key" "$*"
-    info "%s=%s" "$key" "$*"
-    config_save "${CONFIG_FILE}"
-  fi
-}
-
-# help:config:fun: config save
-# help:config:txt: Save configuration into configuration file
-command_config_save ()
-{
-  config_save "${CONFIG_FILE}"
-}
-
-# help:config:fun: config edit
-# help:config:txt: Edit the configuration file using `$EDITOR`
-command_config_edit ()
-{
-  "${EDITOR:-vi}" "${CONFIG_FILE}"
-}
-
-# help:fun: alias [<name> <value>]
-# help:txt: Show aliases (if no argument provided) or created a new one
-# help:txt  named as argument, and replaced by value.
-command_alias ()
-{
-  case $# in
-    0)
-      for key in $(config_iter alias.); do
-        info "%s=%s" "${key}" "$(config_get "${key}")"
-      done
-      ;;
-    2)
-      local name="$1"; shift
-      command_config_set "alias.$name" "$*"
-      ;;
-    *)
-      E=2 error $"Alias command requires zero or two arguments"
-      ;;
-  esac
-}
-
-# help:fun: abbr [<name> <value>]
-# help:txt: Show abbreviatures (if no argument provided) or created a new one
-# help:txt  identified by name, and replaced by value.
-command_abbr ()
-{
-  case $# in
-    0)
-      for key in $(config_iter abbr.); do
-        info "%s=%s" "${key}" "$(config_get "${key}")"
-      done
-      ;;
-    2)
-      local name="$1"; shift
-      command_config_set "abbr.$name" "$*"
-      ;;
-    *)
-      E=2 error $"Abbr command requires zero or two arguments"
-      ;;
-  esac
-}
-
-# help:fun: user alias [<name> <uid>]
-# help:txt: Show user aliases registered in configuration if not arguments
-# help:txt: provided. If two arguments passed create a new user aliases,
-# help:txt: replacing UID by nickname in timeline.
-command_user_alias ()
-{
-  case $# in
-    0)
-      for key in $(config_iter user.alias-); do
-        info "%s=%s" "${key#user.alias-}" "$(config_get "${key}")"
-      done
-      ;;
-    2)
-      command_config_set "user.alias-$2" "$1"
-      ;;
-    *)
-      E=2 error $"User command requires zero or two arguments"
-      ;;
-  esac
-}
-
-# help:fun: event {post|reply|tag|message} {args...}
-# help:txt: Create new event or show information about existent one
-command_event ()
-{
-  local cmd="$1"; shift
-  if fun "command_event_$cmd"; then
-    "command_event_$cmd" "$@"
-  else
-    E=1 error "$NOSUBCMD" "$cmd" "event"
-  fi
-}
-
-# help:event:fun: event post [--encrypt <rcpt> | --encrypt-anon <rcpt>] <message> [<tags>+]
-# help:event:txt: Post a new message in our timeline. The --encrypt flag will result in
-# help:event:txt: an encrypted post. The --encrypt-anon do the same that --encrypt but
-# help:event:txt: without exfiltrate recipient.
-command_event_post ()
-{
-  local u rcpt='' anon pfile="${CONFIG[account.$ACCOUNT_NAME.passphrase-file]:-/dev/null}"
-
-  anon="$(config_eval \
-    "account.$ACCOUNT_NAME.crypto-always-anon"  \
-    "account.crypto-always-anon"
-  )"
-
-
-  case "$1" in
-    --encrypt|--encrypt-anon)
-      [[ "$2" ]] ||
-        E=2 fatal $"Options --encrypt and --encrypt-anon require a recipient"
-
-      [[ "$(config_eval "account.$ACCOUNT_NAME.encrypt-to-me" account.encrypt-to-me)" = "true" ]] &&
-        rcpt="$2,$ACCOUNT_NAME" ||
-        rcpt="$2"
-
-      [[ "$1" = "--encrypt-anon" ]] && anon=--anon
-      shift 2 ;;
-  esac
-
-  if [[ $# -eq 0 ]]; then
-    E=2 error $"Event post required an argument: message"
-  else
-    local eid tag msg="$1" ts oid; shift
-    ts="$(timestamp)"
-    command_account_active "${ACCOUNT_NAME}"
-    command_account_refresh
-    {
-      abbr_replace "$msg"; msg="$REPLY"
-      oid="$(oid "$REPLY")"
-      if [[ "$rcpt" ]]; then
-        for u in $(expand_user "$rcpt"); do
-          crypto_encrypt $anon "$u" "$ts P $msg" "$pfile" 2>&1
-          u="${anon:-$u}"; u="${u//--anon/@all}"
-          event_create "$ts" E "$u" "$REPLY" 2>&1
-        done
-      else
-        event_create "$ts" P "$REPLY" 2>&1
-      fi
-      eid="$EID"
-      for tag in "$@"; do
-        sleep 1  # Because we can only post one event per second.
-        if [[ "$rcpt" ]]; then
-          for u in $(expand_user "$rcpt"); do
-            crypto_encrypt $anon "$u" "$(timestamp) T $ACCOUNT_OID:$ts:$oid $tag" "$pfile" 2>&1
-            u="${anon:-$u}"; u="${u//--anon/@all}"
-            event_create "$ts" E "$u" "$REPLY" 2>&1
-          done
-        else
-          event_create "$ts" T "$eid" "$tag" 2>&1
-        fi
-      done
-    } | info_multi
-    timeline_load
-    timeline_index_save
-  fi
-}
-
-# help:event:fun: event reply [--eid] <num/eid> <message>
-# help:event:txt: Post a reply to post indexed with num passed as argument,
-# help:event:txt: or, if '--eid' flag is present, the EID passed as
-# help:event:txt: argument.
-command_event_reply ()
-{
-  if [[ $# -eq 0 ]]; then
-    E=2 error $"Event reply requires almost two parameters: num/eid, message"
-    return 1
-  elif [[ "$1" = "--eid" ]]; then
-    if [[ "$2" ]]; then
-      eid="$2"; shift 2;
-    else
-      E=2 error \
-        $"Event reply with --eid required almost two arguments: eid, message"
-      return 1
-    fi
-  fi
-
-  command_account_active "${ACCOUNT_NAME}"
-
-  if [[ -z "$eid" ]]; then
-    if ! is_decimal "$1"; then
-      E=2 error $"Invalid index number '%s'" "$1"
-      return 1
-    else
-      eid="$(timeline_index_get "$1")" || return 1
-      shift
-    fi
-  fi
-
-  if [[ $# -eq 0 ]]; then
-    E=2 error $"Event reply required an argument: message"
-  else
-    abbr_replace "$1"
-    local tag mesg="$REPLY" ts; ts="$(timestamp)"; shift
-    command_account_refresh
-    {
-      timeline_load
-      event_create "$ts" R "$eid" "$mesg" 2>&1
-      eid="$EID"
-      for tag in "$@"; do
-        sleep 1  # Because we can only post one event per second.
-        event_create "$ts" T "$eid" "$tag" 2>&1
-      done
-    } | info_multi
-    timeline_load
-    timeline_index_save
-  fi
-}
-
-# help:event:fun: event tag [--eid] <num/eid> <tags>
-# help:event:txt: Tag a post passed as argument by index num or eid if
-# help:event:txt: '--eid' flag is present.
-command_event_tag ()
-{
-  local eid
-
-  if [[ $# -eq 0 ]]; then
-    E=2 error $"Event tag requires almost two parameters: num/eid, tags"
-    return 1
-  elif [[ "$1" = "--eid" ]]; then
-    if [[ "$2" ]]; then
-      eid="$2"; shift 2;
-    else
-      E=2 error \
-        $"Event tag with --eid required almost two arguments: eid, tags"
-      return 1
-    fi
-  fi
-
-  command_account_active "${ACCOUNT_NAME}"
-
-  if [[ -z "$eid" ]]; then
-    if ! is_decimal "$1"; then
-      E=2 error $"Invalid index number '%s'" "$1"
-      return 1
-    else
-      eid="$(timeline_index_get "$1")" || return 1
-      shift
-    fi
-  fi
-
-  if [[ $# -eq 0 ]]; then
-    E=2 error $"Event tag required an argument: tags"
-  else
-    command_account_refresh
-    timeline_load
-    event_create "$(timestamp)" T "$eid" "$*" 2>&1 | info_multi
-  fi
-}
-
-# help:event:fun: event score [--eid] <num/eid> {up|down}
-# help:event:txt: Score up or down an specific id. Please note that you can
-# help:event:txt: only vote once fer EID, other votes will be ignored
-command_event_score ()
-{
-  local eid score
-
-  if [[ $# -eq 0 ]]; then
-    E=2 error $"Event score requires almost two parameters: num/eid, up/down"
-    return 1
-  elif [[ "$1" = "--eid" ]]; then
-    if [[ "$2" ]]; then
-      eid="$2"; shift 2;
-    else
-      E=2 error \
-        $"Event reply with --eid required almost two arguments: eid, up/down"
-      return 1
-    fi
-  fi
-
-  command_account_active "${ACCOUNT_NAME}"
-
-  if [[ -z "$eid" ]]; then
-    if ! is_decimal "$1"; then
-      E=2 error $"Invalid index number '%s'" "$1"
-      return 1
-    else
-      eid="$(timeline_index_get "$1")" || return 1
-      shift
-    fi
-  fi
-
-  if [[ $# -eq 0 ]]; then
-    E=2 error $"Event score required an argument: up/down"
-  else
-
-    case "$1" in
-      up)   score="1";;
-      down) score="-1";;
-    esac
-
-    command_account_refresh
-    timeline_load
-    event_create "$(timestamp)" S "$eid" "$score" 2>&1 | info_multi
-  fi
-}
-
-# help:event:fun: event info [--eid] <num/eid>
-# help:event:txt: Given the index number of an event in the timeline,
-# help:event:txt: display internal information about the event.
-# help:event:txt: If '--eid' is present, then use the argument as valid
-# help:event:txt: EID instead of index number.
-command_event_info ()
-{
-  local eid
-
-  if [[ $# -eq 0 ]]; then
-    E=2 error $"Timeline info requires one parameter: num"
-    return 1
-  elif [[ "$1" = "--eid" ]]; then
-    if [[ "$2" ]]; then
-      eid="$2"
-    else
-      E=2 error $"Timeline info with --eid required argument: eid"
-      return 1
-    fi
-  fi
-
-  command_account_active "${ACCOUNT_NAME}"
-
-  if [[ -z "$eid" ]]; then
-    if ! is_decimal "$1"; then
-      E=2 error $"Invalid index number '%s'" "$1"
-      return 1
-    else
-      eid="$(timeline_index_get "$1")" || return 1
-    fi
-  fi
-
-  timeline_load
-  event_info "$eid" | info_multi
-}
-
-# help:fun: follow {list|add|del|keys} {args...}
-# help:txt: Manage your followings.
-command_follow ()
-{
-  local cmd="$1"; shift
-  if fun "command_follow_$cmd"; then
-    "command_follow_$cmd" "$@"
-  else
-    E=1 error "$NOSUBCMD" "$cmd" "follow"
-  fi
-}
-
-# help:follow:fun: follow list
-# help:follow:txt: Lists your followings.
-command_follow_list ()
-{
-  command_account_active "${ACCOUNT_NAME}"
-  follow_list "${ACCOUNT_PATH}" | info_multi
-}
-
-# help:follow:fun: follow add <pull_url> [name]
-# help:follow:txt: Add new following whose repository is available in
-# help:follow:txt: 'pull_url' passed as argument.
-# help:follow:txt: Optionally if name is provided, create a user alias for
-# help:follow:txt: that account.
-command_follow_add ()
-{
-  local pull_url="$1" name="$2"
-
-  if [[ -z "$pull_url" ]]; then
-    E=2 error $"Follow add require almost one argument: pull_url"
-    return 2
-  else
-    command_account_active "${ACCOUNT_NAME}"
-    follow_add "$pull_url" "$name" 2>&1 | info_multi
-  fi
-}
-
-# help:follow:fun: follow del [--url] <uid/pull_url> 
-# help:follow:txt: Delete a following which specific uid, or specific
-# help:follow:txt: pull_url if '--url' flag is set.
-command_follow_del ()
-{
-  local uid
-
-  case "$1" in
-    --url)
-      if [[ -z "$2" ]]; then
-        E=2 error $"Follow del with --urll flag requires argument: pull_url"
-        return 2
-      else
-        uid="$(oid "$2")"
-      fi;;
-    *) uid="$1";;
-  esac
-
-  command_account_active "${ACCOUNT_NAME}"
-  follow_del "$uid" 2>&1 | info_multi
-}
-
-# help:follow:fun: follow keys [account_name] 
-# help:follow:txt: Print keys for the specific account in present, or for all
-# help:follow:txt: none is specified
-command_follow_keys ()
-{
-  command_account_active "${ACCOUNT_NAME}"
-  follow_keys "$1" 2>&1 | info_multi
-}
-
-# help:fun: network {list|refresh} {args...}
-# help:txt: Manage the network graph and discover new users.
-command_network ()
-{
-  local cmd="$1"; shift
-  if fun "command_network_$cmd"; then
-    "command_network_$cmd" "$@"
-  else
-    E=1 error "$NOSUBCMD" "$cmd" "network"
-  fi
-}
-
-# help:network:fun: network list
-# help:network:txt: Display current discovered network, but not search for
-# help:network:txt: new users or update current ones.
-command_network_list ()
-{
-  command_account_active "${ACCOUNT_NAME}"
-  network_load "${ACCOUNT_PATH}"
-  network_list
-}
-
-# help:network:fun: network refresh
-# help:network:txt: Looking for new users creating network graph and print
-# help:network:txt: the results into screen.
-# help:network:txt: The refreshing action could take a while. This command
-# help:network:txt: will traverse the timeline network from your repository,
-# help:network:txt: trying to discover new users that you don't follow but
-# help:network:txt: are related with people you actually follow.
-command_network_refresh ()
-{
-  command_account_active "$ACCOUNT_NAME"
-  info $"Discovering the network. This action could take a while..."
-  network_refresh "$ACCOUNT_PATH" | info_multi
-  info $"Network updated"
-  command_network_list
-}
-
-# help:fun: quit
-# help:txt: Just quits timeline :.-(
-command_quit ()
-{
-  exit 0
-}
-
-# help:fun: view {list|add|del} {args...}
-# help:txt: Create and save views. A view is a filter which can be used to
-# help:txt: show or hide posts from timeline. You can think a view like a
-# help:txt: name for a filter.
-command_view ()
-{
-  local cmd="$1"; shift
-  if fun "command_view_$cmd"; then
-    "command_view_$cmd" "$@"
-  else
-    E=1 error "$NOSUBCMD" "$cmd" "view"
-  fi
-}
-
-# help:view:fun: view list
-# help:view:txt: List all created views
-command_view_list ()
-{
-  for view in $(config_iter views); do
-    info "$view"
-  done
-}
-
-# help:view:fun: view add <name> <filter>+
-# help:view:txt: Create new view named as defined in arguments
-command_view_add ()
-{
-  local name="$1"; shift
-  config_set "views.$name" "$*"
-  config_save "${CONFIG_FILE}"
-}
-
-# help:view:fun: view del <name>
-# help:view:txt: Delete view named as defined in arguments
-command_view_del ()
-{
-  local name="$1"; shift
-  config_unset "views.$name"
-  config_save "${CONFIG_FILE}"
-}
-
-
-# help:fun: daemon {start|stop|kill|status} 
-# help:txt: Manage daemon mode of timeline.
-command_daemon ()
-{
-  local cmd="$1"; shift
-  if fun "command_daemon_$cmd"; then
-    "command_daemon_$cmd" "$@"
-  else
-    E=1 error "$NOSUBCMD" "$cmd" "daemon"
-  fi
-}
-
-# help:daemon:fun: daemon start [--foreground]
-# help:daemon:txt: Start daemon in background or in foreground if the specific
-# help:daemon:txt: flag is set.
-command_daemon_start ()
-{
-  daemon_start "$@"
-}
-
-# help:daemon:fun: daemon stop
-# help:daemon:txt: Clean stop daemon running in background
-command_daemon_stop ()
-{
-  daemon_stop TERM
-}
-
-# help:daemon:fun: daemon kill
-# help:daemon:txt: Force kill daemon running in background
-command_daemon_kill ()
-{
-  daemon_stop KILL
-}
-
-# help:daemon:fun: daemon status
-# help:daemon:txt: Show if daemon is running or not
-command_daemon_status ()
-{
-  daemon_list
-}
-
-# help:fun: version
-# help:txt: Print version number
-command_version ()
-{
-  echo "${TIMELINE_VERSION:-Unknown version}"
-}
-
-# help:fun: directory {refresh|add|del|list|search} {args...}
-# help:txt: Manage public directories
-command_directory ()
-{
-  local cmd="$1"; shift
-  if fun "command_directory_$cmd"; then
-    "command_directory_$cmd" "$@"
-  else
-    E=1 error "$NOSUBCMD" "$cmd" "directory"
-  fi
-}
-
-# help:directory:fun: refresh [directory name]
-# help:directory:txt: Refresh the directory data for a specific directory or for
-# help:directory:txt: all directories in the config
-command_directory_refresh ()
-{
-  directory_refresh "$@" | info_multi
-}
-
-# help:directory:fun: add [--force] <name> <url>
-# help:directory:txt: Add a new directory to the config
-command_directory_add ()
-{
-  directory_add "$@"
-  config_save "${CONFIG_FILE}"
-}
-
-# help:directory:fun: del <name>
-# help:directory:txt: Delete directory from the config
-command_directory_del ()
-{
-  [[ -z "$1" ]] && E=2 error $"Directory name is required"
-  directory_del "$@"
-  config_save "${CONFIG_FILE}"
-}
-
-# help:directory:fun: list
-# help:directory:txt: List all directories in config
-command_directory_list ()
-{
-  directory_list | info_multi
-}
-
-# help:directory:fun: search <regexp>+
-# help:directory:txt: Search for expressions in public directories.
-command_directory_search ()
-{
-  local exp
-  for exp in "$@"; do
-    directory_search "$exp"
-  done | info_multi
-}
-
-# hey! you do not want to use this, only for debug purposes
-if ${DEBUG:-false}; then
-  command_debug ()
-  {
-    eval "$@"
-  }
-fi
-
-# help:fun: license
-# help:txt: Show timeline license
-command_license ()
-{
-  info_multi <<EOF
-                    GNU GENERAL PUBLIC LICENSE
-                       Version 3, 29 June 2007
-
- Copyright (C) 2007 Free Software Foundation, Inc. <https://fsf.org/>
- Everyone is permitted to copy and distribute verbatim copies
- of this license document, but changing it is not allowed.
-
-                            Preamble
-
-  The GNU General Public License is a free, copyleft license for
-software and other kinds of works.
-
-  The licenses for most software and other practical works are designed
-to take away your freedom to share and change the works.  By contrast,
-the GNU General Public License is intended to guarantee your freedom to
-share and change all versions of a program--to make sure it remains free
-software for all its users.  We, the Free Software Foundation, use the
-GNU General Public License for most of our software; it applies also to
-any other work released this way by its authors.  You can apply it to
-your programs, too.
-
-  When we speak of free software, we are referring to freedom, not
-price.  Our General Public Licenses are designed to make sure that you
-have the freedom to distribute copies of free software (and charge for
-them if you wish), that you receive source code or can get it if you
-want it, that you can change the software or use pieces of it in new
-free programs, and that you know you can do these things.
-
-  To protect your rights, we need to prevent others from denying you
-these rights or asking you to surrender the rights.  Therefore, you have
-certain responsibilities if you distribute copies of the software, or if
-you modify it: responsibilities to respect the freedom of others.
-
-  For example, if you distribute copies of such a program, whether
-gratis or for a fee, you must pass on to the recipients the same
-freedoms that you received.  You must make sure that they, too, receive
-or can get the source code.  And you must show them these terms so they
-know their rights.
-
-  Developers that use the GNU GPL protect your rights with two steps:
-(1) assert copyright on the software, and (2) offer you this License
-giving you legal permission to copy, distribute and/or modify it.
-
-  For the developers' and authors' protection, the GPL clearly explains
-that there is no warranty for this free software.  For both users' and
-authors' sake, the GPL requires that modified versions be marked as
-changed, so that their problems will not be attributed erroneously to
-authors of previous versions.
-
-  Some devices are designed to deny users access to install or run
-modified versions of the software inside them, although the manufacturer
-can do so.  This is fundamentally incompatible with the aim of
-protecting users' freedom to change the software.  The systematic
-pattern of such abuse occurs in the area of products for individuals to
-use, which is precisely where it is most unacceptable.  Therefore, we
-have designed this version of the GPL to prohibit the practice for those
-products.  If such problems arise substantially in other domains, we
-stand ready to extend this provision to those domains in future versions
-of the GPL, as needed to protect the freedom of users.
-
-  Finally, every program is threatened constantly by software patents.
-States should not allow patents to restrict development and use of
-software on general-purpose computers, but in those that do, we wish to
-avoid the special danger that patents applied to a free program could
-make it effectively proprietary.  To prevent this, the GPL assures that
-patents cannot be used to render the program non-free.
-
-  The precise terms and conditions for copying, distribution and
-modification follow.
-
-                       TERMS AND CONDITIONS
-
-  0. Definitions.
-
-  "This License" refers to version 3 of the GNU General Public License.
-
-  "Copyright" also means copyright-like laws that apply to other kinds of
-works, such as semiconductor masks.
-
-  "The Program" refers to any copyrightable work licensed under this
-License.  Each licensee is addressed as "you".  "Licensees" and
-"recipients" may be individuals or organizations.
-
-  To "modify" a work means to copy from or adapt all or part of the work
-in a fashion requiring copyright permission, other than the making of an
-exact copy.  The resulting work is called a "modified version" of the
-earlier work or a work "based on" the earlier work.
-
-  A "covered work" means either the unmodified Program or a work based
-on the Program.
-
-  To "propagate" a work means to do anything with it that, without
-permission, would make you directly or secondarily liable for
-infringement under applicable copyright law, except executing it on a
-computer or modifying a private copy.  Propagation includes copying,
-distribution (with or without modification), making available to the
-public, and in some countries other activities as well.
-
-  To "convey" a work means any kind of propagation that enables other
-parties to make or receive copies.  Mere interaction with a user through
-a computer network, with no transfer of a copy, is not conveying.
-
-  An interactive user interface displays "Appropriate Legal Notices"
-to the extent that it includes a convenient and prominently visible
-feature that (1) displays an appropriate copyright notice, and (2)
-tells the user that there is no warranty for the work (except to the
-extent that warranties are provided), that licensees may convey the
-work under this License, and how to view a copy of this License.  If
-the interface presents a list of user commands or options, such as a
-menu, a prominent item in the list meets this criterion.
-
-  1. Source Code.
-
-  The "source code" for a work means the preferred form of the work
-for making modifications to it.  "Object code" means any non-source
-form of a work.
-
-  A "Standard Interface" means an interface that either is an official
-standard defined by a recognized standards body, or, in the case of
-interfaces specified for a particular programming language, one that
-is widely used among developers working in that language.
-
-  The "System Libraries" of an executable work include anything, other
-than the work as a whole, that (a) is included in the normal form of
-packaging a Major Component, but which is not part of that Major
-Component, and (b) serves only to enable use of the work with that
-Major Component, or to implement a Standard Interface for which an
-implementation is available to the public in source code form.  A
-"Major Component", in this context, means a major essential component
-(kernel, window system, and so on) of the specific operating system
-(if any) on which the executable work runs, or a compiler used to
-produce the work, or an object code interpreter used to run it.
-
-  The "Corresponding Source" for a work in object code form means all
-the source code needed to generate, install, and (for an executable
-work) run the object code and to modify the work, including scripts to
-control those activities.  However, it does not include the work's
-System Libraries, or general-purpose tools or generally available free
-programs which are used unmodified in performing those activities but
-which are not part of the work.  For example, Corresponding Source
-includes interface definition files associated with source files for
-the work, and the source code for shared libraries and dynamically
-linked subprograms that the work is specifically designed to require,
-such as by intimate data communication or control flow between those
-subprograms and other parts of the work.
-
-  The Corresponding Source need not include anything that users
-can regenerate automatically from other parts of the Corresponding
-Source.
-
-  The Corresponding Source for a work in source code form is that
-same work.
-
-  2. Basic Permissions.
-
-  All rights granted under this License are granted for the term of
-copyright on the Program, and are irrevocable provided the stated
-conditions are met.  This License explicitly affirms your unlimited
-permission to run the unmodified Program.  The output from running a
-covered work is covered by this License only if the output, given its
-content, constitutes a covered work.  This License acknowledges your
-rights of fair use or other equivalent, as provided by copyright law.
-
-  You may make, run and propagate covered works that you do not
-convey, without conditions so long as your license otherwise remains
-in force.  You may convey covered works to others for the sole purpose
-of having them make modifications exclusively for you, or provide you
-with facilities for running those works, provided that you comply with
-the terms of this License in conveying all material for which you do
-not control copyright.  Those thus making or running the covered works
-for you must do so exclusively on your behalf, under your direction
-and control, on terms that prohibit them from making any copies of
-your copyrighted material outside their relationship with you.
-
-  Conveying under any other circumstances is permitted solely under
-the conditions stated below.  Sublicensing is not allowed; section 10
-makes it unnecessary.
-
-  3. Protecting Users' Legal Rights From Anti-Circumvention Law.
-
-  No covered work shall be deemed part of an effective technological
-measure under any applicable law fulfilling obligations under article
-11 of the WIPO copyright treaty adopted on 20 December 1996, or
-similar laws prohibiting or restricting circumvention of such
-measures.
-
-  When you convey a covered work, you waive any legal power to forbid
-circumvention of technological measures to the extent such circumvention
-is effected by exercising rights under this License with respect to
-the covered work, and you disclaim any intention to limit operation or
-modification of the work as a means of enforcing, against the work's
-users, your or third parties' legal rights to forbid circumvention of
-technological measures.
-
-  4. Conveying Verbatim Copies.
-
-  You may convey verbatim copies of the Program's source code as you
-receive it, in any medium, provided that you conspicuously and
-appropriately publish on each copy an appropriate copyright notice;
-keep intact all notices stating that this License and any
-non-permissive terms added in accord with section 7 apply to the code;
-keep intact all notices of the absence of any warranty; and give all
-recipients a copy of this License along with the Program.
-
-  You may charge any price or no price for each copy that you convey,
-and you may offer support or warranty protection for a fee.
-
-  5. Conveying Modified Source Versions.
-
-  You may convey a work based on the Program, or the modifications to
-produce it from the Program, in the form of source code under the
-terms of section 4, provided that you also meet all of these conditions:
-
-    a) The work must carry prominent notices stating that you modified
-    it, and giving a relevant date.
-
-    b) The work must carry prominent notices stating that it is
-    released under this License and any conditions added under section
-    7.  This requirement modifies the requirement in section 4 to
-    "keep intact all notices".
-
-    c) You must license the entire work, as a whole, under this
-    License to anyone who comes into possession of a copy.  This
-    License will therefore apply, along with any applicable section 7
-    additional terms, to the whole of the work, and all its parts,
-    regardless of how they are packaged.  This License gives no
-    permission to license the work in any other way, but it does not
-    invalidate such permission if you have separately received it.
-
-    d) If the work has interactive user interfaces, each must display
-    Appropriate Legal Notices; however, if the Program has interactive
-    interfaces that do not display Appropriate Legal Notices, your
-    work need not make them do so.
-
-  A compilation of a covered work with other separate and independent
-works, which are not by their nature extensions of the covered work,
-and which are not combined with it such as to form a larger program,
-in or on a volume of a storage or distribution medium, is called an
-"aggregate" if the compilation and its resulting copyright are not
-used to limit the access or legal rights of the compilation's users
-beyond what the individual works permit.  Inclusion of a covered work
-in an aggregate does not cause this License to apply to the other
-parts of the aggregate.
-
-  6. Conveying Non-Source Forms.
-
-  You may convey a covered work in object code form under the terms
-of sections 4 and 5, provided that you also convey the
-machine-readable Corresponding Source under the terms of this License,
-in one of these ways:
-
-    a) Convey the object code in, or embodied in, a physical product
-    (including a physical distribution medium), accompanied by the
-    Corresponding Source fixed on a durable physical medium
-    customarily used for software interchange.
-
-    b) Convey the object code in, or embodied in, a physical product
-    (including a physical distribution medium), accompanied by a
-    written offer, valid for at least three years and valid for as
-    long as you offer spare parts or customer support for that product
-    model, to give anyone who possesses the object code either (1) a
-    copy of the Corresponding Source for all the software in the
-    product that is covered by this License, on a durable physical
-    medium customarily used for software interchange, for a price no
-    more than your reasonable cost of physically performing this
-    conveying of source, or (2) access to copy the
-    Corresponding Source from a network server at no charge.
-
-    c) Convey individual copies of the object code with a copy of the
-    written offer to provide the Corresponding Source.  This
-    alternative is allowed only occasionally and noncommercially, and
-    only if you received the object code with such an offer, in accord
-    with subsection 6b.
-
-    d) Convey the object code by offering access from a designated
-    place (gratis or for a charge), and offer equivalent access to the
-    Corresponding Source in the same way through the same place at no
-    further charge.  You need not require recipients to copy the
-    Corresponding Source along with the object code.  If the place to
-    copy the object code is a network server, the Corresponding Source
-    may be on a different server (operated by you or a third party)
-    that supports equivalent copying facilities, provided you maintain
-    clear directions next to the object code saying where to find the
-    Corresponding Source.  Regardless of what server hosts the
-    Corresponding Source, you remain obligated to ensure that it is
-    available for as long as needed to satisfy these requirements.
-
-    e) Convey the object code using peer-to-peer transmission, provided
-    you inform other peers where the object code and Corresponding
-    Source of the work are being offered to the general public at no
-    charge under subsection 6d.
-
-  A separable portion of the object code, whose source code is excluded
-from the Corresponding Source as a System Library, need not be
-included in conveying the object code work.
-
-  A "User Product" is either (1) a "consumer product", which means any
-tangible personal property which is normally used for personal, family,
-or household purposes, or (2) anything designed or sold for incorporation
-into a dwelling.  In determining whether a product is a consumer product,
-doubtful cases shall be resolved in favor of coverage.  For a particular
-product received by a particular user, "normally used" refers to a
-typical or common use of that class of product, regardless of the status
-of the particular user or of the way in which the particular user
-actually uses, or expects or is expected to use, the product.  A product
-is a consumer product regardless of whether the product has substantial
-commercial, industrial or non-consumer uses, unless such uses represent
-the only significant mode of use of the product.
-
-  "Installation Information" for a User Product means any methods,
-procedures, authorization keys, or other information required to install
-and execute modified versions of a covered work in that User Product from
-a modified version of its Corresponding Source.  The information must
-suffice to ensure that the continued functioning of the modified object
-code is in no case prevented or interfered with solely because
-modification has been made.
-
-  If you convey an object code work under this section in, or with, or
-specifically for use in, a User Product, and the conveying occurs as
-part of a transaction in which the right of possession and use of the
-User Product is transferred to the recipient in perpetuity or for a
-fixed term (regardless of how the transaction is characterized), the
-Corresponding Source conveyed under this section must be accompanied
-by the Installation Information.  But this requirement does not apply
-if neither you nor any third party retains the ability to install
-modified object code on the User Product (for example, the work has
-been installed in ROM).
-
-  The requirement to provide Installation Information does not include a
-requirement to continue to provide support service, warranty, or updates
-for a work that has been modified or installed by the recipient, or for
-the User Product in which it has been modified or installed.  Access to a
-network may be denied when the modification itself materially and
-adversely affects the operation of the network or violates the rules and
-protocols for communication across the network.
-
-  Corresponding Source conveyed, and Installation Information provided,
-in accord with this section must be in a format that is publicly
-documented (and with an implementation available to the public in
-source code form), and must require no special password or key for
-unpacking, reading or copying.
-
-  7. Additional Terms.
-
-  "Additional permissions" are terms that supplement the terms of this
-License by making exceptions from one or more of its conditions.
-Additional permissions that are applicable to the entire Program shall
-be treated as though they were included in this License, to the extent
-that they are valid under applicable law.  If additional permissions
-apply only to part of the Program, that part may be used separately
-under those permissions, but the entire Program remains governed by
-this License without regard to the additional permissions.
-
-  When you convey a copy of a covered work, you may at your option
-remove any additional permissions from that copy, or from any part of
-it.  (Additional permissions may be written to require their own
-removal in certain cases when you modify the work.)  You may place
-additional permissions on material, added by you to a covered work,
-for which you have or can give appropriate copyright permission.
-
-  Notwithstanding any other provision of this License, for material you
-add to a covered work, you may (if authorized by the copyright holders of
-that material) supplement the terms of this License with terms:
-
-    a) Disclaiming warranty or limiting liability differently from the
-    terms of sections 15 and 16 of this License; or
-
-    b) Requiring preservation of specified reasonable legal notices or
-    author attributions in that material or in the Appropriate Legal
-    Notices displayed by works containing it; or
-
-    c) Prohibiting misrepresentation of the origin of that material, or
-    requiring that modified versions of such material be marked in
-    reasonable ways as different from the original version; or
-
-    d) Limiting the use for publicity purposes of names of licensors or
-    authors of the material; or
-
-    e) Declining to grant rights under trademark law for use of some
-    trade names, trademarks, or service marks; or
-
-    f) Requiring indemnification of licensors and authors of that
-    material by anyone who conveys the material (or modified versions of
-    it) with contractual assumptions of liability to the recipient, for
-    any liability that these contractual assumptions directly impose on
-    those licensors and authors.
-
-  All other non-permissive additional terms are considered "further
-restrictions" within the meaning of section 10.  If the Program as you
-received it, or any part of it, contains a notice stating that it is
-governed by this License along with a term that is a further
-restriction, you may remove that term.  If a license document contains
-a further restriction but permits relicensing or conveying under this
-License, you may add to a covered work material governed by the terms
-of that license document, provided that the further restriction does
-not survive such relicensing or conveying.
-
-  If you add terms to a covered work in accord with this section, you
-must place, in the relevant source files, a statement of the
-additional terms that apply to those files, or a notice indicating
-where to find the applicable terms.
-
-  Additional terms, permissive or non-permissive, may be stated in the
-form of a separately written license, or stated as exceptions;
-the above requirements apply either way.
-
-  8. Termination.
-
-  You may not propagate or modify a covered work except as expressly
-provided under this License.  Any attempt otherwise to propagate or
-modify it is void, and will automatically terminate your rights under
-this License (including any patent licenses granted under the third
-paragraph of section 11).
-
-  However, if you cease all violation of this License, then your
-license from a particular copyright holder is reinstated (a)
-provisionally, unless and until the copyright holder explicitly and
-finally terminates your license, and (b) permanently, if the copyright
-holder fails to notify you of the violation by some reasonable means
-prior to 60 days after the cessation.
-
-  Moreover, your license from a particular copyright holder is
-reinstated permanently if the copyright holder notifies you of the
-violation by some reasonable means, this is the first time you have
-received notice of violation of this License (for any work) from that
-copyright holder, and you cure the violation prior to 30 days after
-your receipt of the notice.
-
-  Termination of your rights under this section does not terminate the
-licenses of parties who have received copies or rights from you under
-this License.  If your rights have been terminated and not permanently
-reinstated, you do not qualify to receive new licenses for the same
-material under section 10.
-
-  9. Acceptance Not Required for Having Copies.
-
-  You are not required to accept this License in order to receive or
-run a copy of the Program.  Ancillary propagation of a covered work
-occurring solely as a consequence of using peer-to-peer transmission
-to receive a copy likewise does not require acceptance.  However,
-nothing other than this License grants you permission to propagate or
-modify any covered work.  These actions infringe copyright if you do
-not accept this License.  Therefore, by modifying or propagating a
-covered work, you indicate your acceptance of this License to do so.
-
-  10. Automatic Licensing of Downstream Recipients.
-
-  Each time you convey a covered work, the recipient automatically
-receives a license from the original licensors, to run, modify and
-propagate that work, subject to this License.  You are not responsible
-for enforcing compliance by third parties with this License.
-
-  An "entity transaction" is a transaction transferring control of an
-organization, or substantially all assets of one, or subdividing an
-organization, or merging organizations.  If propagation of a covered
-work results from an entity transaction, each party to that
-transaction who receives a copy of the work also receives whatever
-licenses to the work the party's predecessor in interest had or could
-give under the previous paragraph, plus a right to possession of the
-Corresponding Source of the work from the predecessor in interest, if
-the predecessor has it or can get it with reasonable efforts.
-
-  You may not impose any further restrictions on the exercise of the
-rights granted or affirmed under this License.  For example, you may
-not impose a license fee, royalty, or other charge for exercise of
-rights granted under this License, and you may not initiate litigation
-(including a cross-claim or counterclaim in a lawsuit) alleging that
-any patent claim is infringed by making, using, selling, offering for
-sale, or importing the Program or any portion of it.
-
-  11. Patents.
-
-  A "contributor" is a copyright holder who authorizes use under this
-License of the Program or a work on which the Program is based.  The
-work thus licensed is called the contributor's "contributor version".
-
-  A contributor's "essential patent claims" are all patent claims
-owned or controlled by the contributor, whether already acquired or
-hereafter acquired, that would be infringed by some manner, permitted
-by this License, of making, using, or selling its contributor version,
-but do not include claims that would be infringed only as a
-consequence of further modification of the contributor version.  For
-purposes of this definition, "control" includes the right to grant
-patent sublicenses in a manner consistent with the requirements of
-this License.
-
-  Each contributor grants you a non-exclusive, worldwide, royalty-free
-patent license under the contributor's essential patent claims, to
-make, use, sell, offer for sale, import and otherwise run, modify and
-propagate the contents of its contributor version.
-
-  In the following three paragraphs, a "patent license" is any express
-agreement or commitment, however denominated, not to enforce a patent
-(such as an express permission to practice a patent or covenant not to
-sue for patent infringement).  To "grant" such a patent license to a
-party means to make such an agreement or commitment not to enforce a
-patent against the party.
-
-  If you convey a covered work, knowingly relying on a patent license,
-and the Corresponding Source of the work is not available for anyone
-to copy, free of charge and under the terms of this License, through a
-publicly available network server or other readily accessible means,
-then you must either (1) cause the Corresponding Source to be so
-available, or (2) arrange to deprive yourself of the benefit of the
-patent license for this particular work, or (3) arrange, in a manner
-consistent with the requirements of this License, to extend the patent
-license to downstream recipients.  "Knowingly relying" means you have
-actual knowledge that, but for the patent license, your conveying the
-covered work in a country, or your recipient's use of the covered work
-in a country, would infringe one or more identifiable patents in that
-country that you have reason to believe are valid.
-
-  If, pursuant to or in connection with a single transaction or
-arrangement, you convey, or propagate by procuring conveyance of, a
-covered work, and grant a patent license to some of the parties
-receiving the covered work authorizing them to use, propagate, modify
-or convey a specific copy of the covered work, then the patent license
-you grant is automatically extended to all recipients of the covered
-work and works based on it.
-
-  A patent license is "discriminatory" if it does not include within
-the scope of its coverage, prohibits the exercise of, or is
-conditioned on the non-exercise of one or more of the rights that are
-specifically granted under this License.  You may not convey a covered
-work if you are a party to an arrangement with a third party that is
-in the business of distributing software, under which you make payment
-to the third party based on the extent of your activity of conveying
-the work, and under which the third party grants, to any of the
-parties who would receive the covered work from you, a discriminatory
-patent license (a) in connection with copies of the covered work
-conveyed by you (or copies made from those copies), or (b) primarily
-for and in connection with specific products or compilations that
-contain the covered work, unless you entered into that arrangement,
-or that patent license was granted, prior to 28 March 2007.
-
-  Nothing in this License shall be construed as excluding or limiting
-any implied license or other defenses to infringement that may
-otherwise be available to you under applicable patent law.
-
-  12. No Surrender of Others' Freedom.
-
-  If conditions are imposed on you (whether by court order, agreement or
-otherwise) that contradict the conditions of this License, they do not
-excuse you from the conditions of this License.  If you cannot convey a
-covered work so as to satisfy simultaneously your obligations under this
-License and any other pertinent obligations, then as a consequence you may
-not convey it at all.  For example, if you agree to terms that obligate you
-to collect a royalty for further conveying from those to whom you convey
-the Program, the only way you could satisfy both those terms and this
-License would be to refrain entirely from conveying the Program.
-
-  13. Use with the GNU Affero General Public License.
-
-  Notwithstanding any other provision of this License, you have
-permission to link or combine any covered work with a work licensed
-under version 3 of the GNU Affero General Public License into a single
-combined work, and to convey the resulting work.  The terms of this
-License will continue to apply to the part which is the covered work,
-but the special requirements of the GNU Affero General Public License,
-section 13, concerning interaction through a network will apply to the
-combination as such.
-
-  14. Revised Versions of this License.
-
-  The Free Software Foundation may publish revised and/or new versions of
-the GNU General Public License from time to time.  Such new versions will
-be similar in spirit to the present version, but may differ in detail to
-address new problems or concerns.
-
-  Each version is given a distinguishing version number.  If the
-Program specifies that a certain numbered version of the GNU General
-Public License "or any later version" applies to it, you have the
-option of following the terms and conditions either of that numbered
-version or of any later version published by the Free Software
-Foundation.  If the Program does not specify a version number of the
-GNU General Public License, you may choose any version ever published
-by the Free Software Foundation.
-
-  If the Program specifies that a proxy can decide which future
-versions of the GNU General Public License can be used, that proxy's
-public statement of acceptance of a version permanently authorizes you
-to choose that version for the Program.
-
-  Later license versions may give you additional or different
-permissions.  However, no additional obligations are imposed on any
-author or copyright holder as a result of your choosing to follow a
-later version.
-
-  15. Disclaimer of Warranty.
-
-  THERE IS NO WARRANTY FOR THE PROGRAM, TO THE EXTENT PERMITTED BY
-APPLICABLE LAW.  EXCEPT WHEN OTHERWISE STATED IN WRITING THE COPYRIGHT
-HOLDERS AND/OR OTHER PARTIES PROVIDE THE PROGRAM "AS IS" WITHOUT WARRANTY
-OF ANY KIND, EITHER EXPRESSED OR IMPLIED, INCLUDING, BUT NOT LIMITED TO,
-THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
-PURPOSE.  THE ENTIRE RISK AS TO THE QUALITY AND PERFORMANCE OF THE PROGRAM
-IS WITH YOU.  SHOULD THE PROGRAM PROVE DEFECTIVE, YOU ASSUME THE COST OF
-ALL NECESSARY SERVICING, REPAIR OR CORRECTION.
-
-  16. Limitation of Liability.
-
-  IN NO EVENT UNLESS REQUIRED BY APPLICABLE LAW OR AGREED TO IN WRITING
-WILL ANY COPYRIGHT HOLDER, OR ANY OTHER PARTY WHO MODIFIES AND/OR CONVEYS
-THE PROGRAM AS PERMITTED ABOVE, BE LIABLE TO YOU FOR DAMAGES, INCLUDING ANY
-GENERAL, SPECIAL, INCIDENTAL OR CONSEQUENTIAL DAMAGES ARISING OUT OF THE
-USE OR INABILITY TO USE THE PROGRAM (INCLUDING BUT NOT LIMITED TO LOSS OF
-DATA OR DATA BEING RENDERED INACCURATE OR LOSSES SUSTAINED BY YOU OR THIRD
-PARTIES OR A FAILURE OF THE PROGRAM TO OPERATE WITH ANY OTHER PROGRAMS),
-EVEN IF SUCH HOLDER OR OTHER PARTY HAS BEEN ADVISED OF THE POSSIBILITY OF
-SUCH DAMAGES.
-
-  17. Interpretation of Sections 15 and 16.
-
-  If the disclaimer of warranty and limitation of liability provided
-above cannot be given local legal effect according to their terms,
-reviewing courts shall apply local law that most closely approximates
-an absolute waiver of all civil liability in connection with the
-Program, unless a warranty or assumption of liability accompanies a
-copy of the Program in return for a fee.
-
-                     END OF TERMS AND CONDITIONS
-
-            How to Apply These Terms to Your New Programs
-
-  If you develop a new program, and you want it to be of the greatest
-possible use to the public, the best way to achieve this is to make it
-free software which everyone can redistribute and change under these terms.
-
-  To do so, attach the following notices to the program.  It is safest
-to attach them to the start of each source file to most effectively
-state the exclusion of warranty; and each file should have at least
-the "copyright" line and a pointer to where the full notice is found.
-
-    <one line to give the program's name and a brief idea of what it does.>
-    Copyright (C) <year>  <name of author>
-
-    This program is free software: you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation, either version 3 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
-Also add information on how to contact you by electronic and paper mail.
-
-  If the program does terminal interaction, make it output a short
-notice like this when it starts in an interactive mode:
-
-    <program>  Copyright (C) <year>  <name of author>
-    This program comes with ABSOLUTELY NO WARRANTY; for details type \`show w'.
-    This is free software, and you are welcome to redistribute it
-    under certain conditions; type \`show c' for details.
-
-The hypothetical commands \`show w' and \`show c' should show the appropriate
-parts of the General Public License.  Of course, your program's commands
-might be different; for a GUI interface, you would use an "about box".
-
-  You should also get your employer (if you work as a programmer) or school,
-if any, to sign a "copyright disclaimer" for the program, if necessary.
-For more information on this, and how to apply and follow the GNU GPL, see
-<https://www.gnu.org/licenses/>.
-
-  The GNU General Public License does not permit incorporating your program
-into proprietary programs.  If your program is a subroutine library, you
-may consider it more useful to permit linking proprietary applications with
-the library.  If this is what you want to do, use the GNU Lesser General
-Public License instead of this License.  But first, please read
-<https://www.gnu.org/licenses/why-not-lgpl.html>.
-EOF
-}
-## vim:ft=sh
-
-# fun: crypto_requirements
-# txt: ensure that specific requirements for crypto management are
-#      present in the system
-crypto_requirements ()
-{
-  REQUIREMENTS+=( "+gpg" )
-  reqs_eval
-}
-
-# fun: crypto_keygen <account_id> <tstamp> <passphrase-file>
-# txt: generate key pair for the specific account and echoes the key_id of the
-#      generated one. The crver is v1 by default. Read tl-crypto(7) man page
-#      for details.
-crypto_keygen ()
-{
-  crypto_requirements
-
-  local keyid
-
-  gpg_helper \
-    --passphrase-file "$3" \
-    --quick-gen-key "$1@$2" "ed25519" cert,sign never ||
-    E=3 error $"Unable to create master key for account $1 (v1)."
-
-  keyid="$(crypto_keyid "$1@$2")"
-
-  [[ "$keyid" ]] || E=3 fatal $"Unable to retrieve recent generate keyID"
-
-  gpg_helper \
-    --passphrase-file "$3" \
-    --quick-add-key "$keyid" "cv25519" encr never ||
-    E=3 error $"Unable to create encryption key for account $1 (v1)"
-
-  gpg_helper \
-    --passphrase-file "$3" \
-    --quick-add-uid "$keyid" "$1@timeline" ||
-    E=3 error $"Unable to create user-id for account $1 (v1)"
-
-  echo -e "5\ny\nsave\n" | 
-    gpg_helper --no-batch --command-fd 0 \
-      --expert --edit-key "$keyid" trust >/dev/null 2>/dev/null ||
-      E=3 error $"Unable to trust keyID $keyid"
-}
-
-# fun: crypto_keyid <account_id>
-# txt: get the fingerprint for the key associated to specific account id.
-crypto_keyid ()
-{
-  local -a out
-  mapfile -d $'\n' out < <(
-    gpg_helper --keyid-format long -k "$1${2:+@$2}"
-  )
-  [[ "${out[1]// /}" ]] &&
-    echo "${out[1]// /}"
-}
-
-# fun: crypto_import <account_id> <keyfile>
-# txt: import a key from the account_id into the timeline keyring
-crypto_import ()
-{
-  local status account="$1" keyfile="$2" kind keyid uid
-
-  crypto_requirements
-  status="$(temp_file)"
-
-  gpg_helper --status-file "$status" --import "$keyfile" ||
-    E=3 error $"Unable to import key file %s" "$keyfile"
-
-  while read -r _ kind keyid uid _; do
-    case "$kind" in
-      IMPORTED) 
-        if [[ "${uid%@*}" != "$account" ]]; then
-          if gpg_helper --yes --delete-keys "$keyid"; then
-            error $"Ignoring key %s: account does not match %s != %s" \
-              "$keyid" "${uid%@*}" "$account"
-          else
-            error $"\!\!\! SECURITY RISK \!\!\!"
-            error $"You've been imported an invalid key."
-            error $"Key %s does not belong to account owner %s" "$keyid" "$account."
-            error $"Timeline was try to remove it from the keyring, but something weird happened."
-            error $"Read manual tl-crypto(1) to know more about how to handle this."
-            E=3 fatal $"Unable to remove an invalid key."
-          fi
-        fi
-    esac
-  done < "$status"
-}
-
-# fun: crypto_export <account_id> <file>
-# txt: export public key of the specific account id to file
-crypto_export ()
-{
-  crypto_requirements
-  gpg_helper --no-comments --no-emit-version \
-    --armor --export "$1@timeline" > "$2" ||
-    E=3 error $"Unable to export keys for account $1"
-}
-
-# fun: crypto_revoke <account_name> <key_id>
-# txt: revoke a specific key_id
-crypto_revoke ()
-{
-  local rcert
-  local homedir="${CONFIG[account.$1.keyring]}"
-  crypto_requirements
-
-  [[ -r "${homedir}/openpgp-revocs.d/$2.rev" ]] ||
-    E=4 fatal $"KeyID $1 does not have revocation certificate."
-
-  rcert="$(< "${homedir}/openpgp-revocs.d/$2.rev")"
-  gpg_helper --import <<< "${rcert//:---/---}" || # remove : guard 
-    E=4 fatal $"Unable to revoke key"
-}
-
-# fun: crypto_uid <key_id> [match]
-# txt: echoes the uid of the key_id or, if match provided, return true if
-#      the uid match the pattern.
-crypto_uid ()
-{
-  local line
-  while read -r line; do
-    case "$line" in
-      uid:*)
-        IFS=: read -r -a line <<< "$line"
-        if [[ "$2" ]]; then
-          [[ "${line[9]}" = "$2" ]] && return 0
-        else
-          echo "${line[9]}"
-        fi
-        ;;
-    esac
-  done < <(gpg_helper --with-colons -k "$1")
-  ! [[ "$2" ]]
-}
-
-# fun: crypto_validate <key_id> <crver>
-# txt: validate that specific key_id is conforminr crver specification
-crypto_validate ()
-{
-  local kind val data
-  crypto_requirements
-
-  data="$(gpg_helper --keyid-format long -k "$1@timeline" 2>&1)" ||
-    E=3 error $"Unable to validate key $1 ($2). Error was: '$data'."
-
-  case "$2" in
-    v1)
-      while read -r kind val _; do
-        case "$kind" in
-          pub)
-            [[ "${val#ed25519/}" = "${val}" ]] &&
-              E=3 error $"Key $1 does not conform $2: Pub part is no ED25519"
-            ;;
-          sub)
-            [[ "${val#cv25519/}" = "${val}" ]] &&
-              E=3 error $"Key $1 does not conform $2: Sub part is no CV25519"
-            ;;
-        esac
-      done <<< "$data"
-      ;;
-  esac
-}
-
-# fun: crypto_list
-# txt: echoes a list of keys present in keyring
-crypto_list ()
-{
-  local line flags pub=false
-  while IFS=: read -r -a line; do
-    case "${line[0]}" in
-      pub)
-        case "${line[1]}" in
-          *r*) flags="R";;
-          *) flags="";;
-        esac
-        pub=true;;
-      fpr) "$pub" && echo "${line[9]} $flags";;
-      *) pub=false;;
-    esac
-  done < <(gpg_helper --with-colons -k "$@")
-}
-
-# fun: crypto_encrypt [--anon] <recipient> <message> <passfile>
-# txt: return a encrypted message for the specific recipient in REPLY var
-crypto_encrypt ()
-{
-  local mesg arg='-r'
-  local -a payload
-  crypto_requirements
-
-  [[ "$1" = "--anon" ]] && arg="-R" && shift
-
-  mapfile -t -s 2 payload < <(
-    gpg_helper -vv \
-      --armor --passphrase-file "$3" \
-      --sign --encrypt --no-comments --no-emit-version \
-      "$arg" "$1@timeline" <<< "$2"
-  ) 2>&1
-
-  [[ ${#payload[@]} -eq 0 ]] && exit 4
-
-  payload[-1]=''
-  REPLY="${payload[*]}"
-  REPLY="${REPLY// /}"
-}
-
-# fun: crypto_decrypt <account_id> <message> <passfile> [statusfile]
-# txt: decrypt a previously encrypted message
-crypto_decrypt ()
-{
-  local -a args
-  local -a mesg=(
-    "-----BEGIN PGP MESSAGE-----"
-    ""
-    "$2"
-    "-----END PGP MESSAGE-----"
-  )
-  crypto_requirements
-
-  [[ "$4" ]] && args+=( "--status-file=$4" )
-
-  read -r < <(
-    gpg_helper "${args[@]}" --passphrase-file "$3" -v --armor --decrypt \
-      --try-secret-key "$1@timeline" <<< "$(join $'\n' "${mesg[@]}")"
-  ) 2>&1 || REPLY=''
-}
-
-# fun: crypto_keyflags <keyid>
-# txt: put in $REPLY a list of flags for the keyid passed as argument
-crypto_keyflags ()
-{
-  local -a line
-  local aux
-  REPLY=''
-
-  while IFS=: read -ra line ; do
-    case "${line[0]}" in
-      pub|sub) aux="${line[1]}";;
-      fpr|fp2) [[ "${line[9]}" = "$1" ]] && REPLY="$aux" || true;;
-    esac
-  done < <(gpg_helper --with-colons -k "$1") ||
-    E=3 fatal $"Unable to retrieve keyflags for key %s" "$1"
-}
-
-# fun: gpg_helper [args]
-# txt: run gpg command with some well known parameters
-gpg_helper ()
-{
-  local homedir
-
-  [[ "$GNUPGHOME" ]] ||
-    E=3 fatal $"GNUPGHOME not set executing $*"
-
-  command "${CONFIG[crypto.gnupg-binary]:-exit}" --batch --no-tty \
-    --no-auto-key-retrieve --auto-key-locate "local" \
-    --trust-model always \
-    --personal-cipher-preferences AES256 \
-    --personal-digest-preferences SHA256 \
-    --disable-cipher-algo 3DES,IDEA,CAST5,BLOWFISH \
-    "$@"
-}
-## vim:ft=sh
-
 # env: DAEMON_LOG_FILE: Internal variable where file redirections are saved.
 DAEMON_LOG_FILE=
 # env: DAEMON_LOG_LEVEL: Internal variable to store daemon log level.
@@ -4273,52 +2277,6 @@ directory_search ()
   for dir in "${CACHE_DIR}"/directory.*; do
     grep -v -e '^#' -e '^[ ]*$' "$dir" | grep -w "$1"
   done
-}
-## vim:ft=sh
-
-# fun: [E=code] fatal <message>
-# txt: print fatal message to stderr, if environment variable `$E` is
-#      present, then exists with specified error code in `$E` (only if
-#      non-interactive)
-fatal ()
-{
-  E="${E:-1}" error "$@"
-}
-
-# fun: error <message>
-# txt: print error message to stderr
-error ()
-{
-  if [ "$E" ]; then
-    local err_kind="fatal"
-  else
-    local err_kind="error"
-  fi
-
-  format_compose "timeline.$err_kind" name \
-    "$(config_get timeline.${err_kind}.name)"
-  format_compose "timeline.$err_kind" date "$(timestamp)"
-  # shellcheck disable=SC2059
-  format_compose "timeline.$err_kind" mesg "$(printf -- "$@")"
-  format_dumps "timeline.$err_kind" >&2
-
-  if [ "$E" ]; then
-    exit "$E"
-  fi
-}
-
-# fun: error_multi
-# txt: get messages from stdin and print informational messages to stderr
-error_multi ()
-{
-  format_compose timeline.error name "${CONFIG[timeline.error.name]:-ERROR}"
-  format_compose timeline.error date "$(printf "%(%s)T")"
-  _i() {
-    format_compose timeline.error mesg "${2%$'\n'}"
-    format_dumps timeline.error >&2
-  }
-  # shellcheck disable=SC2034
-  mapfile -c 1 -C _i
 }
 ## vim:ft=sh
 
@@ -5449,571 +3407,6 @@ notify ()
     echo "$date" > "${last_date_file}"
   fi
 }
-## vim: ft=sh
-
-# env: OID_CACHE
-# txt: save a generated oids to avoid recalculation
-declare -gA OID_CACHE
-
-# fun: fun <function_name>
-# txt: return true if function is defined
-fun () { declare -f "$1" >/dev/null 2>&1; }
-
-# fun: input <pass_text>
-# txt: return true if the text typed by the user match with the pass_text
-input ()
-{
-  local reply i
-  read -r reply
-  for i in "$@"; do
-    [[ "$i" = "$reply" ]] && return 0
-  done
-
-  return 1
-}
-
-# fun: prefix <item>
-# txt: prefix each line in stdin with a item and output to stdout
-prefix () { local line; while read -r line; do echo "$1$line"; done; }
-
-# fun: mute <command> [args]
-# txt: run command quietly
-mute () { "$@" >/dev/null 2>&1; }
-
-# fun: timestamp
-# txt: print current timestamp in UTC
-timestamp ()
-{
-  # shellcheck disable=SC2183
-  printf "%(%s)T"
-}
-
-# fun: join <delim> <array_items>
-# txt: return a delim separated list of array_items
-join ()
-{
-  local delim="$1"; shift
-  for x in "$@"; do
-    printf "%s%s" "$x" "$delim"
-  done
-}
-
-# fun: oid <string>
-# txt: create a unique object id for the string passed as argument
-oid ()
-{
-  if [[ -z "${OID_CACHE["$1"]}" ]]; then
-    OID_CACHE["$1"]="$(git_helper hash-object --stdin <<<"${1%.git}")"
-  fi
-}
-
-# fun: oid_save
-# txt: save the list of OIDs to a cache file
-oid_save ()
-{
-  local i=0
-  [[ "${CONFIG[oid.use-cache]}" != "true" ]] && return
-  {
-    echo "declare -Axg OID_CACHE=("
-    for key in "${!OID_CACHE[@]}"; do
-      echo "[\"$key\"]=\"${OID_CACHE[$key]}\""
-      [[ $((++i)) -gt ${CONFIG[oid.max-cache-size]:-1000} ]] && break
-    done
-    echo ")"
-  } > "${CACHE_DIR}/oid.cache"
-}
-
-# fun: oid_load
-# txt: load precalculated OIDs from cache file
-oid_load ()
-{
-  [[ "${CONFIG[oid.use-cache]}" != "true" ]] && return
-
-  # shellcheck source=/dev/null
-  [[ -r "${CACHE_DIR}/oid.cache" ]] &&
-    source "${CACHE_DIR}/oid.cache"
-}
-
-# fun: try_path <path_list>
-# txt: given a path list, return the first existant item in the list, or, if
-#      none exists, the first one. NOTE: this function does not allow colons
-#      in path items.
-try_path ()
-{
-  local IFS=':'
-  for path in $1; do
-    if [ -d "$path" ]; then
-      echo "$path"
-      return
-    fi
-  done
-  echo "${1%%:*}"
-}
-
-# fun: valid_url <url>
-# txt: return true if url is valid, otherwise return false
-valid_url ()
-{
-  case "$1" in
-    ssh://*|http://*|https://*|file://*) return 0
-  esac
-  return 1
-}
-
-# fun: has_hmac <eid>
-# txt: return true if the eid has an hmac
-has_hmac ()
-{
-  local hmac; hmac="${1#*:}"
-  [[ "${hmac}" != "${hmac#*:}" ]]
-}
-
-# fun: username <eid|account_id>
-# txt: return username from a event_id or account_id using alias defined in
-#      configuration and short form if 'timeline.use-short-ids' is true.
-username ()
-{
-  local uname="$1"
-  
-  uname="${uname%%:*}" # remove timestamp if present
-  uname="${uname#@}"  # remove trail @ if present
-
-  alias_name="${CONFIG["user.alias-$uname"]}"
-  short_ids="${CONFIG["timeline.use-short-ids"]}"
-
-  if [[ "$alias_name" ]]; then
-    uname="$alias_name"
-  elif [[ "$short_ids" = "true" ]]; then
-    uname="${uname:0:8}"
-  fi
-
-  echo "@${uname}"
-}
-
-# fun: uid <name>
-# txt: reverse search for name in list of account alias
-uid ()
-{
-  local key
-  for key in "${!CONFIG[@]}"; do
-    case "$key" in
-      user.alias-*)
-        [[ "${CONFIG[$key]}" = "$1" ]] && echo "${key#*-}" && return 0;;
-    esac
-  done
-}
-
-# fun: expand_user <userlist>
-# txt: expand a user list to a list of valids uids
-expand_user ()
-{
-  local u
-  for u in ${1//,/ }; do
-    case "$u" in
-      =*) echo "${CONFIG["group.${u%=}"]}";;
-      *) uid "${u%@}";;
-    esac
-  done
-}
-
-# fun: is_decimal <num>
-# txt: return true if num is a decimal based number.
-is_decimal () {
-  [[ "$1" = "0" ]] && return 0
-  mute let i="10#${1#-}" 2>/dev/null
-}
-
-# fun: any <list> <list>
-# txt: return true if any element of the first list is also in the second
-#      list.
-any ()
-{
-  case "$1" in
-    '*'|"$2") return 0;;
-    '') return 1;;
-  esac
-
-  local -A list
-
-  for item in $1; do
-    list["$item"]=1
-  done
-
-  for item in $2; do
-    [[ "${list["$item"]}" ]] && return 0
-  done
-  return 1
-}
-
-# fun: git_helper <cmds>+
-# txt: send commands to git assuming some things
-git_helper ()
-{
-  HOME=/dev/null command git "$@"
-}
-
-# fun: get_main_branch [account_path]
-# txt: get the default branch for git given an account path or using current
-#      enabled account if none present.
-get_main_branch ()
-{
-  local ref
-  read -r _ ref < "${1:-$ACCOUNT_PATH}/.git/refs/remotes/origin/HEAD" 2>/dev/null
-  if [[ "$ref" ]]; then
-    echo "${ref##*/}"
-  else
-    echo "${CONFIG[git.defaultBranch]:-main}"
-  fi
-}
-
-# fun: on_exit <callback>
-# txt: run callback on exit
-declare -a _on_exit=()
-trap _handler_on_exit EXIT
-_handler_on_exit ()
-{
-  local fun
-  for fun in "${_on_exit[@]}"; do
-    "$fun";
-  done
-}
-on_exit ()
-{
-  _on_exit+=( "$1" )
-}
-
-# fun: temp_file
-# txt: outputs a temporary file which will ensure that will be eliminated
-#      when exectution ends.
-temp_file ()
-{
-  local name="${TMPDIR:-/tmp}/temp_$$.$RANDOM$RANDOM"
-  : > "$name"
-  echo "$name"
-}
-_temp_file_exit ()
-{
-  rm -f "${TMPDIR:-/tmp}/temp_$$".*
-}
-on_exit _temp_file_exit
-
-# fun: temp_dir
-# txt: outputs a temporary directory which will be removed when tl dies
-temp_dir ()
-{
-  local name="${TMPDIR:-/tmp}/tempdir_$$.$RANDOM"
-  mkdir -p "$name"
-  echo "$name"
-}
-_temp_dir_exit ()
-{
-  rm -rf "${TMPDIR:-/tmp}/tempdir_$$".*
-}
-on_exit _temp_dir_exit
-## vim:ft=sh
-
-# env: TIMELINE_CONTENT: The path relative to the account root, where
-#      CONTENT file is stored.
-TIMELINE_CONTENT="CONTENT"
-
-# env: TIMELINE_FOLLOW The path relative to the account root, where
-#      FOLLOW dir is located.
-TIMELINE_FOLLOW="FOLLOW"
-
-# env: TIMELINE_PRINTED: Internal associative array which contains the EID
-#      of events alredy printed to avoid duplicates in the current execution.
-declare -A TIMELINE_PRINTED=()
-
-# env: TIMELINE_WAS_PRINTED: Internal associative array which contains the EID
-#      of events printed in some previous execution.
-declare -A TIMELINE_WAS_PRINTED=()
-
-# env: TIMELINE_INDEX: Internal array used to print an index in timeline to
-#      easy refer to an event
-declare -a TIMELINE_INDEX=()
-
-# fun: timeline_load [path] [oid]
-# txt: load the timeline from current active account into memory
-timeline_load ()
-{
-  local oid="$2" content_path follow_path show_own path="$1"
-  local -a pattern
-
-  if [[ -z "$path" ]]; then
-    path="${ACCOUNT_PATH}"
-    oid="${ACCOUNT_OID}"
-  fi
-
-  content_path="$path/$TIMELINE_CONTENT"
-  follow_path="$path/$TIMELINE_FOLLOW"
-  show_own="${CONFIG["timeline.own-posts"]}"
-  read -ra pattern  <<< "${CONFIG["timeline.loading-pattern"]}"
-
-  if ! [[ -r "$content_path" ]]; then
-    error $"Content path does not exists."
-    error $"Maybe you delete your account data?"
-    E=1 error $"Try $0 account rebuild ${ACCOUNT_NAME} to recreate it automatically"
-  fi
-
-  echo -en $"> Loading ${pattern[$((i++ % ${#pattern[@]}))]}\r" >&2
-  # Load our account timeline
-  [[ "$show_own" = "false" ]] ||
-    event_load "$oid" "${content_path}"
-
-  local dir i=0
-
-  if [[ -d "${follow_path}" ]]; then
-    for dir in "${follow_path}"/*; do
-      [[ -d "$dir" ]] || continue  # ignore non-dir files
-      [[ -r "$dir/$TIMELINE_CONTENT" ]] || continue # ignore non initialized
-
-      dir="${dir%/}"
-      echo -en $"> Loading ${pattern[$((i++ % ${#pattern[@]}))]}\r" >&2
-      event_load "${dir##*/}" "${dir}/$TIMELINE_CONTENT"
-    done
-  fi
-}
-
-# fun: timeline_show_thread <eid>
-# txt: show the thread of the specific EID
-timeline_show_thread ()
-{
-  unset TIMELINE_PRINTED["$1"]
-  for event in $(event_labels "$1"); do
-    timeline_show_thread "$event"
-  done
-  for event in $(event_replies "$1"); do
-    timeline_show_thread "$event"
-  done
-  return 0
-}
-
-# fun: timeline_list_thread <eid>
-# txt: print thread for specific eid passed as argument
-timeline_list_thread ()
-{
-  local prefix indent date kind mesg tags link name eid="$1"
-  local flag show_tags show_replies flags=''
-
-  # item is already printed? then do nothing
-  [[ "${TIMELINE_PRINTED["$eid"]}" ]] && return
-
-  date="${EVENTS_DATE["$eid"]}"
-  kind="${EVENTS_KIND["$eid"]}"
-  name="$(username "$eid")"
-  sign="${EVENTS_SIGN["$eid"]}"
-  indent="${CONFIG["timeline.$kind.indent"]}"
-  prefix="${CONFIG["timeline.$kind.prefix"]}"
-
-  case "$kind" in
-    post)
-      mesg="${EVENTS_MESG["$eid"]}"
-      ;;
-    tag)
-      tags="${EVENTS_TAGS["$eid"]// /, }"
-      # shellcheck disable=SC2153
-      link="${EVENTS_LINK["$eid"]}"
-      format_compose "timeline.$kind" tags "${2}${indent}${prefix}${tags}"
-      ;;
-    reply)
-      mesg="${EVENTS_MESG["$eid"]}"
-      link="${EVENTS_LINK["$eid"]}"
-      ;;
-  esac
-
-  if [[ "${EVENTS_CFLAGS["$eid"]}" ]]; then
-    case "${EVENTS_CFLAGS["$eid"]}" in
-      'u') flags+="${CONFIG["timeline.$kind.flag-encrypted-good"]}";;
-      '-') flags+="${CONFIG["timeline.$kind.flag-encrypted-unknown"]}";;
-      'r') flags+="${CONFIG["timeline.$kind.flag-encrypted-revoked"]}";;
-      'e') flags+="${CONFIG["timeline.$kind.flag-encrypted-expired"]}";;
-      *) flags+="${CONFIG["timeline.$kind.flag-encrypted-bad"]}";;
-    esac
-  else
-    flags+="${CONFIG["timeline.$kind.flag-encrypted-none"]}"
-  fi
-
-  case "${sign}" in
-    G*) flags+="${CONFIG["timeline.$kind.flag-signed-good"]}";;
-    B*) flags+="${CONFIG["timeline.$kind.flag-signed-bad"]}";;
-    U*) flags+="${CONFIG["timeline.$kind.flag-signed-unknown"]}";;
-    X*|Y*) flags+="${CONFIG["timeline.$kind.flag-signed-expired"]}";;
-    R*) flags+="${CONFIG["timeline.$kind.flag-signed-revoked"]}";;
-    E*) flags+="${CONFIG["timeline.$kind.flag-signed-missing"]}";;
-    N*|'') flags+="${CONFIG["timeline.$kind.flag-signed-none"]}";;
-    *) flags+="${sign}";;
-  esac
-
-  if [[ "${CONFIG["timeline.show-untrusted-items"]}" = "true" ]]; then
-    [[ "${sign//\*/}" != "${sign}" ]] &&
-      flags+="${CONFIG["timeline.$kind.flag-trusted"]}" ||
-      flags+=' '
-  fi
-
-  if [[ "${TIMELINE_WAS_PRINTED[$eid]}" ]]; then
-    flags+=" "
-  else
-    flags+="${CONFIG["timeline.$kind.flag-new"]}"
-  fi
-
-  # composing the output
-  format_compose "timeline.$kind" index "${#TIMELINE_INDEX[@]}"
-  format_compose "timeline.$kind" name "$name"
-  format_compose "timeline.$kind" date "$date"
-  format_compose "timeline.$kind" link "$link"
-  format_compose "timeline.$kind" score "${EVENTS_SCORE["$eid"]}"
-  format_compose "timeline.$kind" mesg "${2}${indent}${prefix}${mesg}"
-
-  TIMELINE_PRINTED["$eid"]=1
-  TIMELINE_INDEX+=( "$eid" )
-
-  show_tags="${CONFIG["timeline.show-tags"]}"
-  show_replies="${CONFIG["timeline.show-replies"]}"
-
-  if [[ "$(event_labels "$eid")" ]]; then
-    flags+="${CONFIG["timeline.$kind.flag-tagged"]}"
-  else
-    flags+=" "
-  fi
-
-  if [[ "$(event_replies "$eid")" ]]; then
-    flags+="${CONFIG["timeline.$kind.flag-replied"]}"
-  else
-    flags+=" "
-  fi
-
-  if filter_eval "$eid"; then
-    format_compose "timeline.$kind" flags "${flags}"
-    format_dumps "timeline.$kind"
-  fi
-
-  if [[ "$show_tags" = "true" ]]; then
-    for tags in $(event_labels "$eid"); do
-      timeline_list_thread "$tags" "$2${indent}"
-    done
-  fi
-
-  if [[ "$show_replies" = "true" ]]; then
-    for reply in $(event_replies "$eid"); do
-      timeline_list_thread "$reply" "$2${indent}"
-    done
-  fi
-}
-
-# fun: timeline_list [filter]
-# txt: print the entire timelist
-timeline_list ()
-{
-  local eid
-  local -a filter_list
-
-  TIMELINE_PRINTED=()
-  TIMELINE_INDEX=()
-
-  if [[ $# -eq 0 ]]; then
-    read -ra filter_list <<< "${CONFIG[timeline.filter]}"
-    filter_add "${filter_list[@]}"
-  else
-    filter_add "$@"
-  fi
-
-  for eid in "${EVENTS_SORTED[@]}"; do
-    if [[ "${EVENTS_KIND["$eid"]}" = "post" ]]; then
-      timeline_list_thread "$eid" ''
-    fi
-  done
-
-  timeline_index_save
-}
-
-# fun: timeline_index_save
-# txt: dumps TIMELINE_INDEX to a sourceable file to be loaded before any
-#      input to identify an event easily.
-timeline_index_save ()
-{
-  local var
-  {
-    echo "declare -ag TIMELINE_INDEX=("
-    for var in "${TIMELINE_INDEX[@]}"; do
-      echo "'$var'"
-    done
-    echo ")"
-
-    echo "declare -Ag TIMELINE_WAS_PRINTED=("
-    for var in "${!TIMELINE_WAS_PRINTED[@]}"; do
-      echo "[$var]=1"
-    done
-    for var in "${!TIMELINE_PRINTED[@]}"; do
-      [[ "${TIMELINE_WAS_PRINTED[$var]}" ]] || echo "[$var]=1"
-    done
-    echo ")"
-  } > "${CACHE_DIR}/index.${ACCOUNT_OID}.cache"
-}
-
-# fun: timeline_index_load
-# txt: source index saved file with timeline_index_save
-timeline_index_load ()
-{
-  # shellcheck source=/dev/null
-  if [[ -r "${CACHE_DIR}/index.${ACCOUNT_OID}.cache" ]]; then
-    source "${CACHE_DIR}/index.${ACCOUNT_OID}.cache" 
-  fi
-}
-
-# fun: timeline_index_get <num>
-# txt: return the EID of the event indexed by number passed as argument
-timeline_index_get ()
-{
-  if [[ "$1" -ge ${#TIMELINE_INDEX[@]} ]]; then
-    E=1 error $"Index out of bounds: %s in %s" "$1" "TIMELINE_INDEX"
-  else
-    echo "${TIMELINE_INDEX[$1]}"
-  fi
-}
-
-# fun: timeline_edit
-# txt: interactively edit your timeline
-timeline_edit ()
-{
-  local content auto_push
-  content="${ACCOUNT_PATH}/CONTENT"
-
-  if [[ -w "$content" ]]; then
-
-    auto_push="${CONFIG["account.${ACCOUNT_NAME}.auto-push"]}"
-
-    if ! [[ "$auto_push" ]]; then
-      auto_push="$(config_get account.auto-push)"
-    fi
-
-    ${EDITOR:-nano} "$content"
-
-    account_commit "manual: timeline edit command" | info_multi
-
-    if [[ "$auto_push" = "true" ]]; then
-      account_push | info_multi
-    fi
-
-  else
-    fatal $"Unable to edit CONTENT file"
-  fi
-}
-
-# fun: timeline_orphans
-# txt: show orphan events in the timeline
-timeline_orphans ()
-{
-  for eids in "${EVENTS_CROSS_REPLY[@]}" "${EVENTS_CROSS_TAGS[@]}" \
-    "${EVENTS_CROSS_SCORE[@]}"
-  do
-    for eid in $eids; do
-      if [[ -z "${EVENTS_KIND["$eid"]}" ]]; then
-        timeline_list_thread "$eid"
-      fi
-    done
-  done
-  timeline_index_save
-}
 #! /usr/bin/env bash
 # 
 # Copyright (C) 2016  Andrés J. Díaz <ajdiaz@ajdiaz.me>
@@ -6151,387 +3544,6 @@ main ()
   fi
 
   oid_save
-}
-## vim:ft=sh
-
-# env: ACCOUNT_NAME: A variable contains the name of the active account.
-export ACCOUNT_NAME=
-
-# env: ACCOUNT_PATH: A variable contains the path of the active account.
-export ACCOUNT_PATH=
-
-# env: ACCOUNT_OID: A variable contains the OID of the active account.
-export ACCOUNT_OID=
-
-# fun: account_list
-# txt: output a new-line separated list of defined accounts.
-account_list ()
-{
-  local account
-
-  for account in $(config_iter account.); do
-    case "$account" in
-      account.*.path)
-        account="${account#account.}"
-        account="${account%.path}"
-        echo "$account"
-      ;;
-    esac
-  done
-}
-
-# fun: account_load [name]
-# txt: load the account named as argument, if argument is omit, then try to
-#      load the account using the `account.default` configuration value or,
-#      if missing and there is only one configured account this one.
-#      Otherwise failed.
-account_load ()
-{
-  local name="$1" pull_url changes
-
-  name="${name:-${CONFIG[account.default]}}"
-
-  if [[ -z "$name" ]]; then
-
-    # try to infer the account name if none is provided
-    
-    read -ra all_accounts < <( account_list)
-
-    case "${#all_accounts[@]}" in
-      0) return 1;;
-      1) name="${all_accounts[0]}";;
-      *) E=1 fatal $"There are may accounts.";;
-    esac
-
-  fi
-
-  ACCOUNT_NAME="$name"
-  pull_url="${CONFIG["account.$ACCOUNT_NAME.pull-url"]}"
-
-  [[ "$pull_url" ]] ||
-    E=2 fatal $"Unknown account $ACCOUNT_NAME"
-
-  oid "$pull_url"
-  ACCOUNT_OID="${OID_CACHE["$pull_url"]}"
-  ACCOUNT_PATH="$(config_get "account.$ACCOUNT_NAME.path")"
-
-  export GNUPGHOME="${CONFIG[account.$ACCOUNT_NAME.keyring]}"
-
-  changes="$(git_helper -C "${ACCOUNT_PATH}" status --porcelain 2>/dev/null)" ||
-    E=3 error $"Unable to check account status"
-  if [[ "$changes" ]]; then
-    error $"Account is dirty. Maybe you edit your account manually and badly."
-    error $"To repair just run: git -C '%s' reset --hard %s" \
-      "$ACCOUNT_PATH" "$(get_main_branch)"
-    exit 100
-  fi
-}
-
-export NOACTIVE=$"There are no active accounts"
-
-# fun: account_exists [name]
-# txt: return true if the account name passed as argument is a initialized
-#      account. If name is omit, then use active account path.
-account_exists ()
-{
-  local path=
-  
-  [[ "$1" ]] && path="${CONFIG["account.$1.path"]}"
-
-  if [[ -z "$path" ]]; then
-    path="${ACCOUNT_PATH}"
-  fi
-  [[ -d "${path%.git}/.git" ]]
-}
-
-# fun: account_keygen <oid> <tstamp> <name>
-# txt: generate a new keypair for the account named name and the oid oid and
-#      specific tstamp
-account_keygen ()
-{
-  local name="$3" tstamp="$2" oid="$1"
-
-  config_set "account.$name.keyring" "$(try_path "${CONFIG[crypto.keyring-path]}")/$name"
-
-  mkdir -p "${CONFIG["account.$name.keyring"]}" &&
-    chmod 700 "${CONFIG["account.$name.keyring"]}"
-
-  export GNUPGHOME="${CONFIG["account.$name.keyring"]}"
-
-  crypto_keygen "$oid" "$tstamp" \
-    "${CONFIG[account.$name.passphrase-file]:-/dev/null}" 2>&1
-}
-
-# fun: account_create <name> <push_url> <pull_url> [path]
-# txt: create a new account named as name, with specific push and pull url,
-#      if path is provided then set the account path to this one, otherwise,
-#      use the default path for accounts as prefix
-account_create ()
-{
-  local name="$1" push_url="$2" pull_url="$3" path="$4" tstamp
-
-  tstamp="$(timestamp)"
-
-  [[ "${CONFIG["account.$name.path"]}" ]] &&
-    E=1 fatal $"Another account already exists with that name"
-
-  account_exists "$name" &&
-    E=1 fatal $"Trying to initializating an already initialized account"
-  
-  path="${path:-$(try_path "$(config_get account.path)")/$name}"
-  config_set "account.$name.push-url" "$push_url"
-  config_set "account.$name.pull-url" "$pull_url"
-  config_set "account.$name.path" "$path"
-
-  oid "$pull_url"
-
-  config_set "user.alias-${OID_CACHE["$pull_url"]}" "$name"
-
-  [[ "${CONFIG[account.auto-keygen]}" = "true" ]] &&
-    account_keygen "${OID_CACHE[$pull_url]}" "$tstamp" "$name"
-
-  # create empty dir for init
-  mkdir -p "$path" ||
-    E=1 fatal $"Unable to create account directory: %s" "$path"
-
-  git_helper -C "$path" init -b "${CONFIG['git.defaultBrach']:-main}" \
-    ${TIMELINE_EXPERIMENTAL_SHA256:+--object-format=sha256}
-  account_config "$path" "$pull_url" "$1" "$tstamp"
-
-  config_save "${CONFIG_FILE}"
-
-  git_helper -C "$path" add .
-
-  git_helper -C "$path" commit -m 'init' 2>&1
-  git_helper -C "$path" remote add origin "$push_url" 2>&1
-  git_helper -C "$path" push -u origin "${CONFIG['git.defaultBrach']:-main}" 2>&1 ||
-    E=2 fatal $"Unable to push initial commit"
-}
-
-# fun: account_clone <name> <push_url> <pull_url> [path]
-# txt: clone new account named as name, from the specific push url,
-#      if path is provided then set the account path to this one, otherwise,
-#      use the default path for accounts as prefix
-account_clone ()
-{
-  if [[ "$1" = "--force" ]]; then
-    local force=true; shift
-  else
-    local force=false
-  fi
-
-  local name="$1" push_url="$2" pull_url="$3" path="$4" tstamp=""
-
-  if ! $force && [[ "${CONFIG["account.$name.path"]}" ]]; then
-    E=1 fatal $"Another account already exists with that name"
-  else
-    path="${path:-$(try_path "$(config_get account.path)")/$name}"
-    config_set "account.$name.push-url" "$push_url"
-    config_set "account.$name.pull-url" "$pull_url"
-    config_set "account.$name.path" "$path"
-
-    oid "$pull_url"
-
-    if [[ -z "${CONFIG[account.$name.keyring]}" ]] &&
-      [[ "${CONFIG[account.auto-keygen]}" = "true" ]]; then
-          tstamp="$(timestamp)"
-          account_keygen "${OID_CACHE[$pull_url]}" "$tstamp" "$name"
-    fi
-
-    config_set "user.alias-${OID_CACHE["$pull_url"]}" "$name"
-    git_helper clone "$push_url" "$path" 2>&1
-    git_helper -C "$path" submodule init 2>&1
-
-    account_config "$path" "$pull_url" "$name" "$tstamp"
-
-    git_helper -C "$path" add .
-    git_helper -C "$path" commit -m 'clone: recreated keys' 2>&1
-
-    config_save "${CONFIG_FILE}"
-  fi
-}
-
-# fun: account_config <path> <pull_url> <name> <tstamp>
-# txt: configure user and other required things in the repo
-account_config ()
-{
-  local path="$1" pull_url="$2" name="$3" tstamp="$4" keyid_encr keyid_sign
-  oid "$pull_url"
-
-  git_helper -C "$path" config user.name "${OID_CACHE["$pull_url"]}"
-  git_helper -C "$path" config user.email "${OID_CACHE["$pull_url"]}@timeline"
-  git_helper -C "$path" config core.preloadindex true
-  git_helper -C "$path" config core.fscache true
-  git_helper -C "$path" config gc.auto 256
-
-  command touch "${path:?}/CONTENT"
-  command mkdir -p "${path:?}/FOLLOW"
-
-  if [[ "$tstamp" ]]; then
-    keyid_encr="$(crypto_keyid "${OID_CACHE["$pull_url"]}" "$tstamp")"
-    keyid_sign="${keyid_encr}"
-  else
-    keyid_encr="$(config_eval "account.$name.encrkey" "account.encrkey")"
-    keyid_sign="$(config_eval "account.$name.signkey" "account.signkey")"
-  fi
-
-  if [[ "$keyid_sign" ]]; then
-    export GNUPGHOME="${CONFIG[account.$name.keyring]}"
-    account_set_signkey "$name" "$keyid_sign"
-    crypto_export "${OID_CACHE["$pull_url"]}" "${path:?}/SIGNKEY"
-  fi
-
-  if [[ "$keyid_encr" ]]; then
-    export GNUPGHOME="${CONFIG[account.$name.keyring]}"
-    account_set_encrkey "$name" "$keyid_encr"
-    crypto_export "${OID_CACHE["$pull_url"]}" "${path:?}/ENCRKEY"
-  fi
-}
-
-# fun: account_commit [message]
-# txt: set a commit point into current active account
-account_commit ()
-{
-  [[ "$ACCOUNT_PATH" ]] || E=1 fatal $"No active account to commit"
-
-  git_helper -C "$ACCOUNT_PATH" add .
-
-  if config_eval "account.$ACCOUNT_NAME.signkey" "account.signkey" >/dev/null
-  then
-    git_helper -C "$ACCOUNT_PATH" commit -S -m "${1:-autosave}"
-  else
-    git_helper -C "$ACCOUNT_PATH" commit -m "${1:-autosave}"
-  fi
-}
-
-# fun: account_push [remote]
-# txt: push active account content to remote passed as argument or, if
-#      missing, to `origin`.
-account_push ()
-{
-  # TODO Add support for multiple branches
-  git_helper -C "${ACCOUNT_PATH}" push "${1:-origin}" "$(get_main_branch)"
-}
-
-# fun: account_refresh <path> [remote]
-# txt: rebase changes to current account from remote passed as argument or,
-#     if missing, `origin`.
-account_refresh ()
-{
-  local line path="$1" commit=false; shift
-  export path
-
-  git_helper -C "$path" fetch --all --jobs "${CONFIG[git.jobs]:-4}" 2>&1
-  # TODO Add support for multiple branches
-  git_helper -C "$path" rebase "${1:-origin}/$(get_main_branch "$path")" 2>&1
-  git_helper -C "$path" submodule update --remote \
-    --jobs "${CONFIG[git.jobs]:-4}" 2>&1
-
-  while read -r _ line; do
-    commit=true
-    case "$line" in
-      FOLLOW/*) account_import "${line#FOLLOW/}" "$path/$line";;
-    esac
-  done < <(git_helper -C "$path" status -s)
-
-  ${commit} &&
-    account_commit "chore: update submodules"
-
-  git_helper -C "$path" repack -a -d --depth=250 --window=250 2>&1
-}
-
-# fun: account_delete [name]
-# txt: delete account by name passed as argument or active account if none
-#      name is provided.
-account_delete ()
-{
-  local name="${1:-$ACCOUNT_NAME}" path pull_url
-
-  path="$(config_get "account.$name.path")"
-  pull_url="$(config_get "account.$name.pull-url")"
-  
-  oid "$pull_url"
-
-  if [[ -d "$path" ]]; then
-    rm -rf "$path"
-  fi
-
-  config_unset "account.$name"
-  config_unset "user.alias-${OID_CACHE["$pull_url"]}"
-
-  config_save "${CONFIG_FILE}"
-}
-
-# fun: account_set_signkey <name> <keyid>
-# txt: set signing keyid for an existant account
-account_set_signkey ()
-{
-  if [[ "$2" ]]; then
-    git_helper -C "$(config_get "account.$1.path")" config user.signingkey "$2"
-  else
-    git_helper -C "$(config_get "account.$1.path")" config --unset user.signingkey
-  fi
-
-  config_set "account.$1.signkey" "$2"
-}
-
-# fun: account_set_encrkey <name> <keyid>
-# txt: set encryption keyid for an existant account
-account_set_encrkey ()
-{
-  config_set "account.$1.encrkey" "$2"
-}
-
-# fun: account_preview <url> [filter]
-# txt: preview the contents of the specified url repo filtered with the
-#      specific if present.
-account_preview ()
-{
-  local tmpdir depth
-  tmpdir="$(temp_dir)"
-  depth="${CONFIG[account.preview-depth]}"
-
-  [[ "$depth" = "-1" ]] && depth=""
-
-  git_helper clone ${depth:+--depth "${depth}"} "$1" "${tmpdir}" 2>&1 |
-    info_multi ||
-      E=1 error $"Unable to clone remote repo"
-
-  oid "$1"
-  timeline_load "${tmpdir}" "${OID_CACHE["$1"]}"
-  shift
-  timeline_list "$@"
-}
-
-# fun: account_keys
-# txt: print the associated keys for the current account
-account_keys ()
-{
-  local fpr flags
-
-  while read -r fpr flags; do
-    [[ "$fpr" = "${CONFIG[account.$ACCOUNT_NAME.signkey]}" ]] &&
-      flags+='S'
-
-    [[ "$fpr" = "${CONFIG[account.$ACCOUNT_NAME.encrkey]}" ]] &&
-      flags+='E'
-
-    echo "$fpr $flags"
-  done < <(crypto_list "=${ACCOUNT_OID}@timeline")
-}
-
-# fun: account_import  <account> <path>
-# txt: get public keys references in path
-account_import ()
-{
-  local line account="$1" path="$2";
-
-  # shellcheck disable=SC2016
-  while read -r line; do
-    case "$line" in
-      ENCRKEY|SIGNKEY) crypto_import "$account" "$path/$line"
-    esac
-  done < <(git_helper -C "$path" show --pretty="" --name-only)
 }
 ## vim:ft=sh
 
@@ -6971,5 +3983,3002 @@ config_list ()
   for var in "${!CONFIG[@]}"; do
     echo "${var}=${CONFIG[$var]}"
   done
+}
+## vim: ft=sh
+
+# env: OID_CACHE
+# txt: save a generated oids to avoid recalculation
+declare -gA OID_CACHE
+
+# fun: fun <function_name>
+# txt: return true if function is defined
+fun () { declare -f "$1" >/dev/null 2>&1; }
+
+# fun: input <pass_text>
+# txt: return true if the text typed by the user match with the pass_text
+input ()
+{
+  local reply i
+  read -r reply
+  for i in "$@"; do
+    [[ "$i" = "$reply" ]] && return 0
+  done
+
+  return 1
+}
+
+# fun: prefix <item>
+# txt: prefix each line in stdin with a item and output to stdout
+prefix () { local line; while read -r line; do echo "$1$line"; done; }
+
+# fun: mute <command> [args]
+# txt: run command quietly
+mute () { "$@" >/dev/null 2>&1; }
+
+# fun: timestamp
+# txt: print current timestamp in UTC
+timestamp ()
+{
+  # shellcheck disable=SC2183
+  printf "%(%s)T"
+}
+
+# fun: join <delim> <array_items>
+# txt: return a delim separated list of array_items
+join ()
+{
+  local delim="$1"; shift
+  for x in "$@"; do
+    printf "%s%s" "$x" "$delim"
+  done
+}
+
+# fun: oid <string>
+# txt: create a unique object id for the string passed as argument
+oid ()
+{
+  if [[ -z "${OID_CACHE["$1"]}" ]]; then
+    OID_CACHE["$1"]="$(git_helper hash-object --stdin <<<"${1%.git}")"
+  fi
+}
+
+# fun: oid_save
+# txt: save the list of OIDs to a cache file
+oid_save ()
+{
+  local i=0
+  [[ "${CONFIG[oid.use-cache]}" != "true" ]] && return
+  {
+    echo "declare -Axg OID_CACHE=("
+    for key in "${!OID_CACHE[@]}"; do
+      echo "[\"$key\"]=\"${OID_CACHE[$key]}\""
+      [[ $((++i)) -gt ${CONFIG[oid.max-cache-size]:-1000} ]] && break
+    done
+    echo ")"
+  } > "${CACHE_DIR}/oid.cache"
+}
+
+# fun: oid_load
+# txt: load precalculated OIDs from cache file
+oid_load ()
+{
+  [[ "${CONFIG[oid.use-cache]}" != "true" ]] && return
+
+  # shellcheck source=/dev/null
+  [[ -r "${CACHE_DIR}/oid.cache" ]] &&
+    source "${CACHE_DIR}/oid.cache"
+}
+
+# fun: try_path <path_list>
+# txt: given a path list, return the first existant item in the list, or, if
+#      none exists, the first one. NOTE: this function does not allow colons
+#      in path items.
+try_path ()
+{
+  local IFS=':'
+  for path in $1; do
+    if [ -d "$path" ]; then
+      echo "$path"
+      return
+    fi
+  done
+  echo "${1%%:*}"
+}
+
+# fun: valid_url <url>
+# txt: return true if url is valid, otherwise return false
+valid_url ()
+{
+  case "$1" in
+    ssh://*|http://*|https://*|file://*) return 0
+  esac
+  return 1
+}
+
+# fun: has_hmac <eid>
+# txt: return true if the eid has an hmac
+has_hmac ()
+{
+  local hmac; hmac="${1#*:}"
+  [[ "${hmac}" != "${hmac#*:}" ]]
+}
+
+# fun: username <eid|account_id>
+# txt: return username from a event_id or account_id using alias defined in
+#      configuration and short form if 'timeline.use-short-ids' is true.
+username ()
+{
+  local uname="$1"
+  
+  uname="${uname%%:*}" # remove timestamp if present
+  uname="${uname#@}"  # remove trail @ if present
+
+  alias_name="${CONFIG["user.alias-$uname"]}"
+  short_ids="${CONFIG["timeline.use-short-ids"]}"
+
+  if [[ "$alias_name" ]]; then
+    uname="$alias_name"
+  elif [[ "$short_ids" = "true" ]]; then
+    uname="${uname:0:8}"
+  fi
+
+  echo "@${uname}"
+}
+
+# fun: uid <name>
+# txt: reverse search for name in list of account alias
+uid ()
+{
+  local key
+  for key in "${!CONFIG[@]}"; do
+    case "$key" in
+      user.alias-*)
+        [[ "${CONFIG[$key]}" = "$1" ]] && echo "${key#*-}" && return 0;;
+    esac
+  done
+}
+
+# fun: expand_user <userlist>
+# txt: expand a user list to a list of valids uids
+expand_user ()
+{
+  local u
+  for u in ${1//,/ }; do
+    case "$u" in
+      =*) echo "${CONFIG["group.${u%=}"]}";;
+      *) uid "${u%@}";;
+    esac
+  done
+}
+
+# fun: is_decimal <num>
+# txt: return true if num is a decimal based number.
+is_decimal () {
+  [[ "$1" = "0" ]] && return 0
+  mute let i="10#${1#-}" 2>/dev/null
+}
+
+# fun: any <list> <list>
+# txt: return true if any element of the first list is also in the second
+#      list.
+any ()
+{
+  case "$1" in
+    '*'|"$2") return 0;;
+    '') return 1;;
+  esac
+
+  local -A list
+
+  for item in $1; do
+    list["$item"]=1
+  done
+
+  for item in $2; do
+    [[ "${list["$item"]}" ]] && return 0
+  done
+  return 1
+}
+
+# fun: git_helper <cmds>+
+# txt: send commands to git assuming some things
+git_helper ()
+{
+  HOME=/dev/null command git "$@"
+}
+
+# fun: get_main_branch [account_path]
+# txt: get the default branch for git given an account path or using current
+#      enabled account if none present.
+get_main_branch ()
+{
+  local ref=
+  if [[ -r "${1:-$ACCOUNT_PATH}/.git/HEAD" ]]; then
+    read -r _ ref < "${1:-$ACCOUNT_PATH}/.git/HEAD" 2>/dev/null
+  fi
+  if [[ "$ref" ]]; then
+    echo "${ref##*/}"
+  else
+    echo "${CONFIG[git.defaultBranch]:-main}"
+  fi
+}
+
+# fun: on_exit <callback>
+# txt: run callback on exit
+declare -a _on_exit=()
+trap _handler_on_exit EXIT
+_handler_on_exit ()
+{
+  local fun
+  for fun in "${_on_exit[@]}"; do
+    "$fun";
+  done
+}
+on_exit ()
+{
+  _on_exit+=( "$1" )
+}
+
+# fun: temp_file
+# txt: outputs a temporary file which will ensure that will be eliminated
+#      when exectution ends.
+temp_file ()
+{
+  local name="${TMPDIR:-/tmp}/temp_$$.$RANDOM$RANDOM"
+  : > "$name"
+  echo "$name"
+}
+_temp_file_exit ()
+{
+  rm -f "${TMPDIR:-/tmp}/temp_$$".*
+}
+on_exit _temp_file_exit
+
+# fun: temp_dir
+# txt: outputs a temporary directory which will be removed when tl dies
+temp_dir ()
+{
+  local name="${TMPDIR:-/tmp}/tempdir_$$.$RANDOM"
+  mkdir -p "$name"
+  echo "$name"
+}
+_temp_dir_exit ()
+{
+  rm -rf "${TMPDIR:-/tmp}/tempdir_$$".*
+}
+on_exit _temp_dir_exit
+## vim:ft=sh
+
+# env: TIMELINE_CONTENT: The path relative to the account root, where
+#      CONTENT file is stored.
+TIMELINE_CONTENT="CONTENT"
+
+# env: TIMELINE_FOLLOW The path relative to the account root, where
+#      FOLLOW dir is located.
+TIMELINE_FOLLOW="FOLLOW"
+
+# env: TIMELINE_PRINTED: Internal associative array which contains the EID
+#      of events alredy printed to avoid duplicates in the current execution.
+declare -A TIMELINE_PRINTED=()
+
+# env: TIMELINE_WAS_PRINTED: Internal associative array which contains the EID
+#      of events printed in some previous execution.
+declare -A TIMELINE_WAS_PRINTED=()
+
+# env: TIMELINE_INDEX: Internal array used to print an index in timeline to
+#      easy refer to an event
+declare -a TIMELINE_INDEX=()
+
+# fun: timeline_load [path] [oid]
+# txt: load the timeline from current active account into memory
+timeline_load ()
+{
+  local oid="$2" content_path follow_path show_own path="$1"
+  local -a pattern
+
+  if [[ -z "$path" ]]; then
+    path="${ACCOUNT_PATH}"
+    oid="${ACCOUNT_OID}"
+  fi
+
+  content_path="$path/$TIMELINE_CONTENT"
+  follow_path="$path/$TIMELINE_FOLLOW"
+  show_own="${CONFIG["timeline.own-posts"]}"
+  read -ra pattern  <<< "${CONFIG["timeline.loading-pattern"]}"
+
+  if ! [[ -r "$content_path" ]]; then
+    error $"Content path does not exists."
+    error $"Maybe you delete your account data?"
+    E=1 error $"Try $0 account rebuild ${ACCOUNT_NAME} to recreate it automatically"
+  fi
+
+  echo -en $"> Loading ${pattern[$((i++ % ${#pattern[@]}))]}\r" >&4
+  # Load our account timeline
+  [[ "$show_own" = "false" ]] ||
+    event_load "$oid" "${content_path}"
+
+  local dir i=0
+
+  if [[ -d "${follow_path}" ]]; then
+    for dir in "${follow_path}"/*; do
+      [[ -d "$dir" ]] || continue  # ignore non-dir files
+      [[ -r "$dir/$TIMELINE_CONTENT" ]] || continue # ignore non initialized
+
+      dir="${dir%/}"
+      echo -en $"> Loading ${pattern[$((i++ % ${#pattern[@]}))]}\r" >&4
+      event_load "${dir##*/}" "${dir}/$TIMELINE_CONTENT"
+    done
+  fi
+}
+
+# fun: timeline_show_thread <eid>
+# txt: show the thread of the specific EID
+timeline_show_thread ()
+{
+  unset TIMELINE_PRINTED["$1"]
+  for event in $(event_labels "$1"); do
+    timeline_show_thread "$event"
+  done
+  for event in $(event_replies "$1"); do
+    timeline_show_thread "$event"
+  done
+  return 0
+}
+
+# fun: timeline_list_thread <eid>
+# txt: print thread for specific eid passed as argument
+timeline_list_thread ()
+{
+  local prefix indent date kind mesg tags link name eid="$1"
+  local flag show_tags show_replies flags=''
+
+  # item is already printed? then do nothing
+  [[ "${TIMELINE_PRINTED["$eid"]}" ]] && return
+
+  date="${EVENTS_DATE["$eid"]}"
+  kind="${EVENTS_KIND["$eid"]}"
+  name="$(username "$eid")"
+  sign="${EVENTS_SIGN["$eid"]}"
+  indent="${CONFIG["timeline.$kind.indent"]}"
+  prefix="${CONFIG["timeline.$kind.prefix"]}"
+
+  case "$kind" in
+    post)
+      mesg="${EVENTS_MESG["$eid"]}"
+      ;;
+    tag)
+      tags="${EVENTS_TAGS["$eid"]// /, }"
+      # shellcheck disable=SC2153
+      link="${EVENTS_LINK["$eid"]}"
+      format_compose "timeline.$kind" tags "${2}${indent}${prefix}${tags}"
+      ;;
+    reply)
+      mesg="${EVENTS_MESG["$eid"]}"
+      link="${EVENTS_LINK["$eid"]}"
+      ;;
+  esac
+
+  if [[ "${EVENTS_CFLAGS["$eid"]}" ]]; then
+    case "${EVENTS_CFLAGS["$eid"]}" in
+      'u') flags+="${CONFIG["timeline.$kind.flag-encrypted-good"]}";;
+      '-') flags+="${CONFIG["timeline.$kind.flag-encrypted-unknown"]}";;
+      'r') flags+="${CONFIG["timeline.$kind.flag-encrypted-revoked"]}";;
+      'e') flags+="${CONFIG["timeline.$kind.flag-encrypted-expired"]}";;
+      *) flags+="${CONFIG["timeline.$kind.flag-encrypted-bad"]}";;
+    esac
+  else
+    flags+="${CONFIG["timeline.$kind.flag-encrypted-none"]}"
+  fi
+
+  case "${sign}" in
+    G*) flags+="${CONFIG["timeline.$kind.flag-signed-good"]}";;
+    B*) flags+="${CONFIG["timeline.$kind.flag-signed-bad"]}";;
+    U*) flags+="${CONFIG["timeline.$kind.flag-signed-unknown"]}";;
+    X*|Y*) flags+="${CONFIG["timeline.$kind.flag-signed-expired"]}";;
+    R*) flags+="${CONFIG["timeline.$kind.flag-signed-revoked"]}";;
+    E*) flags+="${CONFIG["timeline.$kind.flag-signed-missing"]}";;
+    N*|'') flags+="${CONFIG["timeline.$kind.flag-signed-none"]}";;
+    *) flags+="${sign}";;
+  esac
+
+  if [[ "${CONFIG["timeline.show-untrusted-items"]}" = "true" ]]; then
+    [[ "${sign//\*/}" != "${sign}" ]] &&
+      flags+="${CONFIG["timeline.$kind.flag-trusted"]}" ||
+      flags+=' '
+  fi
+
+  if [[ "${TIMELINE_WAS_PRINTED[$eid]}" ]]; then
+    flags+=" "
+  else
+    flags+="${CONFIG["timeline.$kind.flag-new"]}"
+  fi
+
+  # composing the output
+  format_compose "timeline.$kind" index "${#TIMELINE_INDEX[@]}"
+  format_compose "timeline.$kind" name "$name"
+  format_compose "timeline.$kind" date "$date"
+  format_compose "timeline.$kind" link "$link"
+  format_compose "timeline.$kind" score "${EVENTS_SCORE["$eid"]}"
+  format_compose "timeline.$kind" mesg "${2}${indent}${prefix}${mesg}"
+
+  TIMELINE_PRINTED["$eid"]=1
+  TIMELINE_INDEX+=( "$eid" )
+
+  show_tags="${CONFIG["timeline.show-tags"]}"
+  show_replies="${CONFIG["timeline.show-replies"]}"
+
+  if [[ "$(event_labels "$eid")" ]]; then
+    flags+="${CONFIG["timeline.$kind.flag-tagged"]}"
+  else
+    flags+=" "
+  fi
+
+  if [[ "$(event_replies "$eid")" ]]; then
+    flags+="${CONFIG["timeline.$kind.flag-replied"]}"
+  else
+    flags+=" "
+  fi
+
+  if filter_eval "$eid"; then
+    format_compose "timeline.$kind" flags "${flags}"
+    format_dumps "timeline.$kind"
+  fi
+
+  if [[ "$show_tags" = "true" ]]; then
+    for tags in $(event_labels "$eid"); do
+      timeline_list_thread "$tags" "$2${indent}"
+    done
+  fi
+
+  if [[ "$show_replies" = "true" ]]; then
+    for reply in $(event_replies "$eid"); do
+      timeline_list_thread "$reply" "$2${indent}"
+    done
+  fi
+}
+
+# fun: timeline_list [filter]
+# txt: print the entire timelist
+timeline_list ()
+{
+  local eid
+  local -a filter_list
+
+  TIMELINE_PRINTED=()
+  TIMELINE_INDEX=()
+
+  if [[ $# -eq 0 ]]; then
+    read -ra filter_list <<< "${CONFIG[timeline.filter]}"
+    filter_add "${filter_list[@]}"
+  else
+    filter_add "$@"
+  fi
+
+  for eid in "${EVENTS_SORTED[@]}"; do
+    if [[ "${EVENTS_KIND["$eid"]}" = "post" ]]; then
+      timeline_list_thread "$eid" ''
+    fi
+  done
+
+  timeline_index_save
+}
+
+# fun: timeline_index_save
+# txt: dumps TIMELINE_INDEX to a sourceable file to be loaded before any
+#      input to identify an event easily.
+timeline_index_save ()
+{
+  local var
+  {
+    echo "declare -ag TIMELINE_INDEX=("
+    for var in "${TIMELINE_INDEX[@]}"; do
+      echo "'$var'"
+    done
+    echo ")"
+
+    echo "declare -Ag TIMELINE_WAS_PRINTED=("
+    for var in "${!TIMELINE_WAS_PRINTED[@]}"; do
+      echo "[$var]=1"
+    done
+    for var in "${!TIMELINE_PRINTED[@]}"; do
+      [[ "${TIMELINE_WAS_PRINTED[$var]}" ]] || echo "[$var]=1"
+    done
+    echo ")"
+  } > "${CACHE_DIR}/index.${ACCOUNT_OID}.cache"
+}
+
+# fun: timeline_index_load
+# txt: source index saved file with timeline_index_save
+timeline_index_load ()
+{
+  # shellcheck source=/dev/null
+  if [[ -r "${CACHE_DIR}/index.${ACCOUNT_OID}.cache" ]]; then
+    source "${CACHE_DIR}/index.${ACCOUNT_OID}.cache" 
+  fi
+}
+
+# fun: timeline_index_get <num>
+# txt: return the EID of the event indexed by number passed as argument
+timeline_index_get ()
+{
+  if [[ "$1" -ge ${#TIMELINE_INDEX[@]} ]]; then
+    E=1 error $"Index out of bounds: %s in %s" "$1" "TIMELINE_INDEX"
+  else
+    echo "${TIMELINE_INDEX[$1]}"
+  fi
+}
+
+# fun: timeline_edit
+# txt: interactively edit your timeline
+timeline_edit ()
+{
+  local content auto_push
+  content="${ACCOUNT_PATH}/CONTENT"
+
+  if [[ -w "$content" ]]; then
+
+    auto_push="${CONFIG["account.${ACCOUNT_NAME}.auto-push"]}"
+
+    if ! [[ "$auto_push" ]]; then
+      auto_push="$(config_get account.auto-push)"
+    fi
+
+    ${EDITOR:-nano} "$content"
+
+    account_commit "manual: timeline edit command" | info_multi
+
+    if [[ "$auto_push" = "true" ]]; then
+      account_push | info_multi
+    fi
+
+  else
+    fatal $"Unable to edit CONTENT file"
+  fi
+}
+
+# fun: timeline_orphans
+# txt: show orphan events in the timeline
+timeline_orphans ()
+{
+  for eids in "${EVENTS_CROSS_REPLY[@]}" "${EVENTS_CROSS_TAGS[@]}" \
+    "${EVENTS_CROSS_SCORE[@]}"
+  do
+    for eid in $eids; do
+      if [[ -z "${EVENTS_KIND["$eid"]}" ]]; then
+        timeline_list_thread "$eid"
+      fi
+    done
+  done
+  timeline_index_save
+}
+## vim:ft=sh
+
+# fun: [E=code] fatal <message>
+# txt: print fatal message to stderr, if environment variable `$E` is
+#      present, then exists with specified error code in `$E` (only if
+#      non-interactive)
+fatal ()
+{
+  E="${E:-1}" error "$@"
+}
+
+# fun: error <message>
+# txt: print error message to stderr
+error ()
+{
+  if [ "$E" ]; then
+    local err_kind="fatal"
+  else
+    local err_kind="error"
+  fi
+
+  format_compose "timeline.$err_kind" name \
+    "$(config_get timeline.${err_kind}.name)"
+  format_compose "timeline.$err_kind" date "$(timestamp)"
+  # shellcheck disable=SC2059
+  format_compose "timeline.$err_kind" mesg "$(printf -- "$@")"
+  format_dumps "timeline.$err_kind" >&4
+
+  if [ "$E" ]; then
+    exit "$E"
+  fi
+}
+
+# fun: error_multi
+# txt: get messages from stdin and print informational messages to stderr
+error_multi ()
+{
+  format_compose timeline.error name "${CONFIG[timeline.error.name]:-ERROR}"
+  format_compose timeline.error date "$(printf "%(%s)T")"
+  _i() {
+    format_compose timeline.error mesg "${2%$'\n'}"
+    format_dumps timeline.error >&4
+  }
+  # shellcheck disable=SC2034
+  mapfile -c 1 -C _i
+}
+
+exec 4>&2
+unset err_handler
+coproc err_handler ( read -r line && error "$line";)
+eval "exec 2>&${err_handler[1]}"
+## vim:ft=sh
+
+# fun: crypto_requirements
+# txt: ensure that specific requirements for crypto management are
+#      present in the system
+crypto_requirements ()
+{
+  REQUIREMENTS+=( "+gpg" )
+  reqs_eval
+}
+
+# fun: crypto_keygen <account_id> <tstamp> <passphrase-file>
+# txt: generate key pair for the specific account and echoes the key_id of the
+#      generated one. The crver is v1 by default. Read tl-crypto(7) man page
+#      for details.
+crypto_keygen ()
+{
+  crypto_requirements
+
+  local keyid
+
+  gpg_helper \
+    --passphrase-file "$3" \
+    --quick-gen-key "$1@$2" "ed25519" cert,sign never ||
+    E=3 error $"Unable to create master key for account $1 (v1)."
+
+  keyid="$(crypto_keyid "$1@$2")"
+
+  [[ "$keyid" ]] || E=3 fatal $"Unable to retrieve recent generate keyID"
+
+  gpg_helper \
+    --passphrase-file "$3" \
+    --quick-add-key "$keyid" "cv25519" encr never ||
+    E=3 error $"Unable to create encryption key for account $1 (v1)"
+
+  gpg_helper \
+    --passphrase-file "$3" \
+    --quick-add-uid "$keyid" "$1@timeline" ||
+    E=3 error $"Unable to create user-id for account $1 (v1)"
+
+  echo -e "5\ny\nsave\n" | 
+    gpg_helper --no-batch --command-fd 0 \
+      --expert --edit-key "$keyid" trust >/dev/null 2>/dev/null ||
+      E=3 error $"Unable to trust keyID $keyid"
+}
+
+# fun: crypto_keyid <account_id>
+# txt: get the fingerprint for the key associated to specific account id.
+crypto_keyid ()
+{
+  local -a out
+  mapfile -d $'\n' out < <(
+    gpg_helper --keyid-format long -k "$1${2:+@$2}"
+  )
+  [[ "${out[1]// /}" ]] &&
+    echo "${out[1]// /}"
+}
+
+# fun: crypto_import <account_id> <keyfile>
+# txt: import a key from the account_id into the timeline keyring
+crypto_import ()
+{
+  local status account="$1" keyfile="$2" kind keyid uid
+
+  crypto_requirements
+  status="$(temp_file)"
+
+  gpg_helper --status-file "$status" --import "$keyfile" ||
+    E=3 error $"Unable to import key file %s" "$keyfile"
+
+  while read -r _ kind keyid uid _; do
+    case "$kind" in
+      IMPORTED) 
+        if [[ "${uid%@*}" != "$account" ]]; then
+          if gpg_helper --yes --delete-keys "$keyid"; then
+            error $"Ignoring key %s: account does not match %s != %s" \
+              "$keyid" "${uid%@*}" "$account"
+          else
+            error $"\!\!\! SECURITY RISK \!\!\!"
+            error $"You've been imported an invalid key."
+            error $"Key %s does not belong to account owner %s" "$keyid" "$account."
+            error $"Timeline was try to remove it from the keyring, but something weird happened."
+            error $"Read manual tl-crypto(1) to know more about how to handle this."
+            E=3 fatal $"Unable to remove an invalid key."
+          fi
+        fi
+    esac
+  done < "$status"
+}
+
+# fun: crypto_export <account_id> <file>
+# txt: export public key of the specific account id to file
+crypto_export ()
+{
+  crypto_requirements
+  gpg_helper --no-comments --no-emit-version \
+    --armor --export "$1@timeline" > "$2" ||
+    E=3 error $"Unable to export keys for account $1"
+}
+
+# fun: crypto_revoke <account_name> <key_id>
+# txt: revoke a specific key_id
+crypto_revoke ()
+{
+  local rcert
+  local homedir="${CONFIG[account.$1.keyring]}"
+  crypto_requirements
+
+  [[ -r "${homedir}/openpgp-revocs.d/$2.rev" ]] ||
+    E=4 fatal $"KeyID $1 does not have revocation certificate."
+
+  rcert="$(< "${homedir}/openpgp-revocs.d/$2.rev")"
+  gpg_helper --import <<< "${rcert//:---/---}" || # remove : guard 
+    E=4 fatal $"Unable to revoke key"
+}
+
+# fun: crypto_uid <key_id> [match]
+# txt: echoes the uid of the key_id or, if match provided, return true if
+#      the uid match the pattern.
+crypto_uid ()
+{
+  local line
+  while read -r line; do
+    case "$line" in
+      uid:*)
+        IFS=: read -r -a line <<< "$line"
+        if [[ "$2" ]]; then
+          [[ "${line[9]}" = "$2" ]] && return 0
+        else
+          echo "${line[9]}"
+        fi
+        ;;
+    esac
+  done < <(gpg_helper --with-colons -k "$1")
+  ! [[ "$2" ]]
+}
+
+# fun: crypto_validate <key_id> <crver>
+# txt: validate that specific key_id is conforminr crver specification
+crypto_validate ()
+{
+  local kind val data
+  crypto_requirements
+
+  data="$(gpg_helper --keyid-format long -k "$1@timeline" 2>&1)" ||
+    E=3 error $"Unable to validate key $1 ($2). Error was: '$data'."
+
+  case "$2" in
+    v1)
+      while read -r kind val _; do
+        case "$kind" in
+          pub)
+            [[ "${val#ed25519/}" = "${val}" ]] &&
+              E=3 error $"Key $1 does not conform $2: Pub part is no ED25519"
+            ;;
+          sub)
+            [[ "${val#cv25519/}" = "${val}" ]] &&
+              E=3 error $"Key $1 does not conform $2: Sub part is no CV25519"
+            ;;
+        esac
+      done <<< "$data"
+      ;;
+  esac
+}
+
+# fun: crypto_list
+# txt: echoes a list of keys present in keyring
+crypto_list ()
+{
+  local line flags pub=false
+  while IFS=: read -r -a line; do
+    case "${line[0]}" in
+      pub)
+        case "${line[1]}" in
+          *r*) flags="R";;
+          *) flags="";;
+        esac
+        pub=true;;
+      fpr) "$pub" && echo "${line[9]} $flags";;
+      *) pub=false;;
+    esac
+  done < <(gpg_helper --with-colons -k "$@")
+}
+
+# fun: crypto_encrypt [--anon] <recipient> <message> <passfile>
+# txt: return a encrypted message for the specific recipient in REPLY var
+crypto_encrypt ()
+{
+  local mesg arg='-r'
+  local -a payload
+  crypto_requirements
+
+  [[ "$1" = "--anon" ]] && arg="-R" && shift
+
+  mapfile -t -s 2 payload < <(
+    gpg_helper -vv \
+      --armor --passphrase-file "$3" \
+      --sign --encrypt --no-comments --no-emit-version \
+      "$arg" "$1@timeline" <<< "$2"
+  )
+
+  [[ ${#payload[@]} -eq 0 ]] && return 1
+
+  payload[-1]=''
+  REPLY="${payload[*]}"
+  REPLY="${REPLY// /}"
+}
+
+# fun: crypto_decrypt <account_id> <message> <passfile> [statusfile]
+# txt: decrypt a previously encrypted message
+crypto_decrypt ()
+{
+  local -a args
+  local -a mesg=(
+    "-----BEGIN PGP MESSAGE-----"
+    ""
+    "$2"
+    "-----END PGP MESSAGE-----"
+  )
+  crypto_requirements
+
+  [[ "$4" ]] && args+=( "--status-file=$4" )
+
+  read -r < <(
+    gpg_helper "${args[@]}" --passphrase-file "$3" -v --armor --decrypt \
+      --try-secret-key "$1@timeline" <<< "$(join $'\n' "${mesg[@]}")"
+  ) 2>&1 || REPLY=''
+}
+
+# fun: crypto_keyflags <keyid>
+# txt: put in $REPLY a list of flags for the keyid passed as argument
+crypto_keyflags ()
+{
+  local -a line
+  local aux
+  REPLY=''
+
+  while IFS=: read -ra line ; do
+    case "${line[0]}" in
+      pub|sub) aux="${line[1]}";;
+      fpr|fp2) [[ "${line[9]}" = "$1" ]] && REPLY="$aux" || true;;
+    esac
+  done < <(gpg_helper --with-colons -k "$1") ||
+    E=3 fatal $"Unable to retrieve keyflags for key %s" "$1"
+}
+
+# fun: gpg_helper [args]
+# txt: run gpg command with some well known parameters
+gpg_helper ()
+{
+  local homedir
+
+  [[ "$GNUPGHOME" ]] ||
+    E=3 fatal $"GNUPGHOME not set executing $*"
+
+  command "${CONFIG[crypto.gnupg-binary]:-exit}" --batch --no-tty \
+    --no-auto-key-retrieve --auto-key-locate "local" \
+    --trust-model always \
+    --personal-cipher-preferences AES256 \
+    --personal-digest-preferences SHA256 \
+    --disable-cipher-algo 3DES,IDEA,CAST5,BLOWFISH \
+    "$@"
+}
+## vim:ft=sh
+
+# env: ACCOUNT_NAME: A variable contains the name of the active account.
+export ACCOUNT_NAME=
+
+# env: ACCOUNT_PATH: A variable contains the path of the active account.
+export ACCOUNT_PATH=
+
+# env: ACCOUNT_OID: A variable contains the OID of the active account.
+export ACCOUNT_OID=
+
+# fun: account_list
+# txt: output a new-line separated list of defined accounts.
+account_list ()
+{
+  local account
+
+  for account in $(config_iter account.); do
+    case "$account" in
+      account.*.path)
+        account="${account#account.}"
+        account="${account%.path}"
+        echo "$account"
+      ;;
+    esac
+  done
+}
+
+# fun: account_load [name]
+# txt: load the account named as argument, if argument is omit, then try to
+#      load the account using the `account.default` configuration value or,
+#      if missing and there is only one configured account this one.
+#      Otherwise failed.
+account_load ()
+{
+  local name="$1" pull_url changes
+
+  name="${name:-${CONFIG[account.default]}}"
+
+  if [[ -z "$name" ]]; then
+
+    # try to infer the account name if none is provided
+    
+    read -ra all_accounts < <( account_list)
+
+    case "${#all_accounts[@]}" in
+      0) return 1;;
+      1) name="${all_accounts[0]}";;
+      *) E=1 fatal $"There are may accounts.";;
+    esac
+
+  fi
+
+  ACCOUNT_NAME="$name"
+  pull_url="${CONFIG["account.$ACCOUNT_NAME.pull-url"]}"
+
+  [[ "$pull_url" ]] ||
+    E=2 fatal $"Unknown account $ACCOUNT_NAME"
+
+  oid "$pull_url"
+  ACCOUNT_OID="${OID_CACHE["$pull_url"]}"
+  ACCOUNT_PATH="$(config_get "account.$ACCOUNT_NAME.path")"
+
+  export GNUPGHOME="${CONFIG[account.$ACCOUNT_NAME.keyring]}"
+
+  changes="$(git_helper -C "${ACCOUNT_PATH}" status --porcelain 2>/dev/null)" ||
+    E=3 error $"Unable to check account status"
+  if [[ "$changes" ]]; then
+    error $"Account is dirty. Maybe you edit your account manually and badly."
+    error $"To repair just run: git -C '%s' reset --hard %s" \
+      "$ACCOUNT_PATH" "$(get_main_branch)"
+    exit 100
+  fi
+}
+
+export NOACTIVE=$"There are no active accounts"
+
+# fun: account_exists [name]
+# txt: return true if the account name passed as argument is a initialized
+#      account. If name is omit, then use active account path.
+account_exists ()
+{
+  local path=
+  
+  [[ "$1" ]] && path="${CONFIG["account.$1.path"]}"
+
+  if [[ -z "$path" ]]; then
+    path="${ACCOUNT_PATH}"
+  fi
+  [[ -d "${path%.git}/.git" ]]
+}
+
+# fun: account_keygen <oid> <tstamp> <name>
+# txt: generate a new keypair for the account named name and the oid oid and
+#      specific tstamp
+account_keygen ()
+{
+  local name="$3" tstamp="$2" oid="$1"
+
+  config_set "account.$name.keyring" "$(try_path "${CONFIG[crypto.keyring-path]}")/$name"
+
+  mkdir -p "${CONFIG["account.$name.keyring"]}" &&
+    chmod 700 "${CONFIG["account.$name.keyring"]}"
+
+  export GNUPGHOME="${CONFIG["account.$name.keyring"]}"
+
+  crypto_keygen "$oid" "$tstamp" \
+    "${CONFIG[account.$name.passphrase-file]:-/dev/null}" 2>&1
+}
+
+# fun: account_create <name> <push_url> <pull_url> [path]
+# txt: create a new account named as name, with specific push and pull url,
+#      if path is provided then set the account path to this one, otherwise,
+#      use the default path for accounts as prefix
+account_create ()
+{
+  local name="$1" push_url="$2" pull_url="$3" path="$4" tstamp
+
+  tstamp="$(timestamp)"
+
+  [[ "${CONFIG["account.$name.path"]}" ]] &&
+    E=1 fatal $"Another account already exists with that name"
+
+  account_exists "$name" &&
+    E=1 fatal $"Trying to initializating an already initialized account"
+  
+  path="${path:-$(try_path "$(config_get account.path)")/$name}"
+  config_set "account.$name.push-url" "$push_url"
+  config_set "account.$name.pull-url" "$pull_url"
+  config_set "account.$name.path" "$path"
+
+  oid "$pull_url"
+
+  config_set "user.alias-${OID_CACHE["$pull_url"]}" "$name"
+
+  [[ "${CONFIG[account.auto-keygen]}" = "true" ]] &&
+    account_keygen "${OID_CACHE[$pull_url]}" "$tstamp" "$name"
+
+  # create empty dir for init
+  mkdir -p "$path" ||
+    E=1 fatal $"Unable to create account directory: %s" "$path"
+
+  git_helper -C "$path" init -b "${CONFIG['git.defaultBrach']:-main}" \
+    ${TIMELINE_EXPERIMENTAL_SHA256:+--object-format=sha256}
+  account_config "$path" "$pull_url" "$1" "$tstamp"
+
+  config_save "${CONFIG_FILE}"
+
+  git_helper -C "$path" add .
+
+  git_helper -C "$path" commit -m 'init' 2>&1
+  git_helper -C "$path" remote add origin "$push_url" 2>&1
+  git_helper -C "$path" push -u origin "${CONFIG['git.defaultBrach']:-main}" 2>&1 ||
+    E=2 fatal $"Unable to push initial commit"
+}
+
+# fun: account_clone <name> <push_url> <pull_url> [path]
+# txt: clone new account named as name, from the specific push url,
+#      if path is provided then set the account path to this one, otherwise,
+#      use the default path for accounts as prefix
+account_clone ()
+{
+  if [[ "$1" = "--force" ]]; then
+    local force=true; shift
+  else
+    local force=false
+  fi
+
+  local name="$1" push_url="$2" pull_url="$3" path="$4" tstamp=""
+
+  if ! $force && [[ "${CONFIG["account.$name.path"]}" ]]; then
+    E=1 fatal $"Another account already exists with that name"
+  else
+    path="${path:-$(try_path "$(config_get account.path)")/$name}"
+    config_set "account.$name.push-url" "$push_url"
+    config_set "account.$name.pull-url" "$pull_url"
+    config_set "account.$name.path" "$path"
+
+    oid "$pull_url"
+
+    if [[ -z "${CONFIG[account.$name.keyring]}" ]] &&
+      [[ "${CONFIG[account.auto-keygen]}" = "true" ]]; then
+          tstamp="$(timestamp)"
+          account_keygen "${OID_CACHE[$pull_url]}" "$tstamp" "$name"
+    fi
+
+    config_set "user.alias-${OID_CACHE["$pull_url"]}" "$name"
+    git_helper clone "$push_url" "$path"
+    git_helper -C "$path" submodule init
+
+    account_config "$path" "$pull_url" "$name" "$tstamp"
+
+    git_helper -C "$path" add .
+    git_helper -C "$path" commit -m 'clone: recreated keys'
+
+    config_save "${CONFIG_FILE}"
+  fi
+}
+
+# fun: account_config <path> <pull_url> <name> <tstamp>
+# txt: configure user and other required things in the repo
+account_config ()
+{
+  local path="$1" pull_url="$2" name="$3" tstamp="$4" keyid_encr keyid_sign
+  oid "$pull_url"
+
+  git_helper -C "$path" config user.name "${OID_CACHE["$pull_url"]}"
+  git_helper -C "$path" config user.email "${OID_CACHE["$pull_url"]}@timeline"
+  git_helper -C "$path" config core.preloadindex true
+  git_helper -C "$path" config core.fscache true
+  git_helper -C "$path" config gc.auto 256
+
+  command touch "${path:?}/CONTENT"
+  command mkdir -p "${path:?}/FOLLOW"
+
+  if [[ "$tstamp" ]]; then
+    keyid_encr="$(crypto_keyid "${OID_CACHE["$pull_url"]}" "$tstamp")"
+    keyid_sign="${keyid_encr}"
+  else
+    keyid_encr="$(config_eval "account.$name.encrkey" "account.encrkey")"
+    keyid_sign="$(config_eval "account.$name.signkey" "account.signkey")"
+  fi
+
+  if [[ "$keyid_sign" ]]; then
+    export GNUPGHOME="${CONFIG[account.$name.keyring]}"
+    account_set_signkey "$name" "$keyid_sign"
+    crypto_export "${OID_CACHE["$pull_url"]}" "${path:?}/SIGNKEY"
+  fi
+
+  if [[ "$keyid_encr" ]]; then
+    export GNUPGHOME="${CONFIG[account.$name.keyring]}"
+    account_set_encrkey "$name" "$keyid_encr"
+    crypto_export "${OID_CACHE["$pull_url"]}" "${path:?}/ENCRKEY"
+  fi
+}
+
+# fun: account_commit [message]
+# txt: set a commit point into current active account
+account_commit ()
+{
+  [[ "$ACCOUNT_PATH" ]] || E=1 fatal $"No active account to commit"
+
+  git_helper -C "$ACCOUNT_PATH" add .
+
+  if config_eval "account.$ACCOUNT_NAME.signkey" "account.signkey" >/dev/null
+  then
+    git_helper -C "$ACCOUNT_PATH" commit -S -m "${1:-autosave}"
+  else
+    git_helper -C "$ACCOUNT_PATH" commit -m "${1:-autosave}"
+  fi
+}
+
+# fun: account_push [remote]
+# txt: push active account content to remote passed as argument or, if
+#      missing, to `origin`.
+account_push ()
+{
+  # TODO Add support for multiple branches
+  git_helper -C "${ACCOUNT_PATH}" push "${1:-origin}" "$(get_main_branch)"
+}
+
+# fun: account_refresh <path> [remote]
+# txt: rebase changes to current account from remote passed as argument or,
+#     if missing, `origin`.
+account_refresh ()
+{
+  local line path="$1" commit=false; shift
+  export path
+
+  git_helper -C "$path" fetch --all --jobs "${CONFIG[git.jobs]:-4}" 2>&1
+  # TODO Add support for multiple branches
+  git_helper -C "$path" rebase "${1:-origin}/$(get_main_branch "$path")" 2>&1
+  git_helper -C "$path" submodule update --remote \
+    --jobs "${CONFIG[git.jobs]:-4}" 2>&1
+
+  while read -r _ line; do
+    commit=true
+    case "$line" in
+      FOLLOW/*) account_import "${line#FOLLOW/}" "$path/$line";;
+    esac
+  done < <(git_helper -C "$path" status -s)
+
+  ${commit} &&
+    account_commit "chore: update submodules"
+
+  git_helper -C "$path" repack -a -d --depth=250 --window=250 2>&1
+}
+
+# fun: account_delete [name]
+# txt: delete account by name passed as argument or active account if none
+#      name is provided.
+account_delete ()
+{
+  local name="${1:-$ACCOUNT_NAME}" path pull_url
+
+  path="$(config_get "account.$name.path")"
+  pull_url="$(config_get "account.$name.pull-url")"
+  
+  oid "$pull_url"
+
+  if [[ -d "$path" ]]; then
+    rm -rf "$path"
+  fi
+
+  config_unset "account.$name"
+  config_unset "user.alias-${OID_CACHE["$pull_url"]}"
+
+  config_save "${CONFIG_FILE}"
+}
+
+# fun: account_set_signkey <name> <keyid>
+# txt: set signing keyid for an existant account
+account_set_signkey ()
+{
+  if [[ "$2" ]]; then
+    git_helper -C "$(config_get "account.$1.path")" config user.signingkey "$2"
+  else
+    git_helper -C "$(config_get "account.$1.path")" config --unset user.signingkey
+  fi
+
+  config_set "account.$1.signkey" "$2"
+}
+
+# fun: account_set_encrkey <name> <keyid>
+# txt: set encryption keyid for an existant account
+account_set_encrkey ()
+{
+  config_set "account.$1.encrkey" "$2"
+}
+
+# fun: account_preview <url> [filter]
+# txt: preview the contents of the specified url repo filtered with the
+#      specific if present.
+account_preview ()
+{
+  local tmpdir depth
+  tmpdir="$(temp_dir)"
+  depth="${CONFIG[account.preview-depth]}"
+
+  [[ "$depth" = "-1" ]] && depth=""
+
+  git_helper clone ${depth:+--depth "${depth}"} "$1" "${tmpdir}" 2>&1 |
+    info_multi ||
+      E=1 error $"Unable to clone remote repo"
+
+  oid "$1"
+  timeline_load "${tmpdir}" "${OID_CACHE["$1"]}"
+  shift
+  timeline_list "$@"
+}
+
+# fun: account_keys
+# txt: print the associated keys for the current account
+account_keys ()
+{
+  local fpr flags
+
+  while read -r fpr flags; do
+    [[ "$fpr" = "${CONFIG[account.$ACCOUNT_NAME.signkey]}" ]] &&
+      flags+='S'
+
+    [[ "$fpr" = "${CONFIG[account.$ACCOUNT_NAME.encrkey]}" ]] &&
+      flags+='E'
+
+    echo "$fpr $flags"
+  done < <(crypto_list "=${ACCOUNT_OID}@timeline")
+}
+
+# fun: account_import  <account> <path>
+# txt: get public keys references in path
+account_import ()
+{
+  local line account="$1" path="$2";
+
+  # shellcheck disable=SC2016
+  while read -r line; do
+    case "$line" in
+      ENCRKEY|SIGNKEY) crypto_import "$account" "$path/$line"
+    esac
+  done < <(git_helper -C "$path" show --pretty="" --name-only)
+}
+## vim:ft=sh
+
+NOSUBCMD=$"No valid subcomand '%s' for command '%s'"
+INVALIDURL=$"Invalid URL '%s'"
+
+
+
+# help:fun: account {create|delete|rebuild|clone|list|refresh|active|preview|keys|keygen|keyrevoke|encrkey|signkey} {args...}
+# help:txt: Manage timeline local and remote accounts.
+command_account ()
+{
+  local cmd="$1"; shift
+  if fun "command_account_$cmd"; then
+    "command_account_$cmd" "$@"
+  else
+    E=1 error "$NOSUBCMD" "$cmd" "account"
+  fi
+}
+
+# help:account:fun: account create <name> <push_url> <pull_url> [path]
+# help:account:txt: Create a new account (aka git repository) which will
+# help:account:txt: push data to specified push_url and publish public url
+# help:account:txt: as specified pull_url. Optionally, you can set the path
+# help:account:txt: where repository lives, if omit, uses default path for
+# help:account:txt: accounts.
+command_account_create ()
+{
+  local name="$1" push_url="$2" pull_url="$3" path="$4"
+
+  if [[ -z "$1" ]]; then
+    E=1 error $"Account command create requires 'name'."
+  else
+    if ! valid_url "$push_url"; then
+      E=1 error "$INVALIDURL" "$push_url"
+    elif ! valid_url "$pull_url"; then
+      E=1 error "$INVALIDURL" "$pull_url"
+    else
+      account_create "$name" "$push_url" "$pull_url" "$path" |
+        info_multi
+      config_load "${CONFIG_FILE}"
+      command_account_active "$name"
+    fi
+  fi
+}
+
+# help:account:fun: account delete [--force] <name>
+# help:account:txt: Delete the account with name passed as argument.
+# help:account:txt: If '--force' parameter is present, then ignore if
+# help:account:txt: account path exists or not, otherwise account delete
+# help:account:txt: will not delete anything if path does not exists.
+# help:account:txt: CAUTION: this action cannot be undone.
+command_account_delete ()
+{
+  if [[ "$1" == "--force" ]]; then
+    local force=true
+    local name="$2"
+  else
+    local force=false
+    local name="$1"
+  fi
+
+  if [[ -z "$name" ]]; then
+    E=1 error $"Account command delete requires 'name',"
+  elif ! account_exists "$name" && ! ${force}; then
+    E=1 error $"Account '%s' does not exists." "$name"
+  else
+    account_delete "$name" | info_multi
+  fi
+}
+
+# help:account:fun: account rebuild <name>
+# help:account:txt: Recreate an account previously created. This command will
+# help:account:txt: use config data to regenerate the account.
+command_account_rebuild ()
+{
+  local name="$1" push_url pull_url path
+
+  if [[ -z "$1" ]]; then
+    E=1 error $"Account command rebuild requires 'name'."
+  else
+    push_url="${CONFIG["account.$name.push-url"]}"
+    pull_url="${CONFIG["account.$name.pull-url"]}"
+    path="${CONFIG["account.$name.path"]}"
+
+    if [[ -z "$path" ]] || [[ -z "$push_url" ]] || [[ -z "$pull_url" ]]; then
+      E=1 error $"Unable to rebuild. Account '$name' was not configured yet."
+    fi
+
+    if ! config_eval "account.$name.signkey" "account.signkey" >/dev/null; then
+      error $"The account $name has not associated signkey."
+      error $"Use 'account genkey' to generate new keypair or 'account signkey' to set previous generated one."
+    fi
+
+    if ! config_eval "account.$name.encrkey" "account.encrkey" >/dev/null; then
+      error $"The account $name has not associated encrkey."
+      error $"Use 'account genkey' to generate new keypair or 'account encrkey' to set previous generated one."
+    fi
+
+    account_clone --force "$name" "$push_url" "$pull_url" "$path" | info_multi
+    config_load "${CONFIG_FILE}"
+    command_account_active "$name"
+    # shellcheck disable=SC2119
+    command_timeline_refresh
+  fi
+}
+
+# help:account:fun: account keygen [--no-default-sign] [--no-default-encr]
+# help:account:txt: Generate new keypair for the current account. If the
+# help:account:txt: --no-default flag is present, then do not switch default
+# help:account:txt: keys to encrypt or sign and keep the old ones by default.
+command_account_keygen ()
+{
+  local tstamp keyid commit=false
+
+  command_account_active "${ACCOUNT_NAME}"
+
+  tstamp="$(timestamp)"
+
+  account_keygen "${ACCOUNT_OID}" "$tstamp" "${ACCOUNT_NAME}"
+
+  keyid="$(crypto_keyid "${ACCOUNT_OID}" "$tstamp")"
+
+  [[ "$keyid" ]] ||
+    E=4 fatal $"Unable to retrieve KeyID for generated one"
+
+  if [[ "$1" != "--no-default-sign" ]] && [[ "$2" != "--no-default-sign" ]]; then
+    account_set_signkey "${ACCOUNT_NAME}" "$keyid"
+    crypto_export "${ACCOUNT_OID}" "${ACCOUNT_PATH}/SIGNKEY"
+    commit=true
+  fi
+
+  if [[ "$1" != "--no-default-encr" ]] && [[ "$2" != "--no-default-encr" ]]; then
+    account_set_encrkey "${ACCOUNT_NAME}" "$keyid"
+    crypto_export "${ACCOUNT_OID}" "${ACCOUNT_PATH}/ENCRKEY"
+    commit=true
+  fi
+
+  config_save "${CONFIG_FILE}"
+
+  if ${commit}; then
+    account_commit $"bump: new public key" | info_multi
+    if [[ "$(config_eval "account.${ACCOUNT_NAME}.auto-push" account.auto-push)" = "true" ]];
+    then
+      account_push 2>&1 | info_multi
+    fi
+  fi
+}
+
+# help:account:fun: account keyrevoke <key_id>
+# help:account:txt: Revoke a key associated with the current account
+command_account_keyrevoke ()
+{
+  local force=false
+
+  [[ "$1" == "--force" ]] && shift && force=true
+
+  command_account_active "${ACCOUNT_NAME}"
+
+  if ! ${force}; then
+    if [[ "$(config_eval "account.$ACCOUNT_NAME.signkey" account.signkey)" = "$1" ]]
+    then
+      error $"You are going to revoke the signing key for this account."
+      E=3 fatal $"Use --force if you are sure of what are you doing."
+    fi
+    if [[ "$(config_eval "account.$ACCOUNT_NAME.encrkey" account.encrkey)" = "$1" ]]
+    then
+      error $"You are going to revoke the encryption key for this account."
+      E=3 fatal $"Use --force if you are sure of what are you doing."
+    fi
+  fi
+
+  crypto_uid "$1" "${ACCOUNT_OID}@timeline" ||
+    E=2 fatal $"The provided KeyID was not generated for this account"
+
+  crypto_revoke "${ACCOUNT_NAME}" "$1" ||
+    E=2 fatal $"Unable to revoke key $1"
+  crypto_export "${ACCOUNT_OID}" "${ACCOUNT_PATH}/SIGNKEY"
+  crypto_export "${ACCOUNT_OID}" "${ACCOUNT_PATH}/ENCRKEY"
+
+  [[ "${CONFIG[account.$ACCOUNT_NAME.signkey]}" = "$1" ]] &&
+    account_set_signkey "$ACCOUNT_NAME" ""
+
+  if [[ "${CONFIG[account.signkey]}" = "$1" ]]; then
+    account_set_signkey "$ACCOUNT_NAME" ""
+    config_set account.signkey ""
+  fi
+
+  [[ "${CONFIG[account.$ACCOUNT_NAME.encrkey]}" = "$1" ]] &&
+    account_set_encrkey "$ACCOUNT_NAME" ""
+
+  if [[ "${CONFIG[account.encrkey]}" = "$1" ]]; then
+    account_set_encrkey "$ACCOUNT_NAME" ""
+    config_set "account.encrkey" ""
+  fi
+
+  config_save "${CONFIG_FILE}"
+
+  account_commit $"clean: revoke key $1"
+  if [[ "$(config_eval "account.${ACCOUNT_NAME}.auto-push" account.auto-push)" = "true" ]]; then
+    account_push
+  fi
+}
+
+# help:account:fun: account clone <name> <push_url> <pull_url> [path]
+# help:account:txt: Clone an account (aka git repository) from specified
+# help:account:txt: push_url passed as argument, and also configure the
+# help:account:txt: provided pull_url, like 'account create' does.
+command_account_clone ()
+{
+  local name="$1" push_url="$2" pull_url="$3" path="$4"
+
+  if [[ -z "$1" ]]; then
+    E=1 error $"Account command clone requires 'name'."
+  else
+    if ! valid_url "$push_url"; then
+      E=1 error "$INVALIDURL" "$push_url"
+    elif ! valid_url "$pull_url"; then
+      E=1 error "$INVALIDURL" "$pull_url"
+    else
+      account_clone "$name" "$push_url" "$pull_url" "$path" |
+        info_multi
+      config_load "${CONFIG_FILE}"
+      command_account_active "$name"
+    fi
+  fi
+}
+
+# help:account:fun: account list
+# help:account:txt: List all accounts registered in the configuration.
+command_account_list ()
+{
+  account_list | info_multi
+}
+
+# help:fun: help [command]
+# help:txt: show help about the command passed as argument, or, if none,
+# help:txt: show all available commands.
+command_help ()
+{
+  local data
+
+  if [[ $# -eq 0 ]]; then
+    info_multi < <(help_commands)
+  else
+    data="$(help_subcommand "$1")"
+
+    if [[ "$data" ]]; then
+      info_multi <<<"$data"
+    else
+      E=1 error $"Not found help about '%s'" "$1"
+    fi
+  fi
+}
+
+# help:account:fun: account active [name]
+# help:account:txt: Switch to account passed as argument, or, if none, load
+# help:account:txt: the default account. Default account when more than one
+# help:account:txt: is created will be specified by configuration parameter
+# help:account:txt: called 'account.default'.
+command_account_active ()
+{
+  if ! account_load "$1"; then
+    error $"There are no defined accounts."
+    error $"Please create account: %s account create <name> <push> <pull>" "$0"
+    error $"Or clone an existent one: %s account clone <name> <push> <pull>" "$0"
+    E=1 error $"Account does not exist yet"
+  else
+    timeline_index_load
+  fi
+}
+
+# help:account:fun: account signkey <keyid>
+# help:account:txt: Set keyid for signing commits in the current enabled
+# help:account:txt: account.
+command_account_signkey ()
+{
+  if [[ $# -ne 1 ]]; then
+    E=2 error "Account sign key requires one argument: keyid"
+  else
+    command_account_active "${ACCOUNT_NAME}"
+    account_set_signkey "$ACCOUNT_NAME" "$1"
+    config_save "${CONFIG_FILE}"
+  fi
+}
+
+# help:account:fun: account encrkey <keyid>
+# help:account:txt: Set keyid for encrypt messags in the current enabled
+# help:account:txt: account.
+command_account_encrkey ()
+{
+  if [[ $# -ne 1 ]]; then
+    E=2 error "Account encryption key requires one argument: keyid"
+  else
+    command_account_active "${ACCOUNT_NAME}"
+    account_set_encrkey "$ACCOUNT_NAME" "$1"
+    config_save "${CONFIG_FILE}"
+  fi
+}
+
+# help:account:fun: account refresh
+# help:account:txt: Pull changes from the remote repository. This action
+# help:account:txt: should be automatically and you should not use it
+# help:account:txt: manually. But, if you need it, here it is.
+command_account_refresh ()
+{
+  command_account_active "${ACCOUNT_NAME}"
+  {
+    account_commit "refresh: commit before pull" 2>&1 | info_multi
+    account_refresh "${ACCOUNT_PATH}" 2>&1 | info_multi
+    account_push "origin" 2>&1 | info_multi
+  } ||
+      E=1 error $"Unable to refresh local account"
+}
+
+# help:account:fun: account preview <url>
+# help:account:txt: Preview a remote account without following it.
+command_account_preview ()
+{
+  [[ "$1" ]] || E=2 error $"Account url must be provided"
+  account_preview "$1"
+}
+
+# help:account:fun: account keys
+# help:account:txt: print available keys for current account. The flags S and
+# help:account:txt: E will be printed for keys current enable for signing and
+# help:account:txt: encryption respectively
+command_account_keys ()
+{
+  command_account_active "${ACCOUNT_NAME}"
+  account_keys | info_multi
+}
+
+# help:fun: git <command>...
+# help:txt: Execute raw git commands in the active account.
+command_git ()
+{
+  command_account_active "${ACCOUNT_NAME}"
+  git_helper -C "${ACCOUNT_PATH}" "$@"
+}
+
+# help:fun: gpg <command>...
+# help:txt: Execute raw gpg commands in the active account.
+command_gpg ()
+{
+  command_account_active "${ACCOUNT_NAME}"
+  gpg_helper "$@"
+}
+
+# help:fun: timeline {list|refresh|info} {args...}
+# help:txt: Show the current timeline
+command_timeline ()
+{
+  local cmd="$1"; shift
+  if fun "command_timeline_$cmd"; then
+    "command_timeline_$cmd" "$@"
+  else
+    E=1 error "$NOSUBCMD" "$cmd" "timeline"
+  fi
+}
+
+# help:timeline:fun: timeline list [filter]
+# help:timeline:txt: Show current available timeline, but not refresh it from
+# help:timeline:txt: the internet. Usually you want ot use this if you are
+# help:timeline:txt: offline, else use 'timeline refresh' instead.
+# help:timeline:txt: When filter is passed then only show events which match
+# help:timeline:txt: with filter.
+# help:timeline:txt: Valid syntax for filter is:
+# help:timeline:txt:   [not] [tag|mesg|user]:[glob expr] [and|or] [filter]
+command_timeline_list ()
+{
+  command_account_active "$ACCOUNT_NAME"
+  timeline_load
+  timeline_list "$@"
+}
+
+# help:timeline:fun: timeline refresh [filter]
+# help:timeline:txt: Pull changes in the current enabled timeline and show
+# help:timeline:txt: the results.
+# shellcheck disable=SC2120
+command_timeline_refresh ()
+{
+  command_account_refresh
+  timeline_load
+  timeline_list "$@"
+}
+
+# help:timeline:fun: timeline edit
+# help:timeline:txt: Interactively edit your timeline. It's an advanced mode,
+# help:timeline:txt: use with careful.
+command_timeline_edit ()
+{
+  command_account_active "$ACCOUNT_NAME"
+  command_account_refresh
+  timeline_edit
+}
+
+# help:timeline:fun: timeline orphans
+# help:timeline:txt: show the events in the timeline which are marked as
+# help:timeline:txt: orphans, usually these are events that hmac does not
+# help:timeline:txt: match.
+command_timeline_orphans ()
+{
+  command_account_active "$ACCOUNT_NAME"
+  timeline_load
+  timeline_orphans
+}
+
+# help:fun: config {list|get|set|save|edit} {args...}
+# help:txt: Change configuration settings
+command_config ()
+{
+  local cmd="$1"; shift
+  if fun "command_config_$cmd"; then
+    "command_config_$cmd" "$@"
+  else
+    E=1 error "$NOSUBCMD" "$cmd" "config"
+  fi
+}
+
+# help:config:fun: config list
+# help:config:txt: List all configuration values.
+command_config_list ()
+{
+  config_list | info_multi
+}
+
+# help:config:fun: config get <key>
+# help:config:txt: Show the value of specific configuration key
+command_config_get ()
+{
+  if [[ $# -ne 1 ]]; then
+    E=1 error $"Config get requires an arguments: key"
+  else
+    local var
+    var="${CONFIG["$*"]}"
+    if [[ "$var" ]]; then
+      info "%s=%s" "$*" "$var"
+    else
+      error $"Configuration key %s is not defined" "$*"
+    fi
+  fi
+}
+
+# help:config:fun: config set <key> <value>
+# help:config:txt: Set a new configuration value
+command_config_set ()
+{
+  if [[ $# -ne 2 ]]; then
+    E=1 error $"Config set requires two arguments: key and value"
+  else
+    local key="$1"; shift
+    config_set "$key" "$*"
+    info "%s=%s" "$key" "$*"
+    config_save "${CONFIG_FILE}"
+  fi
+}
+
+# help:config:fun: config save
+# help:config:txt: Save configuration into configuration file
+command_config_save ()
+{
+  config_save "${CONFIG_FILE}"
+}
+
+# help:config:fun: config edit
+# help:config:txt: Edit the configuration file using `$EDITOR`
+command_config_edit ()
+{
+  "${EDITOR:-vi}" "${CONFIG_FILE}"
+}
+
+# help:fun: alias [<name> <value>]
+# help:txt: Show aliases (if no argument provided) or created a new one
+# help:txt  named as argument, and replaced by value.
+command_alias ()
+{
+  case $# in
+    0)
+      for key in $(config_iter alias.); do
+        info "%s=%s" "${key}" "$(config_get "${key}")"
+      done
+      ;;
+    2)
+      local name="$1"; shift
+      command_config_set "alias.$name" "$*"
+      ;;
+    *)
+      E=2 error $"Alias command requires zero or two arguments"
+      ;;
+  esac
+}
+
+# help:fun: abbr [<name> <value>]
+# help:txt: Show abbreviatures (if no argument provided) or created a new one
+# help:txt  identified by name, and replaced by value.
+command_abbr ()
+{
+  case $# in
+    0)
+      for key in $(config_iter abbr.); do
+        info "%s=%s" "${key}" "$(config_get "${key}")"
+      done
+      ;;
+    2)
+      local name="$1"; shift
+      command_config_set "abbr.$name" "$*"
+      ;;
+    *)
+      E=2 error $"Abbr command requires zero or two arguments"
+      ;;
+  esac
+}
+
+# help:fun: user alias [<name> <uid>]
+# help:txt: Show user aliases registered in configuration if not arguments
+# help:txt: provided. If two arguments passed create a new user aliases,
+# help:txt: replacing UID by nickname in timeline.
+command_user_alias ()
+{
+  case $# in
+    0)
+      for key in $(config_iter user.alias-); do
+        info "%s=%s" "${key#user.alias-}" "$(config_get "${key}")"
+      done
+      ;;
+    2)
+      command_config_set "user.alias-$2" "$1"
+      ;;
+    *)
+      E=2 error $"User command requires zero or two arguments"
+      ;;
+  esac
+}
+
+# help:fun: event {post|reply|tag|message} {args...}
+# help:txt: Create new event or show information about existent one
+command_event ()
+{
+  local cmd="$1"; shift
+  if fun "command_event_$cmd"; then
+    "command_event_$cmd" "$@"
+  else
+    E=1 error "$NOSUBCMD" "$cmd" "event"
+  fi
+}
+
+# help:event:fun: event post [--encrypt <rcpt> | --encrypt-anon <rcpt>] <message> [<tags>+]
+# help:event:txt: Post a new message in our timeline. The --encrypt flag will result in
+# help:event:txt: an encrypted post. The --encrypt-anon do the same that --encrypt but
+# help:event:txt: without exfiltrate recipient.
+command_event_post ()
+{
+  local u rcpt='' anon pfile="${CONFIG[account.$ACCOUNT_NAME.passphrase-file]:-/dev/null}"
+
+  anon="$(config_eval \
+    "account.$ACCOUNT_NAME.crypto-always-anon"  \
+    "account.crypto-always-anon"
+  )"
+
+
+  case "$1" in
+    --encrypt|--encrypt-anon)
+      [[ "$2" ]] ||
+        E=2 fatal $"Options --encrypt and --encrypt-anon require a recipient"
+
+      [[ "$(config_eval "account.$ACCOUNT_NAME.encrypt-to-me" account.encrypt-to-me)" = "true" ]] &&
+        rcpt="$2,$ACCOUNT_NAME" ||
+        rcpt="$2"
+
+      [[ "$1" = "--encrypt-anon" ]] && anon=--anon
+      shift 2 ;;
+  esac
+
+  if [[ $# -eq 0 ]]; then
+    E=2 error $"Event post required an argument: message"
+  else
+    local eid tag msg="$1" ts oid; shift
+    ts="$(timestamp)"
+    command_account_active "${ACCOUNT_NAME}"
+    command_account_refresh
+    {
+      abbr_replace "$msg"; msg="$REPLY"
+      oid="$(oid "$REPLY")"
+      if [[ "$rcpt" ]]; then
+        for u in $(expand_user "$rcpt"); do
+          crypto_encrypt $anon "$u" "$ts P $msg" "$pfile" ||
+            E=4 fatal $"Encryption fails"
+          u="${anon:-$u}"; u="${u//--anon/@all}"
+          event_create "$ts" E "$u" "$REPLY" 2>&1
+        done
+      else
+        event_create "$ts" P "$REPLY" 2>&1
+      fi
+      eid="$EID"
+      for tag in "$@"; do
+        sleep 1  # Because we can only post one event per second.
+        if [[ "$rcpt" ]]; then
+          for u in $(expand_user "$rcpt"); do
+            crypto_encrypt $anon "$u" "$(timestamp) T $ACCOUNT_OID:$ts:$oid $tag" "$pfile" ||
+              E=4 fatal $"Encryption fails"
+            u="${anon:-$u}"; u="${u//--anon/@all}"
+            event_create "$ts" E "$u" "$REPLY" 2>&1
+          done
+        else
+          event_create "$ts" T "$eid" "$tag" 2>&1
+        fi
+      done
+    }
+    timeline_load
+    timeline_index_save
+  fi
+}
+
+# help:event:fun: event reply [--eid] <num/eid> <message>
+# help:event:txt: Post a reply to post indexed with num passed as argument,
+# help:event:txt: or, if '--eid' flag is present, the EID passed as
+# help:event:txt: argument.
+command_event_reply ()
+{
+  if [[ $# -eq 0 ]]; then
+    E=2 error $"Event reply requires almost two parameters: num/eid, message"
+    return 1
+  elif [[ "$1" = "--eid" ]]; then
+    if [[ "$2" ]]; then
+      eid="$2"; shift 2;
+    else
+      E=2 error \
+        $"Event reply with --eid required almost two arguments: eid, message"
+      return 1
+    fi
+  fi
+
+  command_account_active "${ACCOUNT_NAME}"
+
+  if [[ -z "$eid" ]]; then
+    if ! is_decimal "$1"; then
+      E=2 error $"Invalid index number '%s'" "$1"
+      return 1
+    else
+      eid="$(timeline_index_get "$1")" || return 1
+      shift
+    fi
+  fi
+
+  if [[ $# -eq 0 ]]; then
+    E=2 error $"Event reply required an argument: message"
+  else
+    abbr_replace "$1"
+    local tag mesg="$REPLY" ts; ts="$(timestamp)"; shift
+    command_account_refresh
+    {
+      timeline_load
+      event_create "$ts" R "$eid" "$mesg" 2>&1
+      eid="$EID"
+      for tag in "$@"; do
+        sleep 1  # Because we can only post one event per second.
+        event_create "$ts" T "$eid" "$tag" 2>&1
+      done
+    } | info_multi
+    timeline_load
+    timeline_index_save
+  fi
+}
+
+# help:event:fun: event tag [--eid] <num/eid> <tags>
+# help:event:txt: Tag a post passed as argument by index num or eid if
+# help:event:txt: '--eid' flag is present.
+command_event_tag ()
+{
+  local eid
+
+  if [[ $# -eq 0 ]]; then
+    E=2 error $"Event tag requires almost two parameters: num/eid, tags"
+    return 1
+  elif [[ "$1" = "--eid" ]]; then
+    if [[ "$2" ]]; then
+      eid="$2"; shift 2;
+    else
+      E=2 error \
+        $"Event tag with --eid required almost two arguments: eid, tags"
+      return 1
+    fi
+  fi
+
+  command_account_active "${ACCOUNT_NAME}"
+
+  if [[ -z "$eid" ]]; then
+    if ! is_decimal "$1"; then
+      E=2 error $"Invalid index number '%s'" "$1"
+      return 1
+    else
+      eid="$(timeline_index_get "$1")" || return 1
+      shift
+    fi
+  fi
+
+  if [[ $# -eq 0 ]]; then
+    E=2 error $"Event tag required an argument: tags"
+  else
+    command_account_refresh
+    timeline_load
+    event_create "$(timestamp)" T "$eid" "$*" 2>&1 | info_multi
+  fi
+}
+
+# help:event:fun: event score [--eid] <num/eid> {up|down}
+# help:event:txt: Score up or down an specific id. Please note that you can
+# help:event:txt: only vote once fer EID, other votes will be ignored
+command_event_score ()
+{
+  local eid score
+
+  if [[ $# -eq 0 ]]; then
+    E=2 error $"Event score requires almost two parameters: num/eid, up/down"
+    return 1
+  elif [[ "$1" = "--eid" ]]; then
+    if [[ "$2" ]]; then
+      eid="$2"; shift 2;
+    else
+      E=2 error \
+        $"Event reply with --eid required almost two arguments: eid, up/down"
+      return 1
+    fi
+  fi
+
+  command_account_active "${ACCOUNT_NAME}"
+
+  if [[ -z "$eid" ]]; then
+    if ! is_decimal "$1"; then
+      E=2 error $"Invalid index number '%s'" "$1"
+      return 1
+    else
+      eid="$(timeline_index_get "$1")" || return 1
+      shift
+    fi
+  fi
+
+  if [[ $# -eq 0 ]]; then
+    E=2 error $"Event score required an argument: up/down"
+  else
+
+    case "$1" in
+      up)   score="1";;
+      down) score="-1";;
+    esac
+
+    command_account_refresh
+    timeline_load
+    event_create "$(timestamp)" S "$eid" "$score" 2>&1 | info_multi
+  fi
+}
+
+# help:event:fun: event info [--eid] <num/eid>
+# help:event:txt: Given the index number of an event in the timeline,
+# help:event:txt: display internal information about the event.
+# help:event:txt: If '--eid' is present, then use the argument as valid
+# help:event:txt: EID instead of index number.
+command_event_info ()
+{
+  local eid
+
+  if [[ $# -eq 0 ]]; then
+    E=2 error $"Timeline info requires one parameter: num"
+    return 1
+  elif [[ "$1" = "--eid" ]]; then
+    if [[ "$2" ]]; then
+      eid="$2"
+    else
+      E=2 error $"Timeline info with --eid required argument: eid"
+      return 1
+    fi
+  fi
+
+  command_account_active "${ACCOUNT_NAME}"
+
+  if [[ -z "$eid" ]]; then
+    if ! is_decimal "$1"; then
+      E=2 error $"Invalid index number '%s'" "$1"
+      return 1
+    else
+      eid="$(timeline_index_get "$1")" || return 1
+    fi
+  fi
+
+  timeline_load
+  event_info "$eid" | info_multi
+}
+
+# help:fun: follow {list|add|del|keys} {args...}
+# help:txt: Manage your followings.
+command_follow ()
+{
+  local cmd="$1"; shift
+  if fun "command_follow_$cmd"; then
+    "command_follow_$cmd" "$@"
+  else
+    E=1 error "$NOSUBCMD" "$cmd" "follow"
+  fi
+}
+
+# help:follow:fun: follow list
+# help:follow:txt: Lists your followings.
+command_follow_list ()
+{
+  command_account_active "${ACCOUNT_NAME}"
+  follow_list "${ACCOUNT_PATH}" | info_multi
+}
+
+# help:follow:fun: follow add <pull_url> [name]
+# help:follow:txt: Add new following whose repository is available in
+# help:follow:txt: 'pull_url' passed as argument.
+# help:follow:txt: Optionally if name is provided, create a user alias for
+# help:follow:txt: that account.
+command_follow_add ()
+{
+  local pull_url="$1" name="$2"
+
+  if [[ -z "$pull_url" ]]; then
+    E=2 error $"Follow add require almost one argument: pull_url"
+    return 2
+  else
+    command_account_active "${ACCOUNT_NAME}"
+    follow_add "$pull_url" "$name"
+  fi
+}
+
+# help:follow:fun: follow del [--url] <uid/pull_url> 
+# help:follow:txt: Delete a following which specific uid, or specific
+# help:follow:txt: pull_url if '--url' flag is set.
+command_follow_del ()
+{
+  local uid
+
+  case "$1" in
+    --url)
+      if [[ -z "$2" ]]; then
+        E=2 error $"Follow del with --urll flag requires argument: pull_url"
+        return 2
+      else
+        uid="$(oid "$2")"
+      fi;;
+    *) uid="$1";;
+  esac
+
+  command_account_active "${ACCOUNT_NAME}"
+  follow_del "$uid" 2>&1 | info_multi
+}
+
+# help:follow:fun: follow keys [account_name] 
+# help:follow:txt: Print keys for the specific account in present, or for all
+# help:follow:txt: none is specified
+command_follow_keys ()
+{
+  command_account_active "${ACCOUNT_NAME}"
+  follow_keys "$1" 2>&1 | info_multi
+}
+
+# help:fun: network {list|refresh} {args...}
+# help:txt: Manage the network graph and discover new users.
+command_network ()
+{
+  local cmd="$1"; shift
+  if fun "command_network_$cmd"; then
+    "command_network_$cmd" "$@"
+  else
+    E=1 error "$NOSUBCMD" "$cmd" "network"
+  fi
+}
+
+# help:network:fun: network list
+# help:network:txt: Display current discovered network, but not search for
+# help:network:txt: new users or update current ones.
+command_network_list ()
+{
+  command_account_active "${ACCOUNT_NAME}"
+  network_load "${ACCOUNT_PATH}"
+  network_list
+}
+
+# help:network:fun: network refresh
+# help:network:txt: Looking for new users creating network graph and print
+# help:network:txt: the results into screen.
+# help:network:txt: The refreshing action could take a while. This command
+# help:network:txt: will traverse the timeline network from your repository,
+# help:network:txt: trying to discover new users that you don't follow but
+# help:network:txt: are related with people you actually follow.
+command_network_refresh ()
+{
+  command_account_active "$ACCOUNT_NAME"
+  info $"Discovering the network. This action could take a while..."
+  network_refresh "$ACCOUNT_PATH" | info_multi
+  info $"Network updated"
+  command_network_list
+}
+
+# help:fun: quit
+# help:txt: Just quits timeline :.-(
+command_quit ()
+{
+  exit 0
+}
+
+# help:fun: view {list|add|del} {args...}
+# help:txt: Create and save views. A view is a filter which can be used to
+# help:txt: show or hide posts from timeline. You can think a view like a
+# help:txt: name for a filter.
+command_view ()
+{
+  local cmd="$1"; shift
+  if fun "command_view_$cmd"; then
+    "command_view_$cmd" "$@"
+  else
+    E=1 error "$NOSUBCMD" "$cmd" "view"
+  fi
+}
+
+# help:view:fun: view list
+# help:view:txt: List all created views
+command_view_list ()
+{
+  for view in $(config_iter views); do
+    info "$view"
+  done
+}
+
+# help:view:fun: view add <name> <filter>+
+# help:view:txt: Create new view named as defined in arguments
+command_view_add ()
+{
+  local name="$1"; shift
+  config_set "views.$name" "$*"
+  config_save "${CONFIG_FILE}"
+}
+
+# help:view:fun: view del <name>
+# help:view:txt: Delete view named as defined in arguments
+command_view_del ()
+{
+  local name="$1"; shift
+  config_unset "views.$name"
+  config_save "${CONFIG_FILE}"
+}
+
+
+# help:fun: daemon {start|stop|kill|status} 
+# help:txt: Manage daemon mode of timeline.
+command_daemon ()
+{
+  local cmd="$1"; shift
+  if fun "command_daemon_$cmd"; then
+    "command_daemon_$cmd" "$@"
+  else
+    E=1 error "$NOSUBCMD" "$cmd" "daemon"
+  fi
+}
+
+# help:daemon:fun: daemon start [--foreground]
+# help:daemon:txt: Start daemon in background or in foreground if the specific
+# help:daemon:txt: flag is set.
+command_daemon_start ()
+{
+  daemon_start "$@"
+}
+
+# help:daemon:fun: daemon stop
+# help:daemon:txt: Clean stop daemon running in background
+command_daemon_stop ()
+{
+  daemon_stop TERM
+}
+
+# help:daemon:fun: daemon kill
+# help:daemon:txt: Force kill daemon running in background
+command_daemon_kill ()
+{
+  daemon_stop KILL
+}
+
+# help:daemon:fun: daemon status
+# help:daemon:txt: Show if daemon is running or not
+command_daemon_status ()
+{
+  daemon_list
+}
+
+# help:fun: version
+# help:txt: Print version number
+command_version ()
+{
+  echo "${TIMELINE_VERSION:-Unknown version}"
+}
+
+# help:fun: directory {refresh|add|del|list|search} {args...}
+# help:txt: Manage public directories
+command_directory ()
+{
+  local cmd="$1"; shift
+  if fun "command_directory_$cmd"; then
+    "command_directory_$cmd" "$@"
+  else
+    E=1 error "$NOSUBCMD" "$cmd" "directory"
+  fi
+}
+
+# help:directory:fun: refresh [directory name]
+# help:directory:txt: Refresh the directory data for a specific directory or for
+# help:directory:txt: all directories in the config
+command_directory_refresh ()
+{
+  directory_refresh "$@" | info_multi
+}
+
+# help:directory:fun: add [--force] <name> <url>
+# help:directory:txt: Add a new directory to the config
+command_directory_add ()
+{
+  directory_add "$@"
+  config_save "${CONFIG_FILE}"
+}
+
+# help:directory:fun: del <name>
+# help:directory:txt: Delete directory from the config
+command_directory_del ()
+{
+  [[ -z "$1" ]] && E=2 error $"Directory name is required"
+  directory_del "$@"
+  config_save "${CONFIG_FILE}"
+}
+
+# help:directory:fun: list
+# help:directory:txt: List all directories in config
+command_directory_list ()
+{
+  directory_list | info_multi
+}
+
+# help:directory:fun: search <regexp>+
+# help:directory:txt: Search for expressions in public directories.
+command_directory_search ()
+{
+  local exp
+  for exp in "$@"; do
+    directory_search "$exp"
+  done | info_multi
+}
+
+# hey! you do not want to use this, only for debug purposes
+if ${DEBUG:-false}; then
+  command_debug ()
+  {
+    eval "$@"
+  }
+fi
+
+# help:fun: license
+# help:txt: Show timeline license
+command_license ()
+{
+  info_multi <<EOF
+                    GNU GENERAL PUBLIC LICENSE
+                       Version 3, 29 June 2007
+
+ Copyright (C) 2007 Free Software Foundation, Inc. <https://fsf.org/>
+ Everyone is permitted to copy and distribute verbatim copies
+ of this license document, but changing it is not allowed.
+
+                            Preamble
+
+  The GNU General Public License is a free, copyleft license for
+software and other kinds of works.
+
+  The licenses for most software and other practical works are designed
+to take away your freedom to share and change the works.  By contrast,
+the GNU General Public License is intended to guarantee your freedom to
+share and change all versions of a program--to make sure it remains free
+software for all its users.  We, the Free Software Foundation, use the
+GNU General Public License for most of our software; it applies also to
+any other work released this way by its authors.  You can apply it to
+your programs, too.
+
+  When we speak of free software, we are referring to freedom, not
+price.  Our General Public Licenses are designed to make sure that you
+have the freedom to distribute copies of free software (and charge for
+them if you wish), that you receive source code or can get it if you
+want it, that you can change the software or use pieces of it in new
+free programs, and that you know you can do these things.
+
+  To protect your rights, we need to prevent others from denying you
+these rights or asking you to surrender the rights.  Therefore, you have
+certain responsibilities if you distribute copies of the software, or if
+you modify it: responsibilities to respect the freedom of others.
+
+  For example, if you distribute copies of such a program, whether
+gratis or for a fee, you must pass on to the recipients the same
+freedoms that you received.  You must make sure that they, too, receive
+or can get the source code.  And you must show them these terms so they
+know their rights.
+
+  Developers that use the GNU GPL protect your rights with two steps:
+(1) assert copyright on the software, and (2) offer you this License
+giving you legal permission to copy, distribute and/or modify it.
+
+  For the developers' and authors' protection, the GPL clearly explains
+that there is no warranty for this free software.  For both users' and
+authors' sake, the GPL requires that modified versions be marked as
+changed, so that their problems will not be attributed erroneously to
+authors of previous versions.
+
+  Some devices are designed to deny users access to install or run
+modified versions of the software inside them, although the manufacturer
+can do so.  This is fundamentally incompatible with the aim of
+protecting users' freedom to change the software.  The systematic
+pattern of such abuse occurs in the area of products for individuals to
+use, which is precisely where it is most unacceptable.  Therefore, we
+have designed this version of the GPL to prohibit the practice for those
+products.  If such problems arise substantially in other domains, we
+stand ready to extend this provision to those domains in future versions
+of the GPL, as needed to protect the freedom of users.
+
+  Finally, every program is threatened constantly by software patents.
+States should not allow patents to restrict development and use of
+software on general-purpose computers, but in those that do, we wish to
+avoid the special danger that patents applied to a free program could
+make it effectively proprietary.  To prevent this, the GPL assures that
+patents cannot be used to render the program non-free.
+
+  The precise terms and conditions for copying, distribution and
+modification follow.
+
+                       TERMS AND CONDITIONS
+
+  0. Definitions.
+
+  "This License" refers to version 3 of the GNU General Public License.
+
+  "Copyright" also means copyright-like laws that apply to other kinds of
+works, such as semiconductor masks.
+
+  "The Program" refers to any copyrightable work licensed under this
+License.  Each licensee is addressed as "you".  "Licensees" and
+"recipients" may be individuals or organizations.
+
+  To "modify" a work means to copy from or adapt all or part of the work
+in a fashion requiring copyright permission, other than the making of an
+exact copy.  The resulting work is called a "modified version" of the
+earlier work or a work "based on" the earlier work.
+
+  A "covered work" means either the unmodified Program or a work based
+on the Program.
+
+  To "propagate" a work means to do anything with it that, without
+permission, would make you directly or secondarily liable for
+infringement under applicable copyright law, except executing it on a
+computer or modifying a private copy.  Propagation includes copying,
+distribution (with or without modification), making available to the
+public, and in some countries other activities as well.
+
+  To "convey" a work means any kind of propagation that enables other
+parties to make or receive copies.  Mere interaction with a user through
+a computer network, with no transfer of a copy, is not conveying.
+
+  An interactive user interface displays "Appropriate Legal Notices"
+to the extent that it includes a convenient and prominently visible
+feature that (1) displays an appropriate copyright notice, and (2)
+tells the user that there is no warranty for the work (except to the
+extent that warranties are provided), that licensees may convey the
+work under this License, and how to view a copy of this License.  If
+the interface presents a list of user commands or options, such as a
+menu, a prominent item in the list meets this criterion.
+
+  1. Source Code.
+
+  The "source code" for a work means the preferred form of the work
+for making modifications to it.  "Object code" means any non-source
+form of a work.
+
+  A "Standard Interface" means an interface that either is an official
+standard defined by a recognized standards body, or, in the case of
+interfaces specified for a particular programming language, one that
+is widely used among developers working in that language.
+
+  The "System Libraries" of an executable work include anything, other
+than the work as a whole, that (a) is included in the normal form of
+packaging a Major Component, but which is not part of that Major
+Component, and (b) serves only to enable use of the work with that
+Major Component, or to implement a Standard Interface for which an
+implementation is available to the public in source code form.  A
+"Major Component", in this context, means a major essential component
+(kernel, window system, and so on) of the specific operating system
+(if any) on which the executable work runs, or a compiler used to
+produce the work, or an object code interpreter used to run it.
+
+  The "Corresponding Source" for a work in object code form means all
+the source code needed to generate, install, and (for an executable
+work) run the object code and to modify the work, including scripts to
+control those activities.  However, it does not include the work's
+System Libraries, or general-purpose tools or generally available free
+programs which are used unmodified in performing those activities but
+which are not part of the work.  For example, Corresponding Source
+includes interface definition files associated with source files for
+the work, and the source code for shared libraries and dynamically
+linked subprograms that the work is specifically designed to require,
+such as by intimate data communication or control flow between those
+subprograms and other parts of the work.
+
+  The Corresponding Source need not include anything that users
+can regenerate automatically from other parts of the Corresponding
+Source.
+
+  The Corresponding Source for a work in source code form is that
+same work.
+
+  2. Basic Permissions.
+
+  All rights granted under this License are granted for the term of
+copyright on the Program, and are irrevocable provided the stated
+conditions are met.  This License explicitly affirms your unlimited
+permission to run the unmodified Program.  The output from running a
+covered work is covered by this License only if the output, given its
+content, constitutes a covered work.  This License acknowledges your
+rights of fair use or other equivalent, as provided by copyright law.
+
+  You may make, run and propagate covered works that you do not
+convey, without conditions so long as your license otherwise remains
+in force.  You may convey covered works to others for the sole purpose
+of having them make modifications exclusively for you, or provide you
+with facilities for running those works, provided that you comply with
+the terms of this License in conveying all material for which you do
+not control copyright.  Those thus making or running the covered works
+for you must do so exclusively on your behalf, under your direction
+and control, on terms that prohibit them from making any copies of
+your copyrighted material outside their relationship with you.
+
+  Conveying under any other circumstances is permitted solely under
+the conditions stated below.  Sublicensing is not allowed; section 10
+makes it unnecessary.
+
+  3. Protecting Users' Legal Rights From Anti-Circumvention Law.
+
+  No covered work shall be deemed part of an effective technological
+measure under any applicable law fulfilling obligations under article
+11 of the WIPO copyright treaty adopted on 20 December 1996, or
+similar laws prohibiting or restricting circumvention of such
+measures.
+
+  When you convey a covered work, you waive any legal power to forbid
+circumvention of technological measures to the extent such circumvention
+is effected by exercising rights under this License with respect to
+the covered work, and you disclaim any intention to limit operation or
+modification of the work as a means of enforcing, against the work's
+users, your or third parties' legal rights to forbid circumvention of
+technological measures.
+
+  4. Conveying Verbatim Copies.
+
+  You may convey verbatim copies of the Program's source code as you
+receive it, in any medium, provided that you conspicuously and
+appropriately publish on each copy an appropriate copyright notice;
+keep intact all notices stating that this License and any
+non-permissive terms added in accord with section 7 apply to the code;
+keep intact all notices of the absence of any warranty; and give all
+recipients a copy of this License along with the Program.
+
+  You may charge any price or no price for each copy that you convey,
+and you may offer support or warranty protection for a fee.
+
+  5. Conveying Modified Source Versions.
+
+  You may convey a work based on the Program, or the modifications to
+produce it from the Program, in the form of source code under the
+terms of section 4, provided that you also meet all of these conditions:
+
+    a) The work must carry prominent notices stating that you modified
+    it, and giving a relevant date.
+
+    b) The work must carry prominent notices stating that it is
+    released under this License and any conditions added under section
+    7.  This requirement modifies the requirement in section 4 to
+    "keep intact all notices".
+
+    c) You must license the entire work, as a whole, under this
+    License to anyone who comes into possession of a copy.  This
+    License will therefore apply, along with any applicable section 7
+    additional terms, to the whole of the work, and all its parts,
+    regardless of how they are packaged.  This License gives no
+    permission to license the work in any other way, but it does not
+    invalidate such permission if you have separately received it.
+
+    d) If the work has interactive user interfaces, each must display
+    Appropriate Legal Notices; however, if the Program has interactive
+    interfaces that do not display Appropriate Legal Notices, your
+    work need not make them do so.
+
+  A compilation of a covered work with other separate and independent
+works, which are not by their nature extensions of the covered work,
+and which are not combined with it such as to form a larger program,
+in or on a volume of a storage or distribution medium, is called an
+"aggregate" if the compilation and its resulting copyright are not
+used to limit the access or legal rights of the compilation's users
+beyond what the individual works permit.  Inclusion of a covered work
+in an aggregate does not cause this License to apply to the other
+parts of the aggregate.
+
+  6. Conveying Non-Source Forms.
+
+  You may convey a covered work in object code form under the terms
+of sections 4 and 5, provided that you also convey the
+machine-readable Corresponding Source under the terms of this License,
+in one of these ways:
+
+    a) Convey the object code in, or embodied in, a physical product
+    (including a physical distribution medium), accompanied by the
+    Corresponding Source fixed on a durable physical medium
+    customarily used for software interchange.
+
+    b) Convey the object code in, or embodied in, a physical product
+    (including a physical distribution medium), accompanied by a
+    written offer, valid for at least three years and valid for as
+    long as you offer spare parts or customer support for that product
+    model, to give anyone who possesses the object code either (1) a
+    copy of the Corresponding Source for all the software in the
+    product that is covered by this License, on a durable physical
+    medium customarily used for software interchange, for a price no
+    more than your reasonable cost of physically performing this
+    conveying of source, or (2) access to copy the
+    Corresponding Source from a network server at no charge.
+
+    c) Convey individual copies of the object code with a copy of the
+    written offer to provide the Corresponding Source.  This
+    alternative is allowed only occasionally and noncommercially, and
+    only if you received the object code with such an offer, in accord
+    with subsection 6b.
+
+    d) Convey the object code by offering access from a designated
+    place (gratis or for a charge), and offer equivalent access to the
+    Corresponding Source in the same way through the same place at no
+    further charge.  You need not require recipients to copy the
+    Corresponding Source along with the object code.  If the place to
+    copy the object code is a network server, the Corresponding Source
+    may be on a different server (operated by you or a third party)
+    that supports equivalent copying facilities, provided you maintain
+    clear directions next to the object code saying where to find the
+    Corresponding Source.  Regardless of what server hosts the
+    Corresponding Source, you remain obligated to ensure that it is
+    available for as long as needed to satisfy these requirements.
+
+    e) Convey the object code using peer-to-peer transmission, provided
+    you inform other peers where the object code and Corresponding
+    Source of the work are being offered to the general public at no
+    charge under subsection 6d.
+
+  A separable portion of the object code, whose source code is excluded
+from the Corresponding Source as a System Library, need not be
+included in conveying the object code work.
+
+  A "User Product" is either (1) a "consumer product", which means any
+tangible personal property which is normally used for personal, family,
+or household purposes, or (2) anything designed or sold for incorporation
+into a dwelling.  In determining whether a product is a consumer product,
+doubtful cases shall be resolved in favor of coverage.  For a particular
+product received by a particular user, "normally used" refers to a
+typical or common use of that class of product, regardless of the status
+of the particular user or of the way in which the particular user
+actually uses, or expects or is expected to use, the product.  A product
+is a consumer product regardless of whether the product has substantial
+commercial, industrial or non-consumer uses, unless such uses represent
+the only significant mode of use of the product.
+
+  "Installation Information" for a User Product means any methods,
+procedures, authorization keys, or other information required to install
+and execute modified versions of a covered work in that User Product from
+a modified version of its Corresponding Source.  The information must
+suffice to ensure that the continued functioning of the modified object
+code is in no case prevented or interfered with solely because
+modification has been made.
+
+  If you convey an object code work under this section in, or with, or
+specifically for use in, a User Product, and the conveying occurs as
+part of a transaction in which the right of possession and use of the
+User Product is transferred to the recipient in perpetuity or for a
+fixed term (regardless of how the transaction is characterized), the
+Corresponding Source conveyed under this section must be accompanied
+by the Installation Information.  But this requirement does not apply
+if neither you nor any third party retains the ability to install
+modified object code on the User Product (for example, the work has
+been installed in ROM).
+
+  The requirement to provide Installation Information does not include a
+requirement to continue to provide support service, warranty, or updates
+for a work that has been modified or installed by the recipient, or for
+the User Product in which it has been modified or installed.  Access to a
+network may be denied when the modification itself materially and
+adversely affects the operation of the network or violates the rules and
+protocols for communication across the network.
+
+  Corresponding Source conveyed, and Installation Information provided,
+in accord with this section must be in a format that is publicly
+documented (and with an implementation available to the public in
+source code form), and must require no special password or key for
+unpacking, reading or copying.
+
+  7. Additional Terms.
+
+  "Additional permissions" are terms that supplement the terms of this
+License by making exceptions from one or more of its conditions.
+Additional permissions that are applicable to the entire Program shall
+be treated as though they were included in this License, to the extent
+that they are valid under applicable law.  If additional permissions
+apply only to part of the Program, that part may be used separately
+under those permissions, but the entire Program remains governed by
+this License without regard to the additional permissions.
+
+  When you convey a copy of a covered work, you may at your option
+remove any additional permissions from that copy, or from any part of
+it.  (Additional permissions may be written to require their own
+removal in certain cases when you modify the work.)  You may place
+additional permissions on material, added by you to a covered work,
+for which you have or can give appropriate copyright permission.
+
+  Notwithstanding any other provision of this License, for material you
+add to a covered work, you may (if authorized by the copyright holders of
+that material) supplement the terms of this License with terms:
+
+    a) Disclaiming warranty or limiting liability differently from the
+    terms of sections 15 and 16 of this License; or
+
+    b) Requiring preservation of specified reasonable legal notices or
+    author attributions in that material or in the Appropriate Legal
+    Notices displayed by works containing it; or
+
+    c) Prohibiting misrepresentation of the origin of that material, or
+    requiring that modified versions of such material be marked in
+    reasonable ways as different from the original version; or
+
+    d) Limiting the use for publicity purposes of names of licensors or
+    authors of the material; or
+
+    e) Declining to grant rights under trademark law for use of some
+    trade names, trademarks, or service marks; or
+
+    f) Requiring indemnification of licensors and authors of that
+    material by anyone who conveys the material (or modified versions of
+    it) with contractual assumptions of liability to the recipient, for
+    any liability that these contractual assumptions directly impose on
+    those licensors and authors.
+
+  All other non-permissive additional terms are considered "further
+restrictions" within the meaning of section 10.  If the Program as you
+received it, or any part of it, contains a notice stating that it is
+governed by this License along with a term that is a further
+restriction, you may remove that term.  If a license document contains
+a further restriction but permits relicensing or conveying under this
+License, you may add to a covered work material governed by the terms
+of that license document, provided that the further restriction does
+not survive such relicensing or conveying.
+
+  If you add terms to a covered work in accord with this section, you
+must place, in the relevant source files, a statement of the
+additional terms that apply to those files, or a notice indicating
+where to find the applicable terms.
+
+  Additional terms, permissive or non-permissive, may be stated in the
+form of a separately written license, or stated as exceptions;
+the above requirements apply either way.
+
+  8. Termination.
+
+  You may not propagate or modify a covered work except as expressly
+provided under this License.  Any attempt otherwise to propagate or
+modify it is void, and will automatically terminate your rights under
+this License (including any patent licenses granted under the third
+paragraph of section 11).
+
+  However, if you cease all violation of this License, then your
+license from a particular copyright holder is reinstated (a)
+provisionally, unless and until the copyright holder explicitly and
+finally terminates your license, and (b) permanently, if the copyright
+holder fails to notify you of the violation by some reasonable means
+prior to 60 days after the cessation.
+
+  Moreover, your license from a particular copyright holder is
+reinstated permanently if the copyright holder notifies you of the
+violation by some reasonable means, this is the first time you have
+received notice of violation of this License (for any work) from that
+copyright holder, and you cure the violation prior to 30 days after
+your receipt of the notice.
+
+  Termination of your rights under this section does not terminate the
+licenses of parties who have received copies or rights from you under
+this License.  If your rights have been terminated and not permanently
+reinstated, you do not qualify to receive new licenses for the same
+material under section 10.
+
+  9. Acceptance Not Required for Having Copies.
+
+  You are not required to accept this License in order to receive or
+run a copy of the Program.  Ancillary propagation of a covered work
+occurring solely as a consequence of using peer-to-peer transmission
+to receive a copy likewise does not require acceptance.  However,
+nothing other than this License grants you permission to propagate or
+modify any covered work.  These actions infringe copyright if you do
+not accept this License.  Therefore, by modifying or propagating a
+covered work, you indicate your acceptance of this License to do so.
+
+  10. Automatic Licensing of Downstream Recipients.
+
+  Each time you convey a covered work, the recipient automatically
+receives a license from the original licensors, to run, modify and
+propagate that work, subject to this License.  You are not responsible
+for enforcing compliance by third parties with this License.
+
+  An "entity transaction" is a transaction transferring control of an
+organization, or substantially all assets of one, or subdividing an
+organization, or merging organizations.  If propagation of a covered
+work results from an entity transaction, each party to that
+transaction who receives a copy of the work also receives whatever
+licenses to the work the party's predecessor in interest had or could
+give under the previous paragraph, plus a right to possession of the
+Corresponding Source of the work from the predecessor in interest, if
+the predecessor has it or can get it with reasonable efforts.
+
+  You may not impose any further restrictions on the exercise of the
+rights granted or affirmed under this License.  For example, you may
+not impose a license fee, royalty, or other charge for exercise of
+rights granted under this License, and you may not initiate litigation
+(including a cross-claim or counterclaim in a lawsuit) alleging that
+any patent claim is infringed by making, using, selling, offering for
+sale, or importing the Program or any portion of it.
+
+  11. Patents.
+
+  A "contributor" is a copyright holder who authorizes use under this
+License of the Program or a work on which the Program is based.  The
+work thus licensed is called the contributor's "contributor version".
+
+  A contributor's "essential patent claims" are all patent claims
+owned or controlled by the contributor, whether already acquired or
+hereafter acquired, that would be infringed by some manner, permitted
+by this License, of making, using, or selling its contributor version,
+but do not include claims that would be infringed only as a
+consequence of further modification of the contributor version.  For
+purposes of this definition, "control" includes the right to grant
+patent sublicenses in a manner consistent with the requirements of
+this License.
+
+  Each contributor grants you a non-exclusive, worldwide, royalty-free
+patent license under the contributor's essential patent claims, to
+make, use, sell, offer for sale, import and otherwise run, modify and
+propagate the contents of its contributor version.
+
+  In the following three paragraphs, a "patent license" is any express
+agreement or commitment, however denominated, not to enforce a patent
+(such as an express permission to practice a patent or covenant not to
+sue for patent infringement).  To "grant" such a patent license to a
+party means to make such an agreement or commitment not to enforce a
+patent against the party.
+
+  If you convey a covered work, knowingly relying on a patent license,
+and the Corresponding Source of the work is not available for anyone
+to copy, free of charge and under the terms of this License, through a
+publicly available network server or other readily accessible means,
+then you must either (1) cause the Corresponding Source to be so
+available, or (2) arrange to deprive yourself of the benefit of the
+patent license for this particular work, or (3) arrange, in a manner
+consistent with the requirements of this License, to extend the patent
+license to downstream recipients.  "Knowingly relying" means you have
+actual knowledge that, but for the patent license, your conveying the
+covered work in a country, or your recipient's use of the covered work
+in a country, would infringe one or more identifiable patents in that
+country that you have reason to believe are valid.
+
+  If, pursuant to or in connection with a single transaction or
+arrangement, you convey, or propagate by procuring conveyance of, a
+covered work, and grant a patent license to some of the parties
+receiving the covered work authorizing them to use, propagate, modify
+or convey a specific copy of the covered work, then the patent license
+you grant is automatically extended to all recipients of the covered
+work and works based on it.
+
+  A patent license is "discriminatory" if it does not include within
+the scope of its coverage, prohibits the exercise of, or is
+conditioned on the non-exercise of one or more of the rights that are
+specifically granted under this License.  You may not convey a covered
+work if you are a party to an arrangement with a third party that is
+in the business of distributing software, under which you make payment
+to the third party based on the extent of your activity of conveying
+the work, and under which the third party grants, to any of the
+parties who would receive the covered work from you, a discriminatory
+patent license (a) in connection with copies of the covered work
+conveyed by you (or copies made from those copies), or (b) primarily
+for and in connection with specific products or compilations that
+contain the covered work, unless you entered into that arrangement,
+or that patent license was granted, prior to 28 March 2007.
+
+  Nothing in this License shall be construed as excluding or limiting
+any implied license or other defenses to infringement that may
+otherwise be available to you under applicable patent law.
+
+  12. No Surrender of Others' Freedom.
+
+  If conditions are imposed on you (whether by court order, agreement or
+otherwise) that contradict the conditions of this License, they do not
+excuse you from the conditions of this License.  If you cannot convey a
+covered work so as to satisfy simultaneously your obligations under this
+License and any other pertinent obligations, then as a consequence you may
+not convey it at all.  For example, if you agree to terms that obligate you
+to collect a royalty for further conveying from those to whom you convey
+the Program, the only way you could satisfy both those terms and this
+License would be to refrain entirely from conveying the Program.
+
+  13. Use with the GNU Affero General Public License.
+
+  Notwithstanding any other provision of this License, you have
+permission to link or combine any covered work with a work licensed
+under version 3 of the GNU Affero General Public License into a single
+combined work, and to convey the resulting work.  The terms of this
+License will continue to apply to the part which is the covered work,
+but the special requirements of the GNU Affero General Public License,
+section 13, concerning interaction through a network will apply to the
+combination as such.
+
+  14. Revised Versions of this License.
+
+  The Free Software Foundation may publish revised and/or new versions of
+the GNU General Public License from time to time.  Such new versions will
+be similar in spirit to the present version, but may differ in detail to
+address new problems or concerns.
+
+  Each version is given a distinguishing version number.  If the
+Program specifies that a certain numbered version of the GNU General
+Public License "or any later version" applies to it, you have the
+option of following the terms and conditions either of that numbered
+version or of any later version published by the Free Software
+Foundation.  If the Program does not specify a version number of the
+GNU General Public License, you may choose any version ever published
+by the Free Software Foundation.
+
+  If the Program specifies that a proxy can decide which future
+versions of the GNU General Public License can be used, that proxy's
+public statement of acceptance of a version permanently authorizes you
+to choose that version for the Program.
+
+  Later license versions may give you additional or different
+permissions.  However, no additional obligations are imposed on any
+author or copyright holder as a result of your choosing to follow a
+later version.
+
+  15. Disclaimer of Warranty.
+
+  THERE IS NO WARRANTY FOR THE PROGRAM, TO THE EXTENT PERMITTED BY
+APPLICABLE LAW.  EXCEPT WHEN OTHERWISE STATED IN WRITING THE COPYRIGHT
+HOLDERS AND/OR OTHER PARTIES PROVIDE THE PROGRAM "AS IS" WITHOUT WARRANTY
+OF ANY KIND, EITHER EXPRESSED OR IMPLIED, INCLUDING, BUT NOT LIMITED TO,
+THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+PURPOSE.  THE ENTIRE RISK AS TO THE QUALITY AND PERFORMANCE OF THE PROGRAM
+IS WITH YOU.  SHOULD THE PROGRAM PROVE DEFECTIVE, YOU ASSUME THE COST OF
+ALL NECESSARY SERVICING, REPAIR OR CORRECTION.
+
+  16. Limitation of Liability.
+
+  IN NO EVENT UNLESS REQUIRED BY APPLICABLE LAW OR AGREED TO IN WRITING
+WILL ANY COPYRIGHT HOLDER, OR ANY OTHER PARTY WHO MODIFIES AND/OR CONVEYS
+THE PROGRAM AS PERMITTED ABOVE, BE LIABLE TO YOU FOR DAMAGES, INCLUDING ANY
+GENERAL, SPECIAL, INCIDENTAL OR CONSEQUENTIAL DAMAGES ARISING OUT OF THE
+USE OR INABILITY TO USE THE PROGRAM (INCLUDING BUT NOT LIMITED TO LOSS OF
+DATA OR DATA BEING RENDERED INACCURATE OR LOSSES SUSTAINED BY YOU OR THIRD
+PARTIES OR A FAILURE OF THE PROGRAM TO OPERATE WITH ANY OTHER PROGRAMS),
+EVEN IF SUCH HOLDER OR OTHER PARTY HAS BEEN ADVISED OF THE POSSIBILITY OF
+SUCH DAMAGES.
+
+  17. Interpretation of Sections 15 and 16.
+
+  If the disclaimer of warranty and limitation of liability provided
+above cannot be given local legal effect according to their terms,
+reviewing courts shall apply local law that most closely approximates
+an absolute waiver of all civil liability in connection with the
+Program, unless a warranty or assumption of liability accompanies a
+copy of the Program in return for a fee.
+
+                     END OF TERMS AND CONDITIONS
+
+            How to Apply These Terms to Your New Programs
+
+  If you develop a new program, and you want it to be of the greatest
+possible use to the public, the best way to achieve this is to make it
+free software which everyone can redistribute and change under these terms.
+
+  To do so, attach the following notices to the program.  It is safest
+to attach them to the start of each source file to most effectively
+state the exclusion of warranty; and each file should have at least
+the "copyright" line and a pointer to where the full notice is found.
+
+    <one line to give the program's name and a brief idea of what it does.>
+    Copyright (C) <year>  <name of author>
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+Also add information on how to contact you by electronic and paper mail.
+
+  If the program does terminal interaction, make it output a short
+notice like this when it starts in an interactive mode:
+
+    <program>  Copyright (C) <year>  <name of author>
+    This program comes with ABSOLUTELY NO WARRANTY; for details type \`show w'.
+    This is free software, and you are welcome to redistribute it
+    under certain conditions; type \`show c' for details.
+
+The hypothetical commands \`show w' and \`show c' should show the appropriate
+parts of the General Public License.  Of course, your program's commands
+might be different; for a GUI interface, you would use an "about box".
+
+  You should also get your employer (if you work as a programmer) or school,
+if any, to sign a "copyright disclaimer" for the program, if necessary.
+For more information on this, and how to apply and follow the GNU GPL, see
+<https://www.gnu.org/licenses/>.
+
+  The GNU General Public License does not permit incorporating your program
+into proprietary programs.  If your program is a subroutine library, you
+may consider it more useful to permit linking proprietary applications with
+the library.  If this is what you want to do, use the GNU Lesser General
+Public License instead of this License.  But first, please read
+<https://www.gnu.org/licenses/why-not-lgpl.html>.
+EOF
 }
 main "$@"

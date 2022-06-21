@@ -185,13 +185,13 @@ account_clone ()
     fi
 
     config_set "user.alias-${OID_CACHE["$pull_url"]}" "$name"
-    git_helper clone "$push_url" "$path" 2>&1
-    git_helper -C "$path" submodule init 2>&1
+    git_helper clone "$push_url" "$path"
+    git_helper -C "$path" submodule init
 
     account_config "$path" "$pull_url" "$name" "$tstamp"
 
     git_helper -C "$path" add .
-    git_helper -C "$path" commit -m 'clone: recreated keys' 2>&1
+    git_helper -C "$path" commit -m 'clone: recreated keys'
 
     config_save "${CONFIG_FILE}"
   fi

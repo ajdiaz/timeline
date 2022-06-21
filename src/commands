@@ -583,7 +583,8 @@ command_event_post ()
       oid="$(oid "$REPLY")"
       if [[ "$rcpt" ]]; then
         for u in $(expand_user "$rcpt"); do
-          crypto_encrypt $anon "$u" "$ts P $msg" "$pfile" 2>&1
+          crypto_encrypt $anon "$u" "$ts P $msg" "$pfile" ||
+            E=4 fatal $"Encryption fails"
           u="${anon:-$u}"; u="${u//--anon/@all}"
           event_create "$ts" E "$u" "$REPLY" 2>&1
         done
@@ -595,7 +596,8 @@ command_event_post ()
         sleep 1  # Because we can only post one event per second.
         if [[ "$rcpt" ]]; then
           for u in $(expand_user "$rcpt"); do
-            crypto_encrypt $anon "$u" "$(timestamp) T $ACCOUNT_OID:$ts:$oid $tag" "$pfile" 2>&1
+            crypto_encrypt $anon "$u" "$(timestamp) T $ACCOUNT_OID:$ts:$oid $tag" "$pfile" ||
+              E=4 fatal $"Encryption fails"
             u="${anon:-$u}"; u="${u//--anon/@all}"
             event_create "$ts" E "$u" "$REPLY" 2>&1
           done
@@ -603,7 +605,7 @@ command_event_post ()
           event_create "$ts" T "$eid" "$tag" 2>&1
         fi
       done
-    } | info_multi
+    }
     timeline_load
     timeline_index_save
   fi
@@ -818,7 +820,7 @@ command_follow_add ()
     return 2
   else
     command_account_active "${ACCOUNT_NAME}"
-    follow_add "$pull_url" "$name" 2>&1 | info_multi
+    follow_add "$pull_url" "$name"
   fi
 }
 

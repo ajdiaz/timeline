@@ -197,9 +197,9 @@ crypto_encrypt ()
       --armor --passphrase-file "$3" \
       --sign --encrypt --no-comments --no-emit-version \
       "$arg" "$1@timeline" <<< "$2"
-  ) 2>&1
+  )
 
-  [[ ${#payload[@]} -eq 0 ]] && exit 4
+  [[ ${#payload[@]} -eq 0 ]] && return 1
 
   payload[-1]=''
   REPLY="${payload[*]}"

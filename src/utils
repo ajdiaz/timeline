@@ -206,8 +206,10 @@ git_helper ()
 #      enabled account if none present.
 get_main_branch ()
 {
-  local ref
-  read -r _ ref < "${1:-$ACCOUNT_PATH}/.git/refs/remotes/origin/HEAD" 2>/dev/null
+  local ref=
+  if [[ -r "${1:-$ACCOUNT_PATH}/.git/HEAD" ]]; then
+    read -r _ ref < "${1:-$ACCOUNT_PATH}/.git/HEAD" 2>/dev/null
+  fi
   if [[ "$ref" ]]; then
     echo "${ref##*/}"
   else

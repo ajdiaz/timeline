@@ -43,7 +43,7 @@ timeline_load ()
     E=1 error $"Try $0 account rebuild ${ACCOUNT_NAME} to recreate it automatically"
   fi
 
-  echo -en $"> Loading ${pattern[$((i++ % ${#pattern[@]}))]}\r" >&2
+  echo -en $"> Loading ${pattern[$((i++ % ${#pattern[@]}))]}\r" >&4
   # Load our account timeline
   [[ "$show_own" = "false" ]] ||
     event_load "$oid" "${content_path}"
@@ -56,7 +56,7 @@ timeline_load ()
       [[ -r "$dir/$TIMELINE_CONTENT" ]] || continue # ignore non initialized
 
       dir="${dir%/}"
-      echo -en $"> Loading ${pattern[$((i++ % ${#pattern[@]}))]}\r" >&2
+      echo -en $"> Loading ${pattern[$((i++ % ${#pattern[@]}))]}\r" >&4
       event_load "${dir##*/}" "${dir}/$TIMELINE_CONTENT"
     done
   fi
