@@ -1,5 +1,5 @@
 #! /bin/bash -i
-TIMELINE_VERSION='1.8-33-g105c50c'
+TIMELINE_VERSION='1.8-34-gef498a0'
 ## vim:ft=sh
 
 # fun: complete_alternatives <level> <prefix>
